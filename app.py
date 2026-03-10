@@ -6,7 +6,6 @@ import io
 st.set_page_config(page_title="자동 발주 및 재고 관리", layout="wide")
 st.title("📦 재고 품절 방지 및 발주 관리 시스템")
 
-# 세션 상태 초기화
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = None
 if 'history_result' not in st.session_state: st.session_state.history_result = None
 if 'searched_date' not in st.session_state: st.session_state.searched_date = None
@@ -54,24 +53,15 @@ if uploaded_file is not None:
         except Exception as e:
             st.error(f"오류: {e}")
 
-    # [최신 결과 출력 및 다운로드]
     if st.session_state.analysis_result is not None:
         st.subheader("📊 최신 분석 결과")
         st.dataframe(st.session_state.analysis_result)
         
-        # 엑셀 다운로드 버튼 추가
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             st.session_state.analysis_result.to_excel(writer, index=False)
-        
-        st.download_button(
-            label="📥 결과 파일 다운로드 (Excel)",
-            data=buffer.getvalue(),
-            file_name="최신_분석결과.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button("📥 결과 파일 다운로드 (Excel)", buffer.getvalue(), "최신_분석결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    # [과거 내역 검색]
     st.write("---")
     st.subheader("📅 과거 발주 내역 검색 및 추이 비교")
     search_date = st.date_input("조회할 날짜 선택")
@@ -90,6 +80,11 @@ if uploaded_file is not None:
                     on=['상품명', '옵션'], suffixes=('_현재', '_과거')
                 )
                 compare_df['판매량 변화'] = compare_df['일 판매 데이터_현재'] - compare_df['일 판매 데이터_과거']
+                
+                # [그래프 추가]
+                chart_data = compare_df.set_index('옵션')['판매량 변화']
+                st.bar_chart(chart_data)
+                
                 st.dataframe(compare_df.sort_values(by='판매량 변화', ascending=False))
         else:
             st.error("저장된 이력이 없습니다.")
