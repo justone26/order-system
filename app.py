@@ -56,24 +56,32 @@ if uploaded_file is not None:
 
         # 4. 분석 실행
         if st.button("🚀 분석 실행"):
-            for col in [target_3day, target_1week, avail_col]:
+            # 수치 데이터 정제
+            for col in [target_3day, target_1week, avail_col, stock_col]:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
+            # 계산 로직
             df['일일 판매량(기준)'] = (df[target_3day] / 3).round(0).astype(int)
             df['리드타임 준비량'] = (df['일일 판매량(기준)'] * lead_time_days).astype(int)
             df['안전재고 수량'] = (df['일일 판매량(기준)'] * safety_stock_days).astype(int)
             df['권장 발주량'] = (df['리드타임 준비량'] + df['안전재고 수량'] - df[avail_col]).clip(lower=0).astype(int)
             df['상태'] = df.apply(lambda row: '🚨 품절/긴급' if (str(row[sold_out_col]).upper() == 'Y' or row[avail_col] <= 0) else '정상', axis=1)
 
-            # 필수 컬럼만 필터링
-            output_cols = [sold_out_col, vendor_col, item_name, option_name, vendor_option, avail_col, '일일 판매량(기준)', '리드타임 준비량', '안전재고 수량', '권장 발주량', '상태']
-            result_df = df[[c for c in output_cols if c in df.columns]]
-
+            # 필수 컬럼 리스트 (원본데이터 + 분석결과)
+            output_cols = [
+                sold_out_col, vendor_col, item_name, option_name, vendor_option, 
+                stock_col, avail_col, target_3day, target_1week, 
+                '일일 판매량(기준)', '리드타임 준비량', '안전재고 수량', '권장 발주량', '상태'
+            ]
             
+            # 중복 제거 및 컬럼 필터링
+            unique_cols = list(dict.fromkeys([c for c in output_cols if c in df.columns]))
+            result_df = df[unique_cols]
+
             st.subheader("📊 분석 결과")
             st.dataframe(result_df)
 
-            # 5. 엑셀 다운로드 (필터링된 데이터)
+            # 5. 엑셀 다운로드
             buffer = BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 result_df.to_excel(writer, index=False, sheet_name='분석결과')
