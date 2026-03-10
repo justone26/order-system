@@ -5,13 +5,10 @@ import os
 st.set_page_config(page_title="자동 발주 및 재고 관리", layout="wide")
 st.title("📦 재고 품절 방지 및 발주 관리 시스템")
 
-# [핵심] 결과값을 기억하기 위한 세션 상태 초기화
-if 'analysis_result' not in st.session_state:
-    st.session_state.analysis_result = None
-if 'history_result' not in st.session_state:
-    st.session_state.history_result = None
-if 'searched_date' not in st.session_state:
-    st.session_state.searched_date = None
+# 세션 상태 초기화 (데이터 유지용)
+if 'analysis_result' not in st.session_state: st.session_state.analysis_result = None
+if 'history_result' not in st.session_state: st.session_state.history_result = None
+if 'searched_date' not in st.session_state: st.session_state.searched_date = None
 
 uploaded_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls'])
 
@@ -19,7 +16,7 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     columns = df.columns.tolist()
 
-    # 자동 매핑 함수
+    # 자동 매핑 도우미 함수
     def get_default_index(keywords, cols):
         for col in cols:
             for key in keywords:
@@ -42,7 +39,7 @@ if uploaded_file is not None:
         target_3day = st.selectbox("3일 발주 합계", columns, index=get_default_index(['3일'], columns))
         target_1week = st.selectbox("1주 발주 합계", columns, index=get_default_index(['1주', '7일'], columns))
 
-    # [분석 및 이력 저장] 버튼
+    # 분석 및 이력 저장 버튼
     if st.button("분석 및 이력 저장"):
         try:
             df['일 판매 데이터'] = df[col_invoice] + df[col_reception]
@@ -58,14 +55,14 @@ if uploaded_file is not None:
         except Exception as e:
             st.error(f"오류: {e}")
 
-    # 1. 상단에 항상 분석 결과 출력 (기억된 내용이 있다면)
+    # [최신 결과 출력]
     if st.session_state.analysis_result is not None:
         st.subheader("📊 최신 분석 결과")
         st.dataframe(st.session_state.analysis_result)
 
-    # 과거 검색 영역
+    # [과거 내역 검색 및 비교]
     st.write("---")
-    st.subheader("📅 과거 발주 내역 검색")
+    st.subheader("📅 과거 발주 내역 검색 및 추이 비교")
     search_date = st.date_input("조회할 날짜 선택")
     if st.button("내역 조회"):
         if os.path.exists('order_history.csv'):
@@ -73,13 +70,20 @@ if uploaded_file is not None:
             filtered_df = history_df[history_df['저장날짜'] == str(search_date)]
             st.session_state.history_result = filtered_df
             st.session_state.searched_date = search_date
+            
+            # 판매량 추이 비교 (현재 분석 결과 vs 과거 데이터)
+            if st.session_state.analysis_result is not None and not filtered_df.empty:
+                st.write("📈 **옵션별 판매량 추이 비교**")
+                compare_df = pd.merge(
+                    st.session_state.analysis_result[['상품명', '옵션', '일 판매 데이터']], 
+                    filtered_df[['상품명', '옵션', '일 판매 데이터']], 
+                    on=['상품명', '옵션'], suffixes=('_현재', '_과거')
+                )
+                compare_df['판매량 변화'] = compare_df['일 판매 데이터_현재'] - compare_df['일 판매 데이터_과거']
+                st.dataframe(compare_df.sort_values(by='판매량 변화', ascending=False))
         else:
             st.error("저장된 이력이 없습니다.")
 
-    # 2. 분석 결과 아래에 검색 결과 출력 (기억된 내용이 있다면)
     if st.session_state.history_result is not None:
         st.subheader(f"🔍 {st.session_state.searched_date} 조회 결과")
-        if not st.session_state.history_result.empty:
-            st.dataframe(st.session_state.history_result)
-        else:
-            st.warning("해당 날짜에 저장된 내역이 없습니다.")
+        st.dataframe(st.session_state.history_result)
