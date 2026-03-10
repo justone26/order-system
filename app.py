@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import os
+import io
 
 st.set_page_config(page_title="자동 발주 및 재고 관리", layout="wide")
 st.title("📦 재고 품절 방지 및 발주 관리 시스템")
 
-# 세션 상태 초기화 (데이터 유지용)
+# 세션 상태 초기화
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = None
 if 'history_result' not in st.session_state: st.session_state.history_result = None
 if 'searched_date' not in st.session_state: st.session_state.searched_date = None
@@ -16,7 +17,6 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     columns = df.columns.tolist()
 
-    # 자동 매핑 도우미 함수
     def get_default_index(keywords, cols):
         for col in cols:
             for key in keywords:
@@ -39,7 +39,6 @@ if uploaded_file is not None:
         target_3day = st.selectbox("3일 발주 합계", columns, index=get_default_index(['3일'], columns))
         target_1week = st.selectbox("1주 발주 합계", columns, index=get_default_index(['1주', '7일'], columns))
 
-    # 분석 및 이력 저장 버튼
     if st.button("분석 및 이력 저장"):
         try:
             df['일 판매 데이터'] = df[col_invoice] + df[col_reception]
@@ -55,12 +54,24 @@ if uploaded_file is not None:
         except Exception as e:
             st.error(f"오류: {e}")
 
-    # [최신 결과 출력]
+    # [최신 결과 출력 및 다운로드]
     if st.session_state.analysis_result is not None:
         st.subheader("📊 최신 분석 결과")
         st.dataframe(st.session_state.analysis_result)
+        
+        # 엑셀 다운로드 버튼 추가
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            st.session_state.analysis_result.to_excel(writer, index=False)
+        
+        st.download_button(
+            label="📥 결과 파일 다운로드 (Excel)",
+            data=buffer.getvalue(),
+            file_name="최신_분석결과.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
-    # [과거 내역 검색 및 비교]
+    # [과거 내역 검색]
     st.write("---")
     st.subheader("📅 과거 발주 내역 검색 및 추이 비교")
     search_date = st.date_input("조회할 날짜 선택")
@@ -71,7 +82,6 @@ if uploaded_file is not None:
             st.session_state.history_result = filtered_df
             st.session_state.searched_date = search_date
             
-            # 판매량 추이 비교 (현재 분석 결과 vs 과거 데이터)
             if st.session_state.analysis_result is not None and not filtered_df.empty:
                 st.write("📈 **옵션별 판매량 추이 비교**")
                 compare_df = pd.merge(
