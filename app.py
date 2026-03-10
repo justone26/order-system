@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
 import io
+import os
 
-st.set_page_config(page_title="자동 발주 시스템", layout="wide")
-st.title("📦 재고 품절 방지 알림 시스템")
+st.set_page_config(page_title="자동 발주 및 재고 관리", layout="wide")
+st.title("📦 재고 품절 방지 알림 및 이력 관리 시스템")
 
+# 파일 업로드
 uploaded_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls'])
 
 if uploaded_file is not None:
@@ -23,7 +25,6 @@ if uploaded_file is not None:
     
     col1, col2 = st.columns(2)
     with col1:
-        # '품절' 항목 추가
         sold_out_col = st.selectbox("품절 여부", columns, index=get_default_index(['품절'], columns))
         item_name = st.selectbox("상품명", columns, index=get_default_index(['상품', '품명'], columns))
         option_name = st.selectbox("옵션", columns, index=get_default_index(['옵션'], columns))
@@ -36,9 +37,9 @@ if uploaded_file is not None:
         target_3day = st.selectbox("3일 발주 합계", columns, index=get_default_index(['3일'], columns))
         target_1week = st.selectbox("1주 발주 합계", columns, index=get_default_index(['1주', '7일'], columns))
 
-    if st.button("분석 및 경고 확인"):
+    if st.button("분석 및 이력 저장"):
         try:
-            # 일 판매 데이터 합산
+            # 기본 계산
             df['일 판매 데이터'] = df[col_invoice] + df[col_reception]
             df['일일평균'] = df[target_3day] / 3
             df['재고소진일'] = (df[stock_col] / df['일일평균'].replace(0, 1)).round(1)
@@ -48,16 +49,30 @@ if uploaded_file is not None:
             df['4일권장발주'] = (df['일일평균'] * 4 - df[stock_col]).apply(lambda x: max(0, int(x)))
             df['7일권장발주'] = (df['일일평균'] * 7 - df[stock_col]).apply(lambda x: max(0, int(x)))
             
-            # 상태 표기 (품절 체크 추가: 품절 항목이 'Y'이거나 재고가 0이면 긴급)
+            # 상태 표시
             df['상태'] = df.apply(lambda row: '🚨 품절/긴급' if (str(row[sold_out_col]).upper() == 'Y' or row[stock_col] <= 0 or row['재고소진일'] < 3) else '정상', axis=1)
             
-            st.success("데이터 분석 완료!")
+            # 이력 저장 (데이터를 CSV 파일에 계속 쌓음)
+            df['저장날짜'] = pd.Timestamp.now().strftime('%Y-%m-%d')
+            df.to_csv('order_history.csv', mode='a', header=not os.path.exists('order_history.csv'), index=False)
+            
+            st.success("데이터 분석 및 이력 저장 완료!")
             st.dataframe(df)
 
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False)
-            
-            st.download_button("📥 결과 파일 다운로드", output.getvalue(), "분석결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as e:
-            st.error(f"계산 중 오류 발생: {e}")
+            st.error(f"오류 발생: {e}")
+
+    # 날짜별 조회 기능
+    st.write("---")
+    st.subheader("📅 과거 발주 내역 검색")
+    search_date = st.date_input("조회할 날짜 선택")
+    if st.button("내역 조회"):
+        if os.path.exists('order_history.csv'):
+            history_df = pd.read_csv('order_history.csv')
+            filtered_df = history_df[history_df['저장날짜'] == str(search_date)]
+            if not filtered_df.empty:
+                st.dataframe(filtered_df)
+            else:
+                st.warning("해당 날짜에 저장된 내역이 없습니다.")
+        else:
+            st.error("저장된 이력이 없습니다.")
