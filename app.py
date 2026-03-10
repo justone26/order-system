@@ -6,7 +6,7 @@ import io
 st.set_page_config(page_title="자동 발주 및 재고 관리", layout="wide")
 st.title("📦 재고 기반 판매량 분석 시스템")
 
-# [세션 상태]
+# 세션 상태 초기화
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = None
 
 uploaded_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls'])
@@ -23,23 +23,32 @@ if uploaded_file is not None:
 
     st.write("---")
     st.subheader("⚙️ 데이터 항목 매핑")
+    
+    # 요청하신 순서대로 매핑 항목 재배치
     col1, col2 = st.columns(2)
     with col1:
+        sold_out_col = st.selectbox("품절 여부", columns, index=get_default_index(['품절'], columns))
+        vendor_name = st.selectbox("공급처", columns, index=get_default_index(['공급처', '거래처'], columns))
         item_name = st.selectbox("상품명", columns, index=get_default_index(['상품', '품명'], columns))
         option_name = st.selectbox("옵션", columns, index=get_default_index(['옵션'], columns))
+        vendor_option = st.selectbox("공급처옵션", columns, index=get_default_index(['공급처옵션'], columns))
+    with col2:
+        stock_col = st.selectbox("정상재고", columns, index=get_default_index(['재고', '정상'], columns))
+        # 가용재고는 '어제/오늘'로 구분하여 받기 위해 별도 배치
         yesterday_stock = st.selectbox("어제 가용재고", columns, index=get_default_index(['어제', '전일'], columns))
         today_stock = st.selectbox("오늘 가용재고", columns, index=get_default_index(['오늘', '당일'], columns))
-        stock_col = st.selectbox("현재 정상재고", columns, index=get_default_index(['재고', '정상'], columns))
-    with col2:
+        col_invoice = st.selectbox("송장", columns, index=get_default_index(['송장'], columns))
+        col_reception = st.selectbox("접수", columns, index=get_default_index(['접수'], columns))
         target_3day = st.selectbox("3일 발주 합계", columns, index=get_default_index(['3일'], columns))
+        target_1week = st.selectbox("1주 발주 합계", columns, index=get_default_index(['1주', '7일'], columns))
 
     if st.button("분석 및 이력 저장"):
         try:
-            # [오류 방지: 데이터 강제 숫자 변환]
+            # 데이터 숫자로 변환
             for col in [yesterday_stock, today_stock, target_3day, stock_col]:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-            # [판매량 계산 로직: 재고 차액]
+            # 일 판매 데이터 계산: 가용재고 차액 사용
             df['일 판매 데이터'] = df[yesterday_stock] - df[today_stock]
             df['일일평균'] = df[target_3day] / 3
             df['재고소진일'] = (df[stock_col] / df['일일평균'].replace(0, 1)).round(1)
@@ -48,15 +57,15 @@ if uploaded_file is not None:
             df.to_csv('order_history.csv', mode='a', header=not os.path.exists('order_history.csv'), index=False)
             
             st.session_state.analysis_result = df
-            st.success("재고 기반 분석 및 이력 저장 완료!")
+            st.success("데이터 분석 및 이력 저장 완료!")
         except Exception as e:
             st.error(f"오류 발생: {e}")
 
+    # 이후 출력 및 비교 로직은 동일
     if st.session_state.analysis_result is not None:
         st.subheader("📊 최신 분석 결과")
         st.dataframe(st.session_state.analysis_result)
         
-        # 엑셀 다운로드
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             st.session_state.analysis_result.to_excel(writer, index=False)
@@ -80,15 +89,8 @@ if uploaded_file is not None:
                 )
                 compare_df['판매량 변화'] = compare_df['일 판매 데이터_현재'] - compare_df['일 판매 데이터_과거']
                 
-                # [그래프 시각화]
                 st.bar_chart(compare_df.set_index(option_name)['판매량 변화'])
                 
-                # [색상 스타일링]
                 def color_negative_red(val):
                     color = 'red' if val > 0 else 'blue' if val < 0 else 'black'
                     return f'color: {color}'
-                
-                styled_df = compare_df.sort_values(by='판매량 변화', ascending=False).style.applymap(color_negative_red, subset=['판매량 변화'])
-                st.dataframe(styled_df)
-            else:
-                st.warning("해당 날짜에 저장된 내역이 없습니다.")
