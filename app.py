@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="재고 관리 및 판매 분석", layout="wide")
-st.title("📦 지능형 재고 관리 시스템")
+st.set_page_config(page_title="재고 관리 및 판매 추이 분석", layout="wide")
+st.title("📦 지능형 재고 관리 시스템 (판매 추이 포함)")
 
 uploaded_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls'])
 
@@ -41,27 +41,43 @@ if uploaded_file is not None:
 
     if st.button("분석 실행"):
         try:
-            # 1. 수치 데이터 정제
+            # 수치 데이터 정제
             for col in [stock_col, avail_col, target_3day, target_1week]:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-            # 2. 일일 판매량(기준) 산출
-            df['일일 판매량(기준)'] = (df[target_3day] / 3).round(1)
+            # 1. 판매량 산출 및 과거 데이터 대조
+            df['일일 판매량(최근 3일)'] = (df[target_3day] / 3).round(1)
+            df['일일 판매량(지난 1주)'] = (df[target_1week] / 7).round(1)
+            
+            # 2. 변화량(추이) 계산: 최근 3일 판매가 1주 평균보다 얼마나 늘었는가
+            # 1.0보다 크면 판매 증가, 작으면 판매 감소
+            df['판매 변화율(추이)'] = (df['일일 판매량(최근 3일)'] / (df['일일 판매량(지난 1주)'] + 0.1)).round(2)
             
             # 3. 리드타임 및 안전재고 수량 산출
-            df['리드타임 준비량'] = (df['일일 판매량(기준)'] * lead_time_days).astype(int)
-            df['안전재고 수량'] = (df['일일 판매량(기준)'] * safety_stock_days).astype(int)
+            df['리드타임 준비량'] = (df['일일 판매량(최근 3일)'] * lead_time_days).astype(int)
+            df['안전재고 수량'] = (df['일일 판매량(최근 3일)'] * safety_stock_days).astype(int)
             
-            # 4. 권장 발주량: (준비량 + 안전재고) - 가용재고
+            # 4. 최종 권장 발주량: (준비량 + 안전재고) - 가용재고
             df['권장 발주량'] = (df['리드타임 준비량'] + df['안전재고 수량'] - df[avail_col]).clip(lower=0).astype(int)
-            
-            # 5. 과거 데이터 대조 (판매 추이 분석: 1주 평균 대비 최근 3일 속도)
-            df['판매 추이(1=평균)'] = (df['일일 판매량(기준)'] / (df[target_1week] / 7 + 0.01)).round(2)
 
-            st.subheader("📊 분석 결과 리스트")
-            # 주요 컬럼을 앞쪽으로 배치하여 가독성 향상
-            display_cols = [vendor_col, item_name, option_name, '일일 판매량(기준)', '리드타임 준비량', '안전재고 수량', avail_col, '권장 발주량', '판매 추이(1=평균)']
-            st.dataframe(df[display_cols])
+            st.subheader("📊 1. 전체 분석 결과 (과거 데이터 & 변화량 포함)")
+            # 보기 편하게 컬럼 순서 재배치
+            final_cols = [
+                vendor_col, item_name, option_name, 
+                target_1week, target_3day, '판매 변화율(추이)',
+                '일일 판매량(최근 3일)', '리드타임 준비량', '안전재고 수량', 
+                avail_col, '권장 발주량'
+            ]
+            st.dataframe(df[final_cols])
+
+            st.write("---")
+            st.subheader("📈 2. 판매 추이 시각화 (최근 3일 vs 지난 1주)")
+            # 상위 15개 상품의 변화량을 그래프로 표시
+            chart_data = df.nlargest(15, target_3day)[[option_name, '일일 판매량(지난 1주)', '일일 판매량(최근 3일)']]
+            chart_data = chart_data.set_index(option_name)
+            st.bar_chart(chart_data)
+            
+            
 
         except Exception as e:
-            st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
+            st.error(f"분석 중 오류 발생: {e}")
