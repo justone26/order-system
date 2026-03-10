@@ -1,11 +1,9 @@
 import streamlit as st
 import pandas as pd
-import os
 
-st.set_page_config(page_title="재고 관리 대시보드", layout="wide")
-st.title("📦 재고 최적화 및 발주 관리 시스템")
+st.set_page_config(page_title="재고 관리 및 판매 분석", layout="wide")
+st.title("📦 지능형 재고 관리 시스템")
 
-# --- 1. 데이터 업로드 및 매핑 ---
 uploaded_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls'])
 
 if uploaded_file is not None:
@@ -41,47 +39,29 @@ if uploaded_file is not None:
     with col4:
         safety_stock_days = st.number_input("안전재고 확보 기간 (일)", min_value=0, value=3)
 
-    # --- 2. 분석 실행 및 결과 표시 ---
-    if st.button("🚀 분석 실행 및 이력 저장"):
+    if st.button("분석 실행"):
         try:
-            # 데이터 정제
+            # 1. 수치 데이터 정제
             for col in [stock_col, avail_col, target_3day, target_1week]:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-            # 계산 로직
+            # 2. 일일 판매량(기준) 산출
             df['일일 판매량(기준)'] = (df[target_3day] / 3).round(1)
-            df['판매 변화율(추이)'] = (df['일일 판매량(기준)'] / (df[target_1week] / 7 + 0.1)).round(2)
+            
+            # 3. 리드타임 및 안전재고 수량 산출
             df['리드타임 준비량'] = (df['일일 판매량(기준)'] * lead_time_days).astype(int)
             df['안전재고 수량'] = (df['일일 판매량(기준)'] * safety_stock_days).astype(int)
+            
+            # 4. 권장 발주량: (준비량 + 안전재고) - 가용재고
             df['권장 발주량'] = (df['리드타임 준비량'] + df['안전재고 수량'] - df[avail_col]).clip(lower=0).astype(int)
-            df['저장날짜'] = pd.Timestamp.now().strftime('%Y-%m-%d')
+            
+            # 5. 과거 데이터 대조 (판매 추이 분석: 1주 평균 대비 최근 3일 속도)
+            df['판매 추이(1=평균)'] = (df['일일 판매량(기준)'] / (df[target_1week] / 7 + 0.01)).round(2)
 
-            st.subheader("📊 현재 분석 결과")
-            display_cols = [vendor_col, item_name, option_name, '판매 변화율(추이)', '일일 판매량(기준)', '리드타임 준비량', '안전재고 수량', avail_col, '권장 발주량']
+            st.subheader("📊 분석 결과 리스트")
+            # 주요 컬럼을 앞쪽으로 배치하여 가독성 향상
+            display_cols = [vendor_col, item_name, option_name, '일일 판매량(기준)', '리드타임 준비량', '안전재고 수량', avail_col, '권장 발주량', '판매 추이(1=평균)']
             st.dataframe(df[display_cols])
 
-            # 이력 저장 (CSV)
-            df.to_csv('order_history.csv', mode='a', header=not os.path.exists('order_history.csv'), index=False)
-            st.success("금일 분석 데이터가 이력에 저장되었습니다.")
-
         except Exception as e:
-            st.error(f"오류 발생: {e}")
-
-    # --- 3. 과거 데이터 조회 (하단 분리) ---
-    st.write("---")
-    st.subheader("📅 과거 데이터 및 변화량 조회")
-    if os.path.exists('order_history.csv'):
-        history_df = pd.read_csv('order_history.csv')
-        available_dates = history_df['저장날짜'].unique()
-        
-        selected_date = st.selectbox("조회할 날짜를 선택하세요", options=reversed(available_dates))
-        
-        filtered_history = history_df[history_df['저장날짜'] == selected_date]
-        
-        st.write(f"**{selected_date} 기준 데이터**")
-        st.dataframe(filtered_history)
-        
-        # 간단한 변화량 시각화 (선택 날짜의 상위 판매 품목)
-        st.bar_chart(filtered_history.nlargest(10, '일일 판매량(기준)').set_index(option_name)['일일 판매량(기준)'])
-    else:
-        st.info("아직 저장된 과거 이력이 없습니다. '분석 실행' 버튼을 눌러 첫 데이터를 저장해 보세요.")
+            st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
