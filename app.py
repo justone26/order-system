@@ -28,11 +28,11 @@ if uploaded_file is not None:
         vendor_name = st.selectbox("공급처", columns, index=get_default_index(['공급처'], columns))
         item_name = st.selectbox("상품명", columns, index=get_default_index(['상품'], columns))
         option_name = st.selectbox("옵션", columns, index=get_default_index(['옵션'], columns))
+        vendor_option = st.selectbox("공급처옵션", columns, index=get_default_index(['공급처옵션'], columns))
+    with col2:
         stock_col = st.selectbox("정상재고", columns, index=get_default_index(['정상'], columns))
         avail_col = st.selectbox("가용재고", columns, index=get_default_index(['가용'], columns))
-    with col2:
         target_3day = st.selectbox("3일 발주 합계", columns, index=get_default_index(['3일'], columns))
-        target_7day = st.selectbox("1주 발주 합계", columns, index=get_default_index(['1주', '7일'], columns))
         lead_time = st.number_input("평균 리드타임 (일)", min_value=0, value=7)
         safety_stock_days = st.number_input("안전재고 확보일 (일)", min_value=0, value=3)
 
@@ -42,16 +42,16 @@ if uploaded_file is not None:
             for col in [stock_col, avail_col, target_3day]:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
 
-            # [핵심] 일일 판매량 계산 (소수점 제거)
+            # 일일 판매량 및 재고 차액 계산 (소수점 제거)
             df['일일 판매량(기준)'] = (df[target_3day] / 3).round(0).astype(int)
             df['일일 판매량(재고차액)'] = (df[stock_col] - df[avail_col]).clip(lower=0).astype(int)
             
-            # [요청하신 발주 수량 계산]
+            # 발주 수량 계산
             df['1일 추가 발주 필요수량'] = ((df['일일 판매량(기준)'] * 1) - df[avail_col]).clip(lower=0).astype(int)
             df['3일 추가 발주 필요수량'] = ((df['일일 판매량(기준)'] * 3) - df[avail_col]).clip(lower=0).astype(int)
             df['7일 추가 발주 필요수량'] = ((df['일일 판매량(기준)'] * 7) - df[avail_col]).clip(lower=0).astype(int)
             
-            # 리드타임 고려 발주량
+            # 리드타임 고려 권장 발주량
             total_days = lead_time + safety_stock_days
             df['권장 발주수량(리드타임)'] = ((df['일일 판매량(기준)'] * total_days) - df[avail_col]).clip(lower=0).astype(int)
 
@@ -62,7 +62,7 @@ if uploaded_file is not None:
             df.to_csv('order_history.csv', mode='a', header=not os.path.exists('order_history.csv'), index=False)
             
             st.session_state.analysis_result = df
-            st.success("데이터 분석 및 정수 변환 완료!")
+            st.success("데이터 분석 완료!")
         except Exception as e:
             st.error(f"오류 발생: {e}")
 
@@ -71,7 +71,6 @@ if uploaded_file is not None:
         
         
         
-        # 품절 상태 강조 스타일링
         def highlight_status(df):
             styles = pd.DataFrame('', index=df.index, columns=df.columns)
             if '상태' in df.columns:
