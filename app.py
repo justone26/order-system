@@ -6,6 +6,7 @@ import io
 st.set_page_config(page_title="자동 발주 및 재고 관리", layout="wide")
 st.title("📦 리드타임/안전재고 반영 발주 관리 시스템")
 
+# [세션 상태 관리]
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = None
 
 uploaded_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls'])
@@ -34,21 +35,20 @@ if uploaded_file is not None:
         col_reception = st.selectbox("접수", columns, index=get_default_index(['접수'], columns))
         target_3day = st.selectbox("3일 발주 합계", columns, index=get_default_index(['3일'], columns))
         
-        # [운영 설정: 리드타임과 안전재고]
         lead_time = st.number_input("평균 리드타임 (일)", min_value=0, value=7)
         safety_stock_days = st.number_input("안전재고 확보일 (일)", min_value=0, value=3)
 
     if st.button("분석 및 발주량 계산"):
         try:
-            # 숫자 변환
+            # 수치 데이터 정제
             for col in [col_invoice, col_reception, target_3day, stock_col, available_stock]:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-            # 1. 일일 판매량 및 평균 계산
+            # 일 판매 데이터 계산
             df['일 판매 데이터'] = df[col_invoice] + df[col_reception]
             df['일일평균'] = (df[target_3day] / 3).round(1)
             
-            # 2. [핵심] 발주 권장량 계산 
+            # 리드타임 + 안전재고 반영 발주 공식
             # 공식: (일일평균 * (리드타임 + 안전재고)) - 현재가용재고
             df['권장발주수량'] = (df['일일평균'] * (lead_time + safety_stock_days) - df[available_stock]).apply(lambda x: max(0, int(x)))
             
@@ -58,14 +58,20 @@ if uploaded_file is not None:
         except Exception as e:
             st.error(f"오류 발생: {e}")
 
+    # 데이터 시각화 및 출력 섹션
     if st.session_state.analysis_result is not None:
         st.subheader("📊 발주 분석 대시보드")
         
-        # 시각화: 옵션별 발주 권장량 차트
-        st.bar_chart(st.session_state.analysis_result.set_index(option_name)['권장발주수량'])
+        # 
         
-        # 데이터프레임 출력
+        # 권장 발주량 시각화 (데이터 존재 여부 확인 후 실행)
+        if '권장발주수량' in st.session_state.analysis_result.columns:
+            st.bar_chart(st.session_state.analysis_result.set_index(option_name)['권장발주수량'])
+            
         st.dataframe(st.session_state.analysis_result)
-
-    # [과거 내역 및 비교 로직...]
-    # (이전과 동일한 로직으로 검색 기능을 사용하시면 됩니다)
+        
+        # 엑셀 다운로드
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            st.session_state.analysis_result.to_excel(writer, index=False)
+        st.download_button("📥 결과 파일 다운로드 (Excel)", buffer.getvalue(), "발주계산결과.xlsx")
