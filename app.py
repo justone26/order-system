@@ -18,37 +18,45 @@ if uploaded_file is not None:
 
     st.write("---")
     st.subheader("⚙️ 1단계: 데이터 매핑")
+    
     col1, col2 = st.columns(2)
     with col1:
+        sold_out_col = st.selectbox("품절 여부", columns, index=get_default_index(['품절'], columns))
+        vendor_col = st.selectbox("공급처", columns, index=get_default_index(['공급처'], columns))
         item_name = st.selectbox("상품명", columns, index=get_default_index(['상품'], columns))
         option_name = st.selectbox("옵션", columns, index=get_default_index(['옵션'], columns))
-        vendor = st.selectbox("공급처", columns, index=get_default_index(['공급처'], columns))
+        vendor_option = st.selectbox("공급처옵션", columns, index=get_default_index(['공급처옵션'], columns))
+    
     with col2:
         stock_col = st.selectbox("정상재고", columns, index=get_default_index(['정상'], columns))
         avail_col = st.selectbox("가용재고", columns, index=get_default_index(['가용'], columns))
         target_3day = st.selectbox("3일 발주 합계", columns, index=get_default_index(['3일'], columns))
+        target_1week = st.selectbox("1주 발주 합계", columns, index=get_default_index(['1주', '7일'], columns))
 
     st.write("---")
     st.subheader("⚙️ 2단계: 기간 기반 산출 설정")
     col3, col4 = st.columns(2)
     with col3:
-        lead_time_days = st.selectbox("평균 리드타임 기간(일)", options=[3, 5, 7, 10, 14, 21, 30], index=2)
+        lead_time_days = st.number_input("평균 리드타임 기간 (일)", min_value=0, value=7)
     with col4:
-        safety_stock_days = st.selectbox("안전재고 확보 기간(일)", options=[1, 2, 3, 5, 7, 10], index=2)
+        safety_stock_days = st.number_input("안전재고 확보 기간 (일)", min_value=0, value=3)
 
     if st.button("분석 실행"):
-        # 1. 일일 판매량(기준): 3일 발주 합계 기반
-        df['일일 판매량(기준)'] = (df[target_3day] / 3).round(0).astype(int)
-        
-        # 2. 필수 재고 수량 계산
-        # 리드타임 준비량 = 일일판매량 * 리드타임 기간
-        # 안전재고 수량 = 일일판매량 * 안전재고 기간
-        df['리드타임 준비량'] = (df['일일 판매량(기준)'] * lead_time_days).astype(int)
-        df['안전재고 수량'] = (df['일일 판매량(기준)'] * safety_stock_days).astype(int)
-        
-        # 3. 최종 권장 발주량: (준비량 + 안전재고) - 가용재고
-        df['권장 발주량'] = (df['리드타임 준비량'] + df['안전재고 수량'] - df[avail_col]).clip(lower=0).astype(int)
-        
-        st.subheader("📊 분석 결과")
-        
-        st.dataframe(df)
+        try:
+            # 1. 일일 판매량(기준): 3일 발주 합계 기반
+            df['일일 판매량(기준)'] = (df[target_3day] / 3).round(0).astype(int)
+            
+            # 2. 필수 재고 수량 계산
+            df['리드타임 준비량'] = (df['일일 판매량(기준)'] * lead_time_days).astype(int)
+            df['안전재고 수량'] = (df['일일 판매량(기준)'] * safety_stock_days).astype(int)
+            
+            # 3. 최종 권장 발주량: (준비량 + 안전재고) - 가용재고
+            df['권장 발주량'] = (df['리드타임 준비량'] + df['안전재고 수량'] - df[avail_col]).clip(lower=0).astype(int)
+            
+            # 4. 상태 판정 (품절 여부 포함)
+            df['상태'] = df.apply(lambda row: '🚨 품절/긴급' if (str(row[sold_out_col]).upper() == 'Y' or row[avail_col] <= 0) else '정상', axis=1)
+            
+            st.subheader("📊 분석 결과")
+            st.dataframe(df)
+        except Exception as e:
+            st.error(f"분석 중 오류 발생: {e}")
