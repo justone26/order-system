@@ -65,12 +65,18 @@ if uploaded_file is not None:
             df['권장 발주량'] = (df['리드타임 준비량'] + df['안전재고 수량'] - df[avail_col]).clip(lower=0).astype(int)
             df['상태'] = df.apply(lambda row: '🚨 품절/긴급' if (str(row[sold_out_col]).upper() == 'Y' or row[avail_col] <= 0) else '정상', axis=1)
 
-            st.subheader("📊 분석 결과")
-            st.dataframe(df)
+            # 필수 컬럼만 필터링
+            output_cols = [sold_out_col, vendor_col, item_name, option_name, vendor_option, avail_col, '일일 판매량(기준)', '리드타임 준비량', '안전재고 수량', '권장 발주량', '상태']
+            result_df = df[[c for c in output_cols if c in df.columns]]
 
+            
+            st.subheader("📊 분석 결과")
+            st.dataframe(result_df)
+
+            # 5. 엑셀 다운로드 (필터링된 데이터)
             buffer = BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='분석결과')
+                result_df.to_excel(writer, index=False, sheet_name='분석결과')
             
             st.download_button("📥 분석 결과 엑셀 다운로드", data=buffer.getvalue(), file_name="재고_분석_결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
