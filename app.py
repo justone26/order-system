@@ -33,16 +33,20 @@ if uploaded_file is not None:
         stock_col = st.selectbox("정상재고", columns, index=get_default_index(['정상'], columns))
         avail_col = st.selectbox("가용재고", columns, index=get_default_index(['가용'], columns))
         target_3day = st.selectbox("3일 발주 합계", columns, index=get_default_index(['3일'], columns))
-        lead_time = st.number_input("평균 리드타임 (일)", min_value=0, value=7)
-        safety_stock_days = st.number_input("안전재고 확보일 (일)", min_value=0, value=3)
+        lead_time_input = st.number_input("평균 리드타임 (일)", min_value=0, value=7)
+        safety_stock_input = st.number_input("안전재고 확보일 (일)", min_value=0, value=3)
 
     if st.button("분석 및 이력 저장"):
         try:
-            # 수치 데이터 정수형 처리
             for col in [stock_col, avail_col, target_3day]:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
 
-            # 일일 판매량 및 재고 차액 계산 (소수점 제거)
+            # 운영 설정값 대입
+            df['평균 리드타임(일)'] = lead_time_input
+            df['안전재고 확보일(일)'] = safety_stock_input
+            df['총 확보 기간(일)'] = lead_time_input + safety_stock_input
+
+            # 데이터 산출
             df['일일 판매량(기준)'] = (df[target_3day] / 3).round(0).astype(int)
             df['일일 판매량(재고차액)'] = (df[stock_col] - df[avail_col]).clip(lower=0).astype(int)
             
@@ -50,26 +54,20 @@ if uploaded_file is not None:
             df['1일 추가 발주 필요수량'] = ((df['일일 판매량(기준)'] * 1) - df[avail_col]).clip(lower=0).astype(int)
             df['3일 추가 발주 필요수량'] = ((df['일일 판매량(기준)'] * 3) - df[avail_col]).clip(lower=0).astype(int)
             df['7일 추가 발주 필요수량'] = ((df['일일 판매량(기준)'] * 7) - df[avail_col]).clip(lower=0).astype(int)
-            
-            # 리드타임 고려 권장 발주량
-            total_days = lead_time + safety_stock_days
-            df['권장 발주수량(리드타임)'] = ((df['일일 판매량(기준)'] * total_days) - df[avail_col]).clip(lower=0).astype(int)
+            df['권장 발주수량(리드타임)'] = ((df['일일 판매량(기준)'] * df['총 확보 기간(일)']) - df[avail_col]).clip(lower=0).astype(int)
 
-            # 상태 판정
             df['상태'] = df.apply(lambda row: '🚨 품절/긴급' if (str(row[sold_out_col]).upper() == 'Y' or row[avail_col] <= 0) else '정상', axis=1)
             
             df['저장날짜'] = pd.Timestamp.now().strftime('%Y-%m-%d')
             df.to_csv('order_history.csv', mode='a', header=not os.path.exists('order_history.csv'), index=False)
             
             st.session_state.analysis_result = df
-            st.success("데이터 분석 완료!")
+            st.success("데이터 분석 및 설정값 반영 완료!")
         except Exception as e:
             st.error(f"오류 발생: {e}")
 
     if st.session_state.analysis_result is not None:
         st.subheader("📊 분석 결과 대시보드")
-        
-        
         
         def highlight_status(df):
             styles = pd.DataFrame('', index=df.index, columns=df.columns)
@@ -79,15 +77,3 @@ if uploaded_file is not None:
             return styles
         
         st.dataframe(st.session_state.analysis_result.style.apply(highlight_status, axis=None))
-
-    st.write("---")
-    st.subheader("📅 과거 발주 내역 검색")
-    search_date = st.date_input("조회할 날짜 선택")
-    if st.button("내역 조회"):
-        if os.path.exists('order_history.csv'):
-            history_df = pd.read_csv('order_history.csv')
-            filtered_df = history_df[history_df['저장날짜'] == str(search_date)]
-            if not filtered_df.empty:
-                st.dataframe(filtered_df)
-            else:
-                st.warning("선택한 날짜에 저장된 기록이 없습니다.")
