@@ -42,32 +42,36 @@ if uploaded_file is not None:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
 
             # 운영 설정값 대입
-            df['평균 리드타임(일)'] = lead_time_input
-            df['안전재고 확보일(일)'] = safety_stock_input
-            df['총 확보 기간(일)'] = lead_time_input + safety_stock_input
-
+            total_days = lead_time_input + safety_stock_input
+            
             # 데이터 산출
             df['일일 판매량(기준)'] = (df[target_3day] / 3).round(0).astype(int)
-            df['일일 판매량(재고차액)'] = (df[stock_col] - df[avail_col]).clip(lower=0).astype(int)
             
-            # 발주 수량 계산
+            # 발주 필요수량 계산
             df['1일 추가 발주 필요수량'] = ((df['일일 판매량(기준)'] * 1) - df[avail_col]).clip(lower=0).astype(int)
             df['3일 추가 발주 필요수량'] = ((df['일일 판매량(기준)'] * 3) - df[avail_col]).clip(lower=0).astype(int)
             df['7일 추가 발주 필요수량'] = ((df['일일 판매량(기준)'] * 7) - df[avail_col]).clip(lower=0).astype(int)
-            df['권장 발주수량(리드타임)'] = ((df['일일 판매량(기준)'] * df['총 확보 기간(일)']) - df[avail_col]).clip(lower=0).astype(int)
+            
+            # 권장 발주량 및 기준 일수 표기
+            df['권장 발주수량(리드타임)'] = ((df['일일 판매량(기준)'] * total_days) - df[avail_col]).clip(lower=0).astype(int)
+            df['권장 발주량 산출기준(일수)'] = total_days  # 여기서 리드타임+안전재고 총 일수를 명시합니다.
 
+            # 상태 판정
             df['상태'] = df.apply(lambda row: '🚨 품절/긴급' if (str(row[sold_out_col]).upper() == 'Y' or row[avail_col] <= 0) else '정상', axis=1)
             
             df['저장날짜'] = pd.Timestamp.now().strftime('%Y-%m-%d')
             df.to_csv('order_history.csv', mode='a', header=not os.path.exists('order_history.csv'), index=False)
             
             st.session_state.analysis_result = df
-            st.success("데이터 분석 및 설정값 반영 완료!")
+            st.success("데이터 분석 완료!")
         except Exception as e:
             st.error(f"오류 발생: {e}")
 
     if st.session_state.analysis_result is not None:
         st.subheader("📊 분석 결과 대시보드")
+        
+        # 발주량 산출 기준 시각화 요약
+        
         
         def highlight_status(df):
             styles = pd.DataFrame('', index=df.index, columns=df.columns)
