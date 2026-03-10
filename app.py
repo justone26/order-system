@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import os
+from io import BytesIO
 
 # 페이지 설정
 st.set_page_config(page_title="재고 관리 및 발주 시스템", layout="wide")
@@ -40,48 +40,51 @@ if uploaded_file is not None:
     st.subheader("⚙️ 2단계: 기간 기반 산출 설정")
     col3, col4 = st.columns(2)
     with col3:
-        lead_time_days = st.number_input("평균 리드타임 기간 (일)", min_value=0, value=7)
+        # 리드타임 초기값 0
+        lead_time_days = st.number_input("평균 리드타임 기간 (일)", min_value=0, value=0)
     with col4:
+        # 안전재고 초기값 3
         safety_stock_days = st.number_input("안전재고 확보 기간 (판매량의 몇 일분?)", min_value=0, value=3)
 
-    # 4. 분석 실행 및 저장
-    if st.button("🚀 분석 실행 및 이력 저장"):
+    # 4. 분석 실행
+    if st.button("🚀 분석 실행"):
         try:
+            # 수치 데이터 정제
             for col in [target_3day, target_1week, avail_col]:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
             # 계산 로직
+            # 일일 판매량(기준)
             df['일일 판매량(기준)'] = (df[target_3day] / 3).round(0).astype(int)
-            df['판매 추이(1주대비)'] = (df['일일 판매량(기준)'] / ((df[target_1week] / 7) + 0.1)).round(2)
+            
+            # 리드타임 준비량
             df['리드타임 준비량'] = (df['일일 판매량(기준)'] * lead_time_days).astype(int)
+            
+            # 안전재고 수량
             df['안전재고 수량'] = (df['일일 판매량(기준)'] * safety_stock_days).astype(int)
             
-            # [요청 적용] 권장 발주량: (준비량 + 안전재고) - 가용재고
+            # 권장 발주량: (리드타임 준비량 + 안전재고 수량) - 가용재고
             df['권장 발주량'] = (df['리드타임 준비량'] + df['안전재고 수량'] - df[avail_col]).clip(lower=0).astype(int)
             
+            # 품절 상태 판정
             df['상태'] = df.apply(lambda row: '🚨 품절/긴급' if (str(row[sold_out_col]).upper() == 'Y' or row[avail_col] <= 0) else '정상', axis=1)
-            df['저장날짜'] = pd.Timestamp.now().strftime('%Y-%m-%d')
 
             st.subheader("📊 분석 결과")
             st.dataframe(df)
+            
+            
 
-            # 이력 저장
-            df.to_csv('order_history.csv', mode='a', header=not os.path.exists('order_history.csv'), index=False)
-            st.success("데이터가 이력에 저장되었습니다.")
+            # 5. 엑셀 다운로드 기능
+            buffer = BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='분석결과')
+            
+            st.download_button(
+                label="📥 분석 결과 엑셀 다운로드",
+                data=buffer.getvalue(),
+                file_name="재고_분석_결과.xlsx",
+                mime="application/vnd.ms-excel"
+            )
+
         except Exception as e:
-            st.error(f"분석 오류: {e}")
-
-    # 5. 과거 데이터 조회 섹션
-    st.write("---")
-    st.subheader("📅 과거 데이터 및 변화량 조회")
-    if os.path.exists('order_history.csv'):
-        try:
-            history_df = pd.read_csv('order_history.csv')
-            if '저장날짜' in history_df.columns:
-                selected_date = st.selectbox("조회할 날짜를 선택하세요", options=reversed(history_df['저장날짜'].unique()))
-                filtered_history = history_df[history_df['저장날짜'] == selected_date]
-                st.dataframe(filtered_history)
-        except Exception:
-            st.info("이력 데이터를 불러오는 중 오류가 발생했습니다.")
-    else:
-        st.info("저장된 이력이 없습니다. '분석 실행' 버튼을 눌러 첫 데이터를 저장하세요.")
+            st.error(f"분석 중 오류 발생: {e}")
