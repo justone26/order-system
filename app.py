@@ -7,34 +7,20 @@ import holidays
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [핵심 디자인] 첫 번째 버튼만 55px 적용, 나머지는 영향 없음
+# 1. 시각적인 대형 제목 (CSS로 정확하게 55px 고정)
 st.markdown("""
-    <style>
-    /* 첫 번째 버튼(제목)만 타겟팅하여 55px 적용 */
-    div.stButton:nth-of-type(1) button {
-        background: none !important;
-        border: none !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        display: flex !important;
-        align-items: center !important;
-        width: 100% !important;
-        text-align: left !important;
-        box-shadow: none !important;
-        font-size: 55px !important;
-        font-weight: 900 !important;
-        color: #000 !important;
-        height: auto !important;
-    }
-    div.stButton:nth-of-type(1) button:hover { color: #555 !important; }
-    </style>
+    <div style="font-size: 55px; font-weight: 900; color: #000; margin-bottom: 20px;">
+        📦 재고 관리 및 발주 시스템
+    </div>
 """, unsafe_allow_html=True)
 
-# 1. 제목 버튼 (이 녀석만 크게 나옵니다)
-if st.button("📦 재고 관리 및 발주 시스템"):
+# 2. 시스템 초기화 버튼 (기능은 여기서 수행)
+if st.button("🔄 시스템 초기화"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
+
+st.divider()
 
 # 세션 관리
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
@@ -80,7 +66,6 @@ if st.session_state.df_raw is not None:
     lead_time = l1.number_input("리드타임 (일)", value=0)
     safety_stock = l2.number_input("안전재고 (일)", value=3)
     
-    # 이 버튼은 영향을 받지 않아 원래대로 보입니다
     if st.button("🚀 분석 실행", type="primary"):
         today = datetime.now()
         kr_holidays = holidays.KR(years=today.year)
@@ -138,7 +123,7 @@ if st.session_state.df_raw is not None:
                 st.session_state.history[date_key].append(record)
                 st.success("기록 저장 완료!")
 
-    # 6단계: 과거 확인
+    # 6단계: 과거 데이터 확인
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         s_date = st.selectbox("📅 날짜 선택", sorted(st.session_state.history.keys(), reverse=True))
