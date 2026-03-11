@@ -50,6 +50,7 @@ if st.session_state.df_data is not None:
         vendor = st.selectbox("공급처", columns, index=get_best_match(['공급처', '업체명'], columns))
         item = st.selectbox("상품명", columns, index=get_best_match(['상품명', '상품'], columns))
         option = st.selectbox("옵션", columns, index=get_best_match(['옵션'], columns))
+        vendor_option = st.selectbox("공급처옵션", columns, index=get_best_match(['공급처옵션', '거래처옵션'], columns)) # [복구 완료]
     with col2:
         stock = st.selectbox("정상재고", columns, index=get_best_match(['정상재고', '재고'], columns))
         avail = st.selectbox("가용재고", columns, index=get_best_match(['가용재고', '가용'], columns))
@@ -69,11 +70,9 @@ if st.session_state.df_data is not None:
     # 4. 결과 출력 및 수동 편집 (필수 항목만 필터링)
     st.subheader("📊 데이터 편집 및 결과 확인")
     
-    # 핵심 데이터만 추림
-    display_cols = [sold_out, vendor, item, option, stock, avail, "입고예정수량(리오더)", t3day, t1week, '일일 판매량(기준)', '권장 발주량']
+    # 핵심 데이터만 추림 (공급처옵션 추가)
+    display_cols = [sold_out, vendor, item, option, vendor_option, stock, avail, "입고예정수량(리오더)", t3day, t1week, '일일 판매량(기준)', '권장 발주량']
     result_df = st.session_state.df_data[[c for c in display_cols if c in st.session_state.df_data.columns]]
-
-    
     
     # 데이터 편집기
     edited_df = st.data_editor(result_df, use_container_width=True)
