@@ -14,7 +14,7 @@ def get_idx(cols, keywords):
             if key in str(c): return i
     return 0
 
-# 1. 파일 업로드
+# 파일 업로드
 uploaded_file = st.file_uploader("엑셀 또는 CSV 파일을 업로드하세요", type=['xlsx', 'xls', 'csv'])
 if uploaded_file is not None and st.session_state.df_raw is None:
     df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
@@ -41,28 +41,29 @@ if st.session_state.df_raw is not None:
         t3day = st.selectbox("3일 발주 합계", cols, index=get_idx(cols, ['3일', '최근3일']))
         t1week = st.selectbox("1주 발주 합계", cols, index=get_idx(cols, ['1주', '7일', '최근7일']))
 
-    # [2단계: 기간 설정 및 분석 실행 (아래쪽 버튼)]
+    # [2단계: 기간 설정]
     st.write("---")
-    st.subheader("⚙️ 2단계: 기간 설정 및 분석")
+    st.subheader("⚙️ 2단계: 기간 파라미터 설정")
     l1, l2 = st.columns(2)
     with l1: lead_time = st.number_input("리드타임 (일)", min_value=0, value=0)
     with l2: safety_stock = st.number_input("안전재고 확보 (일)", min_value=0, value=3)
-    
-    # 버튼을 설정 아래쪽 전체 너비로 배치
-    if st.button("🚀 분석 실행 (결과 반영)", use_container_width=True):
+
+    # [3단계: 분석 실행]
+    st.write("---")
+    st.subheader("⚙️ 3단계: 분석 실행")
+    if st.button("🚀 분석 실행 (계산 결과 반영)", use_container_width=True):
         st.session_state.df_raw['일일 판매량'] = (pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce') / 3).round(0)
         st.session_state.df_raw['권장 발주량'] = (st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock) - 
                                             (pd.to_numeric(st.session_state.df_raw[avail], errors='coerce') + st.session_state.df_raw["입고예정수량(리오더)"])).clip(lower=0)
         st.rerun()
 
-    # [3단계: 데이터 편집 및 검색]
+    # [4단계: 검색 및 편집]
     st.write("---")
-    st.subheader("📊 3단계: 검색 및 데이터 편집")
+    st.subheader("📊 4단계: 검색 및 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search = f1.text_input("🔍 상품명 검색")
     filter_mode = f2.selectbox("품절 필터", ["전체보기", "품절만", "정상만"])
     
-    # 필터링 및 데이터 보여주기
     df_disp = st.session_state.df_raw.copy()
     if filter_mode == "품절만": df_disp = df_disp[df_disp[sold_out].astype(str).str.upper() == 'Y']
     if filter_mode == "정상만": df_disp = df_disp[df_disp[sold_out].astype(str).str.upper() != 'Y']
@@ -73,7 +74,6 @@ if st.session_state.df_raw is not None:
     
     
     
-    # 편집기
     edited_df = st.data_editor(df_final, use_container_width=True)
     st.session_state.df_raw.update(edited_df)
 
