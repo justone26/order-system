@@ -37,31 +37,12 @@ if st.session_state.df_raw is not None:
         vendor = st.selectbox("공급처", cols, index=get_idx(cols, ['공급처', '업체명']))
         item = st.selectbox("상품명", cols, index=get_idx(cols, ['상품명', '상품']))
         option = st.selectbox("옵션", cols, index=get_idx(cols, ['옵션']))
-        # '공급처옵션' -> '공급처 상품명'으로 변경
-        vendor_item_name = st.selectbox("공급처 상품명", cols, index=get_idx(cols, ['공급처옵션', '거래처옵션', '공급처상품명']))
+        vendor_item_name = st.selectbox("공급처 상품명", cols, index=get_idx(cols, ['공급처상품명', '거래처옵션', '공급처옵션']))
     with c2:
         stock = st.selectbox("정상재고", cols, index=get_idx(cols, ['정상재고', '재고']))
         avail = st.selectbox("가용재고", cols, index=get_idx(cols, ['가용재고', '가용']))
         t3day = st.selectbox("3일 발주 합계", cols, index=get_idx(cols, ['3일', '최근3일']))
         t1week = st.selectbox("1주 발주 합계", cols, index=get_idx(cols, ['1주', '7일', '최근7일']))
 
-    # 2~3단계: 분석
+    # 2~3단계: 분석 실행 (안정성 강화)
     st.subheader("⚙️ 2~3단계: 기간 설정 및 분석")
-    l1, l2 = st.columns(2)
-    lead_time = l1.number_input("리드타임", value=0)
-    safety_stock = l2.number_input("안전재고", value=3)
-    if st.button("🚀 분석 실행"):
-        st.session_state.df_raw['일일 판매량'] = (pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce') / 3).round(0)
-        st.session_state.df_raw['권장 발주량'] = (st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock) - 
-                                            (pd.to_numeric(st.session_state.df_raw[avail], errors='coerce') + st.session_state.df_raw["입고예정수량(리오더)"])).clip(lower=0)
-        st.rerun()
-
-    # 4단계: 편집
-    st.subheader("📊 4단계: 검색 및 데이터 편집")
-    f1, f2 = st.columns([3, 1])
-    search = f1.text_input("🔍 상품명 검색")
-    filter_mode = f2.selectbox("품절 필터", ["전체보기", "품절만", "정상만"])
-    df_disp = st.session_state.df_raw.copy()
-    if filter_mode == "품절만": df_disp = df_disp[df_disp[sold_out].astype(str).str.contains('품절', na=False)]
-    elif filter_mode == "정상만": df_disp = df_disp[~df_disp[sold_out].astype(str).str.contains('품절', na=False)]
-    if search: df_disp = df_disp
