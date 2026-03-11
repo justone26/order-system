@@ -7,29 +7,34 @@ import holidays
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [제목 클릭(버튼) 시 초기화 기능] 
-# CSS를 사용하여 버튼을 제목처럼 보이게 처리하여 현재 창에서 새로고침되도록 함
+# [제목 디자인] 클릭 시 초기화되는 제목 스타일
 st.markdown("""
     <style>
     div.stButton > button:first-child {
         background-color: transparent !important;
         border: none !important;
-        font-size: 40px !important;
-        font-weight: bold !important;
-        color: #333 !important;
+        font-size: 55px !important;
+        font-weight: 800 !important;
+        color: #000 !important;
         padding: 0 !important;
         text-align: left !important;
         box-shadow: none !important;
+        height: auto !important;
+        margin-bottom: 20px !important;
     }
+    div.stButton > button:active, 
+    div.stButton > button:focus, 
     div.stButton > button:hover {
-        color: #555 !important;
-        cursor: pointer;
+        background-color: transparent !important;
+        color: #000 !important;
+        border: none !important;
+        outline: none !important;
+        box-shadow: none !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
 if st.button("📦 재고 관리 및 발주 시스템"):
-    # 세션 전체 초기화 (데이터 삭제 후 새로고침)
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
@@ -56,7 +61,7 @@ if uploaded_file is not None and st.session_state.df_raw is None:
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 5:5 비율 매핑 설정
+    # 1단계: 5:5 매핑 설정
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -72,7 +77,7 @@ if st.session_state.df_raw is not None:
         t3day = st.selectbox("3일 발주 합계", cols, index=get_auto_index(cols, ['3일', '최근3일']))
         t1week = st.selectbox("1주 발주 합계", cols, index=get_auto_index(cols, ['1주', '7일', '최근7일']))
 
-    # 2~3단계: 기간 설정 및 분석
+    # 2~3단계: 분석
     st.subheader("⚙️ 2~3단계: 기간 설정 및 분석")
     l1, l2 = st.columns(2)
     lead_time = l1.number_input("리드타임 (일)", value=0)
@@ -89,7 +94,6 @@ if st.session_state.df_raw is not None:
         
         reg_dates = pd.to_datetime(st.session_state.df_raw[reg_date_col], errors='coerce')
         divisors = [min(3, get_biz_days(rd)) for rd in reg_dates]
-        
         v_avail = pd.to_numeric(st.session_state.df_raw[avail], errors='coerce').fillna(0)
         v_3day = pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce').fillna(0)
         v_reorder = pd.to_numeric(st.session_state.df_raw["입고예정수량(리오더)"], errors='coerce').fillna(0)
@@ -115,7 +119,7 @@ if st.session_state.df_raw is not None:
     edited_df = st.data_editor(df_final, use_container_width=True, disabled=[c for c in df_final.columns if c != "입고예정수량(리오더)"])
     st.session_state.df_raw.update(edited_df)
 
-    # 5단계: 발주 리스트 요약
+    # 5단계: 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
     if '권장 발주량' in st.session_state.df_raw.columns:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
@@ -136,7 +140,7 @@ if st.session_state.df_raw is not None:
                 st.session_state.history[date_key].append(record)
                 st.success("기록 저장 완료!")
 
-    # 6단계: 과거 데이터 확인
+    # 6단계: 과거 확인
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         s_date = st.selectbox("📅 날짜 선택", sorted(st.session_state.history.keys(), reverse=True))
