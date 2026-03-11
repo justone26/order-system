@@ -7,47 +7,30 @@ import holidays
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [디자인] 제목 전용 스타일 (55px 고정 및 일반 버튼과 분리)
+# [핵심] HTML/CSS를 직접 삽입하여 스트림릿의 버튼 스타일을 강제 무시하고 55px 적용
 st.markdown("""
     <style>
-    /* 제목 버튼 전용 클래스 */
-    .title-btn button {
-        background-color: transparent !important;
+    .custom-title-btn {
+        background: none !important;
         border: none !important;
         padding: 0 !important;
-        margin: 0 !important;
-        display: flex !important;
-        align-items: center !important;
-        width: 100% !important;
-        text-align: left !important;
-        box-shadow: none !important;
-        height: auto !important;
-    }
-    /* 버튼 내부의 텍스트 요소 강제 확대 */
-    .title-btn button, .title-btn button p, .title-btn button div, .title-btn button span {
+        margin: 0 0 20px 0 !important;
         font-size: 55px !important;
         font-weight: 900 !important;
         color: #000 !important;
-        white-space: nowrap !important;
-    }
-    /* 상호작용 시 색상 변화 방지 */
-    .title-btn button:active, .title-btn button:focus, .title-btn button:hover {
-        background-color: transparent !important;
-        color: #000 !important;
-        border: none !important;
+        cursor: pointer !important;
+        text-align: left !important;
         outline: none !important;
-        box-shadow: none !important;
     }
+    .custom-title-btn:hover { color: #333 !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# 제목 버튼 적용 (별도 클래스로 감싸기)
-st.markdown('<div class="title-btn">', unsafe_allow_html=True)
-if st.button("📦 재고 관리 및 발주 시스템"):
+# 페이지 새로고침(초기화) 기능
+if st.button("📦 재고 관리 및 발주 시스템", key="main_title"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
-st.markdown('</div>', unsafe_allow_html=True)
 
 # 세션 관리
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
