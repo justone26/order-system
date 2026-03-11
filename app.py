@@ -44,6 +44,7 @@ if uploaded_file is not None:
         with col2:
             stock_col = st.selectbox("정상재고", columns, index=get_best_match(['정상재고', '재고'], columns))
             avail_col = st.selectbox("가용재고", columns, index=get_best_match(['가용재고', '가용'], columns))
+            pending_col = st.selectbox("입고예정수량(리오더)", columns, index=get_best_match(['입고예정', '리오더', '입고대기'], columns))
             target_3day = st.selectbox("3일 발주 합계", columns, index=get_best_match(['3일', '최근3일'], columns))
             target_1week = st.selectbox("1주 발주 합계", columns, index=get_best_match(['1주', '7일', '최근7일'], columns))
 
@@ -57,27 +58,29 @@ if uploaded_file is not None:
         # 4. 분석 실행
         if st.button("🚀 분석 실행"):
             # 수치 데이터 정제
-            for col in [target_3day, target_1week, avail_col, stock_col]:
+            for col in [target_3day, target_1week, avail_col, pending_col, stock_col]:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-            # 계산 로직
+            # 계산 로직 (리오더 수량 고려)
             df['일일 판매량(기준)'] = (df[target_3day] / 3).round(0).astype(int)
             df['리드타임 준비량'] = (df['일일 판매량(기준)'] * lead_time_days).astype(int)
             df['안전재고 수량'] = (df['일일 판매량(기준)'] * safety_stock_days).astype(int)
-            df['권장 발주량'] = (df['리드타임 준비량'] + df['안전재고 수량'] - df[avail_col]).clip(lower=0).astype(int)
+            
+            # [핵심 로직] 권장 발주량 = (필요량) - (현재 가용재고 + 이미 발주된 입고예정수량)
+            df['권장 발주량'] = (df['리드타임 준비량'] + df['안전재고 수량'] - (df[avail_col] + df[pending_col])).clip(lower=0).astype(int)
             df['상태'] = df.apply(lambda row: '🚨 품절/긴급' if (str(row[sold_out_col]).upper() == 'Y' or row[avail_col] <= 0) else '정상', axis=1)
 
-            # 필수 컬럼 리스트 (원본데이터 + 분석결과)
+            # 필수 컬럼 리스트 구성
             output_cols = [
                 sold_out_col, vendor_col, item_name, option_name, vendor_option, 
-                stock_col, avail_col, target_3day, target_1week, 
+                stock_col, avail_col, pending_col, target_3day, target_1week, 
                 '일일 판매량(기준)', '리드타임 준비량', '안전재고 수량', '권장 발주량', '상태'
             ]
             
-            # 중복 제거 및 컬럼 필터링
             unique_cols = list(dict.fromkeys([c for c in output_cols if c in df.columns]))
             result_df = df[unique_cols]
 
+            
             st.subheader("📊 분석 결과")
             st.dataframe(result_df)
 
