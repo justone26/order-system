@@ -2,11 +2,17 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from datetime import datetime
-import holidays
+
+# 2026년 한국 공휴일 리스트
+공휴일_리스트 = [
+    '2026-01-01', '2026-02-16', '2026-02-17', '2026-02-18', '2026-03-01',
+    '2026-05-05', '2026-06-06', '2026-08-15', '2026-09-24', '2026-09-25', '2026-09-26',
+    '2026-10-03', '2026-10-09', '2026-12-25'
+]
 
 # 페이지 설정
-st.set_page_config(layout="wide", page_title="재고 관리 및 발주 시스템")
-st.title("📦 재고 관리 및 발주 시스템 (영업일 분석형)")
+st.set_page_config(layout="wide", page_title="재고 관리 시스템")
+st.title("📦 재고 관리 및 발주 시스템")
 
 # 세션 관리
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
@@ -30,7 +36,7 @@ if uploaded_file is not None and st.session_state.df_raw is None:
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 자동 매핑 설정
+    # 1단계: 자동 매핑
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -46,20 +52,18 @@ if st.session_state.df_raw is not None:
         t3day = st.selectbox("3일 발주 합계", cols, index=get_auto_index(cols, ['3일', '최근3일']))
         t1week = st.selectbox("1주 발주 합계", cols, index=get_auto_index(cols, ['1주', '7일', '최근7일']))
 
-    # 2~3단계: 분석 (영업일 기반 가중치 계산)
+    # 2~3단계: 분석
     st.subheader("⚙️ 2~3단계: 기간 설정 및 분석")
     l1, l2 = st.columns(2)
     lead_time = l1.number_input("리드타임 (일)", value=0)
     safety_stock = l2.number_input("안전재고 (일)", value=3)
     
     if st.button("🚀 분석 실행", type="primary"):
-        kr_holidays = holidays.KR()
         today = datetime.now()
-        
         def get_biz_days(start_date):
             if pd.isna(start_date): return 3
             days = pd.date_range(start=start_date, end=today)
-            biz_days = [d for d in days if d.weekday() < 5 and d not in kr_holidays]
+            biz_days = [d for d in days if d.weekday() < 5 and d.strftime('%Y-%m-%d') not in 공휴일_리스트]
             return max(1, len(biz_days))
 
         reg_dates = pd.to_datetime(st.session_state.df_raw[reg_date_col], errors='coerce')
@@ -71,8 +75,7 @@ if st.session_state.df_raw is not None:
         
         st.session_state.df_raw['일일 판매량'] = (v_3day / divisors).round(1)
         st.session_state.df_raw['권장 발주량'] = ((st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock)) - (v_avail + v_reorder)).clip(lower=0).round(0)
-        
-        st.success("✅ 영업일 기준 분석 완료!")
+        st.success("✅ 분석 완료!")
         st.rerun()
 
     # 4단계: 편집
@@ -91,13 +94,11 @@ if st.session_state.df_raw is not None:
                 vendor: "공급처", item: "상품명", option: "옵션", vendor_item_name: "공급처 상품명", '권장 발주량': "최종 발주량"
             })
             edited_order = st.data_editor(display_df, use_container_width=True)
-            
             c1, c2 = st.columns(2)
             buf = BytesIO()
             with pd.ExcelWriter(buf, engine='openpyxl') as w: edited_order.to_excel(w, index=False)
             c1.download_button("📥 발주 리스트 다운로드", data=buf.getvalue(), file_name="발주서.xlsx")
-            
-            if c2.button("💾 이 리스트 기록 저장"):
+            if c2.button("💾 기록 저장"):
                 date_key = datetime.now().strftime("%Y-%m-%d")
                 record = to_order.copy()
                 record['저장시각'] = datetime.now().strftime("%H:%M:%S")
@@ -117,7 +118,7 @@ if st.session_state.df_raw is not None:
                 with pd.ExcelWriter(hist_buf, engine='openpyxl') as w: h.to_excel(w, index=False)
                 st.download_button("📥 기록 다운로드", data=hist_buf.getvalue(), file_name=f"기록_{s_date}_{s_time}.xlsx")
 
-    # 전체 데이터 다운로드
+    # 전체 다운로드
     st.divider()
     all_buf = BytesIO()
     with pd.ExcelWriter(all_buf, engine='openpyxl') as w: st.session_state.df_raw.to_excel(w, index=False)
