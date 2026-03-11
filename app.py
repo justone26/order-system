@@ -7,9 +7,10 @@ import holidays
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [제목 디자인] CSS 우선순위를 높여 110px 크기 강제 적용
+# [제목 디자인] CSS 우선순위를 대폭 높여 55px 크기 강제 적용
 st.markdown("""
     <style>
+    /* 제목 버튼 영역을 명확히 정의 */
     div.stButton > button {
         background-color: transparent !important;
         border: none !important;
@@ -21,13 +22,15 @@ st.markdown("""
         text-align: left !important;
         box-shadow: none !important;
     }
+    /* 55px 크기로 강제 고정 및 굵기 설정 */
     div.stButton > button p {
-        font-size: 110px !important;
+        font-size: 55px !important;
         font-weight: 900 !important;
         color: #000 !important;
         margin: 0 !important;
         white-space: nowrap !important;
     }
+    /* 버튼 상호작용 시 색상 고정 (변화 없음) */
     div.stButton > button:active, 
     div.stButton > button:focus, 
     div.stButton > button:hover {
@@ -40,7 +43,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 클릭 시 세션 초기화
+# 클릭 시 세션 초기화 및 새로고침
 if st.button("📦 재고 관리 및 발주 시스템"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
@@ -68,7 +71,7 @@ if uploaded_file is not None and st.session_state.df_raw is None:
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 자동 매핑
+    # 1단계: 매핑 설정
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
