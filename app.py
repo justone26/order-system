@@ -7,10 +7,10 @@ import holidays
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [디자인] 제목 버튼 전용 클래스 정의
+# [디자인] 제목 전용 스타일 (55px 고정 및 일반 버튼과 분리)
 st.markdown("""
     <style>
-    /* 제목 버튼 전용 컨테이너 스타일 */
+    /* 제목 버튼 전용 클래스 */
     .title-btn button {
         background-color: transparent !important;
         border: none !important;
@@ -21,14 +21,16 @@ st.markdown("""
         width: 100% !important;
         text-align: left !important;
         box-shadow: none !important;
+        height: auto !important;
     }
-    .title-btn button p {
+    /* 버튼 내부의 텍스트 요소 강제 확대 */
+    .title-btn button, .title-btn button p, .title-btn button div, .title-btn button span {
         font-size: 55px !important;
         font-weight: 900 !important;
         color: #000 !important;
-        margin: 0 !important;
         white-space: nowrap !important;
     }
+    /* 상호작용 시 색상 변화 방지 */
     .title-btn button:active, .title-btn button:focus, .title-btn button:hover {
         background-color: transparent !important;
         color: #000 !important;
