@@ -2,13 +2,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from datetime import datetime
-
-# 2026년 한국 공휴일 리스트
-공휴일_리스트 = [
-    '2026-01-01', '2026-02-16', '2026-02-17', '2026-02-18', '2026-03-01',
-    '2026-05-05', '2026-06-06', '2026-08-15', '2026-09-24', '2026-09-25', '2026-09-26',
-    '2026-10-03', '2026-10-09', '2026-12-25'
-]
+import holidays  # 매년 자동으로 공휴일 정보를 업데이트합니다.
 
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
@@ -36,7 +30,7 @@ if uploaded_file is not None and st.session_state.df_raw is None:
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 5:5 비율 매핑
+    # 1단계: 5:5 매핑
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -60,10 +54,13 @@ if st.session_state.df_raw is not None:
     
     if st.button("🚀 분석 실행", type="primary"):
         today = datetime.now()
+        # 현재 연도 기준 한국 공휴일 자동 호출
+        kr_holidays = holidays.KR(years=today.year)
+        
         def get_biz_days(start_date):
             if pd.isna(start_date): return 3
             days = pd.date_range(start=start_date, end=today)
-            biz_days = [d for d in days if d.weekday() < 5 and d.strftime('%Y-%m-%d') not in 공휴일_리스트]
+            biz_days = [d for d in days if d.weekday() < 5 and d not in kr_holidays]
             return max(1, len(biz_days))
 
         reg_dates = pd.to_datetime(st.session_state.df_raw[reg_date_col], errors='coerce')
@@ -75,10 +72,10 @@ if st.session_state.df_raw is not None:
         
         st.session_state.df_raw['일일 판매량'] = (v_3day / divisors).round(1)
         st.session_state.df_raw['권장 발주량'] = ((st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock)) - (v_avail + v_reorder)).clip(lower=0).round(0)
-        st.success("✅ 분석 완료!")
+        st.success("✅ 공휴일 자동 계산 완료!")
         st.rerun()
 
-    # 4단계: 검색 및 데이터 편집
+    # 4단계: 편집
     st.subheader("📊 4단계: 검색 및 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search = f1.text_input("🔍 상품명 검색")
