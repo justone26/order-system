@@ -36,7 +36,7 @@ if uploaded_file is not None and st.session_state.df_raw is None:
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 자동 매핑
+    # 1단계: 5:5 비율로 매핑 설정
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -44,9 +44,9 @@ if st.session_state.df_raw is not None:
         vendor = st.selectbox("공급처", cols, index=get_auto_index(cols, ['공급처', '업체명']))
         item = st.selectbox("상품명", cols, index=get_auto_index(cols, ['상품명', '상품']))
         option = st.selectbox("옵션", cols, index=get_auto_index(cols, ['옵션']))
-        vendor_item_name = st.selectbox("공급처 상품명", cols, index=get_auto_index(cols, ['공급처상품명', '거래처옵션', '공급처옵션']))
         reg_date_col = st.selectbox("등록일 컬럼", cols, index=get_auto_index(cols, ['등록일', '생성일', '입점일']))
     with c2:
+        vendor_item_name = st.selectbox("공급처 상품명", cols, index=get_auto_index(cols, ['공급처상품명', '거래처옵션', '공급처옵션']))
         stock = st.selectbox("정상재고", cols, index=get_auto_index(cols, ['정상재고', '재고']))
         avail = st.selectbox("가용재고", cols, index=get_auto_index(cols, ['가용재고', '가용']))
         t3day = st.selectbox("3일 발주 합계", cols, index=get_auto_index(cols, ['3일', '최근3일']))
@@ -75,7 +75,7 @@ if st.session_state.df_raw is not None:
         
         st.session_state.df_raw['일일 판매량'] = (v_3day / divisors).round(1)
         st.session_state.df_raw['권장 발주량'] = ((st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock)) - (v_avail + v_reorder)).clip(lower=0).round(0)
-        st.success("✅ 분석 완료!")
+        st.success("✅ 영업일 기준 분석 완료!")
         st.rerun()
 
     # 4단계: 편집
@@ -118,7 +118,6 @@ if st.session_state.df_raw is not None:
                 with pd.ExcelWriter(hist_buf, engine='openpyxl') as w: h.to_excel(w, index=False)
                 st.download_button("📥 기록 다운로드", data=hist_buf.getvalue(), file_name=f"기록_{s_date}_{s_time}.xlsx")
 
-    # 전체 다운로드
     st.divider()
     all_buf = BytesIO()
     with pd.ExcelWriter(all_buf, engine='openpyxl') as w: st.session_state.df_raw.to_excel(w, index=False)
