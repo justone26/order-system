@@ -76,7 +76,22 @@ if st.session_state.df_raw is not None:
     # [5단계: 발주 리스트 및 기록]
     st.subheader("📋 5단계: 발주 리스트 및 기록 저장")
     to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0]
-    
     st.dataframe(to_order[edit_cols], use_container_width=True)
 
-    if st.button("💾 발주 기록 저장
+    if st.button("💾 발주 기록 저장"):
+        record = to_order[edit_cols].copy()
+        record['저장일시'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.session_state.history.append(record)
+        st.success("기록 저장 완료!")
+
+    if st.session_state.history:
+        for i, hist in enumerate(reversed(st.session_state.history)):
+            time_label = hist['저장일시'].iloc[0] if '저장일시' in hist.columns else "기록 데이터"
+            with st.expander(f"기록 {len(st.session_state.history)-i} ({time_label})"):
+                st.dataframe(hist.drop(columns=['저장일시']), use_container_width=True)
+
+    # 다운로드
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        st.session_state.df_raw.to_excel(writer, index=False)
+    st.download_button("📥 최종 데이터 다운로드", buffer.getvalue(), "결과.xlsx")
