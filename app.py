@@ -83,9 +83,17 @@ if st.session_state.df_raw is not None:
             st.session_state.history[date_key].append(record)
             st.success("저장 완료!")
 
-    # 6단계: 과거 확인 (4단계 형식 적용)
+    # 6단계: 과거 확인
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         selected_date = st.selectbox("조회할 날짜", sorted(st.session_state.history.keys(), reverse=True))
         for hist in st.session_state.history[selected_date]:
-            with st.expander(f"저장 시각: {hist['저장시
+            with st.expander(f"저장 시각: {hist['저장시각'].iloc[0]}"):
+                final_cols = [c for c in edit_cols if c in hist.columns]
+                st.dataframe(hist[final_cols], use_container_width=True)
+            
+    # 최종 다운로드
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        st.session_state.df_raw.to_excel(writer, index=False)
+    st.download_button("📥 최종 데이터 다운로드", data=buffer.getvalue(), file_name="결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
