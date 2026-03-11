@@ -28,7 +28,7 @@ st.rerun()
 
 if st.session_state.df_raw is not None:
 cols = st.session_state.df_raw.columns.tolist()
-st.subheader("⚙️ 1단계: 자동 매핑 설정")
+st.subheader("⚙️ 1단계: 매핑 설정")
 c1, c2 = st.columns(2)
 with c1:
 sold_out = st.selectbox("품절 여부", cols, index=get_idx(cols, ['품절']))
