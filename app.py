@@ -66,30 +66,30 @@ if uploaded_file is not None:
             df['리드타임 준비량'] = (df['일일 판매량(기준)'] * lead_time_days).astype(int)
             df['안전재고 수량'] = (df['일일 판매량(기준)'] * safety_stock_days).astype(int)
             
-            # [핵심 로직] 권장 발주량 = (필요량) - (현재 가용재고 + 이미 발주된 입고예정수량)
+            # 권장 발주량 산출
             df['권장 발주량'] = (df['리드타임 준비량'] + df['안전재고 수량'] - (df[avail_col] + df[pending_col])).clip(lower=0).astype(int)
             df['상태'] = df.apply(lambda row: '🚨 품절/긴급' if (str(row[sold_out_col]).upper() == 'Y' or row[avail_col] <= 0) else '정상', axis=1)
 
-            # 필수 컬럼 리스트 구성
+            # 분석 결과에 보여줄 컬럼 선택
             output_cols = [
                 sold_out_col, vendor_col, item_name, option_name, vendor_option, 
-                stock_col, avail_col, pending_col, target_3day, target_1week, 
-                '일일 판매량(기준)', '리드타임 준비량', '안전재고 수량', '권장 발주량', '상태'
+                stock_col, avail_col, pending_col, '권장 발주량', '상태'
             ]
-            
             unique_cols = list(dict.fromkeys([c for c in output_cols if c in df.columns]))
             result_df = df[unique_cols]
 
             
-            st.subheader("📊 분석 결과")
-            st.dataframe(result_df)
+            st.subheader("📊 분석 결과 (데이터를 직접 수정하여 최종 발주량을 확인하세요)")
+            
+            # 여기서 직접 입고예정수량을 수정하면 엑셀에 반영됨
+            edited_df = st.data_editor(result_df, use_container_width=True)
 
-            # 5. 엑셀 다운로드
+            # 5. 엑셀 다운로드 (수정된 값 기준)
             buffer = BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                result_df.to_excel(writer, index=False, sheet_name='분석결과')
+                edited_df.to_excel(writer, index=False, sheet_name='분석결과')
             
-            st.download_button("📥 분석 결과 엑셀 다운로드", data=buffer.getvalue(), file_name="재고_분석_결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button("📥 수정된 결과 엑셀 다운로드", data=buffer.getvalue(), file_name="최종_발주서.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     except Exception as e:
         st.error(f"오류 발생: {e}")
