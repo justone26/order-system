@@ -64,7 +64,6 @@ if st.session_state.df_raw is not None:
     search = f1.text_input("🔍 상품명 검색")
     filter_mode = f2.selectbox("품절 필터", ["전체보기", "품절만", "정상만"])
     
-    # 필터링 로직: 문자열 매칭 기반
     df_disp = st.session_state.df_raw.copy()
     if filter_mode == "품절만": 
         df_disp = df_disp[df_disp[sold_out].astype(str).str.contains('품절', na=False)]
@@ -76,7 +75,21 @@ if st.session_state.df_raw is not None:
     display_cols = [sold_out, vendor, item, option, vendor_option, stock, avail, "입고예정수량(리오더)", t3day, t1week, '일일 판매량', '권장 발주량']
     df_final = df_disp[[c for c in display_cols if c in df_disp.columns]]
     
-    
-
     # 편집기: 리오더 수량만 수정 허용
-    edited_df
+    edited_df = st.data_editor(
+        df_final, 
+        use_container_width=True,
+        column_config={
+            col: st.column_config.Column(disabled=True) 
+            for col in df_final.columns if col != "입고예정수량(리오더)"
+        }
+    )
+    
+    # 원본 데이터 동기화
+    st.session_state.df_raw.update(edited_df)
+
+    # [다운로드]
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        st.session_state.df_raw.to_excel(writer, index=False)
+    st.download_button("📥 최종 결과 엑셀 다운로드", buffer.getvalue(), "최종_발주서.xlsx")
