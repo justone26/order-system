@@ -91,4 +91,5 @@ if st.session_state.df_raw is not None:
         for hist in st.session_state.history[selected_date]:
             st.dataframe(hist, use_container_width=True)
 
-    st.download_button("📥 최종 데이터 다운로드", data=BytesIO(st.session_state.df_raw.to_excel(index=False).encode('utf-8')), file_name="결과.xlsx")
+    st.download_button("📥 최종 데이터 다운로드", data=BytesIO(buffer = BytesIO()pd.ExcelWriter(buffer, ...)buffer.getvalue(), file_name="결과.xlsx")
+
