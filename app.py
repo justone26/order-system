@@ -6,13 +6,16 @@ from datetime import datetime
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 st.title("📦 재고 관리 및 발주 시스템")
 
-if 'df_raw' not in st.session_state: st.session_state.df_raw = None
-if 'history' not in st.session_state: st.session_state.history = {}
+if 'df_raw' not in st.session_state:
+st.session_state.df_raw = None
+if 'history' not in st.session_state:
+st.session_state.history = {}
 
 def get_idx(cols, keywords):
 for key in keywords:
 for i, c in enumerate(cols):
-if key in str(c): return i
+if key in str(c):
+return i
 return 0
 
 uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
