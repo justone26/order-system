@@ -70,12 +70,26 @@ if st.session_state.df_raw is not None:
     edited_df = st.data_editor(df_final, use_container_width=True, disabled=[c for c in df_final.columns if c != "입고예정수량(리오더)"])
     st.session_state.df_raw.update(edited_df)
 
-    # 5단계: 요약 및 기록
-    st.subheader("📋 5단계: 발주 요약")
+    # 5단계: 발주 요약 및 다운로드
+    st.subheader("📋 5단계: 발주 필요 리스트 요약")
     if '권장 발주량' in st.session_state.df_raw.columns:
-        to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0]
-        st.dataframe(to_order[[vendor, item, avail, '권장 발주량']], use_container_width=True)
-        if st.button("💾 리스트 기록 저장"):
+        # 발주가 필요한 항목 추출 및 컬럼명 변경
+        to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
+        display_df = to_order[[vendor, item, option, vendor_opt, '권장 발주량']].rename(columns={
+            vendor: "공급처", item: "상품명", option: "옵션", vendor_opt: "공급처옵션명", '권장 발주량': "최종 발주량"
+        })
+        
+        # 편집 가능한 발주 리스트
+        edited_order = st.data_editor(display_df, use_container_width=True)
+        
+        # 다운로드 및 저장
+        col1, col2 = st.columns(2)
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            edited_order.to_excel(writer, index=False)
+        col1.download_button("📥 발주 리스트 다운로드", data=buffer.getvalue(), file_name="발주서.xlsx")
+        
+        if col2.button("💾 이 리스트 기록 저장"):
             date_key = datetime.now().strftime("%Y-%m-%d")
             record = to_order.copy()
             record['저장시각'] = datetime.now().strftime("%H:%M:%S")
@@ -91,9 +105,3 @@ if st.session_state.df_raw is not None:
             with st.expander(f"저장 시각: {hist['저장시각'].iloc[0]}"):
                 final_cols = [c for c in edit_cols if c in hist.columns]
                 st.dataframe(hist[final_cols], use_container_width=True)
-            
-    # 최종 다운로드
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        st.session_state.df_raw.to_excel(writer, index=False)
-    st.download_button("📥 최종 데이터 다운로드", data=buffer.getvalue(), file_name="결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
