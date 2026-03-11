@@ -17,7 +17,7 @@ def get_idx(cols, keywords):
             if key in str(c): return i
     return 0
 
-# 파일 업로드
+# 1. 파일 업로드
 uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
 if uploaded_file is not None and st.session_state.df_raw is None:
     df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
@@ -37,7 +37,8 @@ if st.session_state.df_raw is not None:
         vendor = st.selectbox("공급처", cols, index=get_idx(cols, ['공급처', '업체명']))
         item = st.selectbox("상품명", cols, index=get_idx(cols, ['상품명', '상품']))
         option = st.selectbox("옵션", cols, index=get_idx(cols, ['옵션']))
-        vendor_opt = st.selectbox("공급처옵션", cols, index=get_idx(cols, ['공급처옵션', '거래처옵션']))
+        # '공급처옵션' -> '공급처 상품명'으로 변경
+        vendor_item_name = st.selectbox("공급처 상품명", cols, index=get_idx(cols, ['공급처옵션', '거래처옵션', '공급처상품명']))
     with c2:
         stock = st.selectbox("정상재고", cols, index=get_idx(cols, ['정상재고', '재고']))
         avail = st.selectbox("가용재고", cols, index=get_idx(cols, ['가용재고', '가용']))
@@ -63,45 +64,4 @@ if st.session_state.df_raw is not None:
     df_disp = st.session_state.df_raw.copy()
     if filter_mode == "품절만": df_disp = df_disp[df_disp[sold_out].astype(str).str.contains('품절', na=False)]
     elif filter_mode == "정상만": df_disp = df_disp[~df_disp[sold_out].astype(str).str.contains('품절', na=False)]
-    if search: df_disp = df_disp[df_disp[item].astype(str).str.contains(search, na=False)]
-    
-    edit_cols = [sold_out, vendor, item, option, vendor_opt, stock, avail, "입고예정수량(리오더)", t3day, t1week, '권장 발주량']
-    df_final = df_disp[[c for c in edit_cols if c in df_disp.columns]]
-    edited_df = st.data_editor(df_final, use_container_width=True, disabled=[c for c in df_final.columns if c != "입고예정수량(리오더)"])
-    st.session_state.df_raw.update(edited_df)
-
-    # 5단계: 발주 요약 및 다운로드
-    st.subheader("📋 5단계: 발주 필요 리스트 요약")
-    if '권장 발주량' in st.session_state.df_raw.columns:
-        # 발주가 필요한 항목 추출 및 컬럼명 변경
-        to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
-        display_df = to_order[[vendor, item, option, vendor_opt, '권장 발주량']].rename(columns={
-            vendor: "공급처", item: "상품명", option: "옵션", vendor_opt: "공급처옵션명", '권장 발주량': "최종 발주량"
-        })
-        
-        # 편집 가능한 발주 리스트
-        edited_order = st.data_editor(display_df, use_container_width=True)
-        
-        # 다운로드 및 저장
-        col1, col2 = st.columns(2)
-        buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            edited_order.to_excel(writer, index=False)
-        col1.download_button("📥 발주 리스트 다운로드", data=buffer.getvalue(), file_name="발주서.xlsx")
-        
-        if col2.button("💾 이 리스트 기록 저장"):
-            date_key = datetime.now().strftime("%Y-%m-%d")
-            record = to_order.copy()
-            record['저장시각'] = datetime.now().strftime("%H:%M:%S")
-            if date_key not in st.session_state.history: st.session_state.history[date_key] = []
-            st.session_state.history[date_key].append(record)
-            st.success("저장 완료!")
-
-    # 6단계: 과거 확인
-    st.subheader("📜 6단계: 과거 데이터 확인")
-    if st.session_state.history:
-        selected_date = st.selectbox("조회할 날짜", sorted(st.session_state.history.keys(), reverse=True))
-        for hist in st.session_state.history[selected_date]:
-            with st.expander(f"저장 시각: {hist['저장시각'].iloc[0]}"):
-                final_cols = [c for c in edit_cols if c in hist.columns]
-                st.dataframe(hist[final_cols], use_container_width=True)
+    if search: df_disp = df_disp
