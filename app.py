@@ -7,21 +7,26 @@ import holidays
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [제목 디자인] 클릭 시 초기화되는 110px 초대형 제목 스타일
+# [제목 디자인] CSS 우선순위를 높여 110px 크기 강제 적용
 st.markdown("""
     <style>
-    div.stButton > button:first-child {
+    div.stButton > button {
         background-color: transparent !important;
         border: none !important;
-        font-size: 110px !important;    /* 2배 사이즈 확대 */
-        font-weight: 900 !important;   /* 극강의 굵기 */
-        color: #000 !important;
         padding: 0 !important;
+        margin: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        width: 100% !important;
         text-align: left !important;
         box-shadow: none !important;
-        height: auto !important;
-        margin-bottom: 20px !important;
-        white-space: nowrap !important; /* 긴 제목 한 줄 유지 */
+    }
+    div.stButton > button p {
+        font-size: 110px !important;
+        font-weight: 900 !important;
+        color: #000 !important;
+        margin: 0 !important;
+        white-space: nowrap !important;
     }
     div.stButton > button:active, 
     div.stButton > button:focus, 
@@ -35,7 +40,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 클릭 시 데이터 초기화 및 새로고침
+# 클릭 시 세션 초기화
 if st.button("📦 재고 관리 및 발주 시스템"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
@@ -63,7 +68,7 @@ if uploaded_file is not None and st.session_state.df_raw is None:
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 매핑 설정
+    # 1단계: 자동 매핑
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -96,7 +101,6 @@ if st.session_state.df_raw is not None:
         
         reg_dates = pd.to_datetime(st.session_state.df_raw[reg_date_col], errors='coerce')
         divisors = [min(3, get_biz_days(rd)) for rd in reg_dates]
-        
         v_avail = pd.to_numeric(st.session_state.df_raw[avail], errors='coerce').fillna(0)
         v_3day = pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce').fillna(0)
         v_reorder = pd.to_numeric(st.session_state.df_raw["입고예정수량(리오더)"], errors='coerce').fillna(0)
