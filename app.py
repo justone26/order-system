@@ -4,7 +4,7 @@ import sqlite3
 from io import BytesIO
 from datetime import datetime
 
-# 1. DB 초기화 (영구 저장용)
+# DB 초기화
 def init_db():
     conn = sqlite3.connect('inventory.db')
     c = conn.cursor()
@@ -18,57 +18,76 @@ init_db()
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 st.title("📦 재고 관리 및 발주 시스템")
 
-# 2. 파일 업로드
-uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'csv'])
+# [세션 상태 관리]
+if 'df_raw' not in st.session_state: st.session_state.df_raw = None
+if 'history' not in st.session_state: st.session_state.history = {}
 
-if uploaded_file is not None:
-    if 'df' not in st.session_state:
-        st.session_state.df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
-    
-    df = st.session_state.df
+def get_idx(cols, keywords):
+    for key in keywords:
+        for i, c in enumerate(cols):
+            if key in str(c): return i
+    return 0
 
-    # 3. 분석 실행
-    if st.button("🚀 분석 실행"):
-        # 가용재고 10 미만 시 20개 발주 권장 (예시 로직)
-        df['권장발주량'] = df['가용재고'].apply(lambda x: 20 if x < 10 else 0)
-        df['상태'] = df['가용재고'].apply(lambda x: '품절/긴급' if x <= 0 else '정상')
-        st.session_state.df = df
-        st.rerun()
+# 1. 파일 업로드
+uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
+if uploaded_file is not None and st.session_state.df_raw is None:
+    df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
+    st.session_state.df_raw = df.loc[:, ~df.columns.duplicated()]
+    if "입고예정수량(리오더)" not in st.session_state.df_raw.columns:
+        st.session_state.df_raw["입고예정수량(리오더)"] = 0
+    st.rerun()
 
-    # 4. 데이터 편집 및 필터링
-    st.subheader("📊 4단계: 검색 및 데이터 편집")
+if st.session_state.df_raw is not None:
+    cols = st.session_state.df_raw.columns.tolist()
+
+    # [1단계: 매핑 설정]
+    st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
-        search = st.text_input("🔍 상품명 검색")
+        sold_out = st.selectbox("품절 여부", cols, index=get_idx(cols, ['품절', '판매중단']))
+        vendor = st.selectbox("공급처", cols, index=get_idx(cols, ['공급처', '업체명']))
+        item = st.selectbox("상품명", cols, index=get_idx(cols, ['상품명', '상품']))
     with c2:
-        status_options = st.multiselect("🚫 상태 필터", options=df['상태'].unique(), default=df['상태'].unique())
+        avail = st.selectbox("가용재고", cols, index=get_idx(cols, ['가용재고', '가용']))
+        t3day = st.selectbox("3일 발주 합계", cols, index=get_idx(cols, ['3일', '최근3일']))
 
-    df_disp = df[df['상품명'].str.contains(search, na=False)] if search else df
-    df_disp = df_disp[df_disp['상태'].isin(status_options)]
+    # [2단계: 기간 설정]
+    st.subheader("⚙️ 2단계: 기간 설정")
+    l1, l2 = st.columns(2)
+    lead_time = l1.number_input("리드타임 (일)", value=0)
+    safety_stock = l2.number_input("안전재고 (일)", value=3)
+
+    # [3단계: 분석 실행]
+    if st.button("🚀 분석 실행"):
+        st.session_state.df_raw['일일 판매량'] = (pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce') / 3).round(0)
+        st.session_state.df_raw['권장 발주량'] = (st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock) - 
+                                            (pd.to_numeric(st.session_state.df_raw[avail], errors='coerce') + st.session_state.df_raw["입고예정수량(리오더)"])).clip(lower=0)
+        st.rerun()
+
+    # [4단계: 검색 및 데이터 편집]
+    st.subheader("📊 4단계: 검색 및 데이터 편집")
+    f1, f2 = st.columns([2, 1])
+    search = f1.text_input("🔍 상품명 검색")
+    status_filter = f2.selectbox("🚫 품절 필터", ["전체보기"] + st.session_state.df_raw[sold_out].unique().tolist())
     
-    edited_df = st.data_editor(df_disp, use_container_width=True)
-    st.session_state.df.update(edited_df)
+    df_disp = st.session_state.df_raw.copy()
+    if status_filter != "전체보기": df_disp = df_disp[df_disp[sold_out] == status_filter]
+    if search: df_disp = df_disp[df_disp[item].astype(str).str.contains(search, na=False)]
 
-    # 5. 영구 저장 로직
-    if st.button("💾 데이터 영구 저장"):
+    edited_df = st.data_editor(df_disp, use_container_width=True)
+    st.session_state.df_raw.update(edited_df)
+
+    # [5단계: 발주 요약 및 저장]
+    if st.button("💾 리스트 영구 저장"):
         conn = sqlite3.connect('inventory.db')
-        to_save = st.session_state.df[st.session_state.df['권장발주량'] > 0].copy()
+        to_save = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
         to_save['date'] = datetime.now().strftime("%Y-%m-%d")
-        to_save['time'] = datetime.now().strftime("%H:%M:%S")
         to_save.to_sql('history', conn, if_exists='append', index=False)
         conn.close()
         st.success("데이터베이스에 저장되었습니다!")
 
-    # 6. 엑셀 다운로드
+    # [6단계: 다운로드]
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        st.session_state.df.to_excel(writer, index=False)
+        st.session_state.df_raw.to_excel(writer, index=False)
     st.download_button("📥 최종 데이터 다운로드", data=buffer.getvalue(), file_name="결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    # 7. 과거 기록 확인
-    st.subheader("📜 6단계: 과거 데이터 확인")
-    if st.button("🔍 과거 기록 불러오기"):
-        conn = sqlite3.connect('inventory.db')
-        history_df = pd.read_sql('SELECT * FROM history', conn)
-        conn.close()
-        st.dataframe(history_df, use_container_width=True)
