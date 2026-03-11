@@ -44,25 +44,23 @@ if st.session_state.df_raw is not None:
         t3day = st.selectbox("3일 발주 합계", cols, index=get_idx(cols, ['3일', '최근3일']))
         t1week = st.selectbox("1주 발주 합계", cols, index=get_idx(cols, ['1주', '7일', '최근7일']))
 
-    # 2~3단계: 분석 실행 (안정성 강화)
+    # 2~3단계: 분석 실행
     st.subheader("⚙️ 2~3단계: 기간 설정 및 분석")
     l1, l2 = st.columns(2)
     lead_time = l1.number_input("리드타임 (일)", value=0, key="lt_input")
     safety_stock = l2.number_input("안전재고 (일)", value=3, key="ss_input")
     
     if st.button("🚀 분석 실행", type="primary"):
-        # 데이터 수치 변환 및 결측치 처리
         v_avail = pd.to_numeric(st.session_state.df_raw[avail], errors='coerce').fillna(0)
         v_3day = pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce').fillna(0)
         v_reorder = pd.to_numeric(st.session_state.df_raw["입고예정수량(리오더)"], errors='coerce').fillna(0)
         
-        # 계산 로직
         st.session_state.df_raw['일일 판매량'] = (v_3day / 3).round(1)
         calc_val = (st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock)) - (v_avail + v_reorder)
         st.session_state.df_raw['권장 발주량'] = calc_val.clip(lower=0).round(0)
         
         st.success("분석이 완료되었습니다!")
-        st.rerun() # 계산된 결과를 화면에 즉시 반영
+        st.rerun()
 
     # 4단계: 데이터 편집
     st.subheader("📊 4단계: 검색 및 데이터 편집")
@@ -81,26 +79,22 @@ if st.session_state.df_raw is not None:
     edited_df = st.data_editor(df_final, use_container_width=True, key="main_editor",
                                disabled=[c for c in df_final.columns if c != "입고예정수량(리오더)"])
     
-    # 수정 사항 반영
     if not edited_df.equals(df_final):
         st.session_state.df_raw.update(edited_df)
 
-    # 5단계: 발주 요약 및 수량 수정
+    # 5단계: 발주 요약 및 저장
     st.subheader("📋 5단계: 발주 필요 리스트 요약")
     if '권장 발주량' in st.session_state.df_raw.columns:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
         
         if not to_order.empty:
-            # 명칭 변경 및 요약 데이터 구성
             display_df = to_order[[vendor, item, option, vendor_item_name, '권장 발주량']].rename(columns={
                 vendor: "공급처", item: "상품명", option: "옵션", vendor_item_name: "공급처 상품명", '권장 발주량': "최종 발주량"
             })
             
-            # 발주 수량 직접 수정 가능
             edited_order = st.data_editor(display_df, use_container_width=True, key="order_editor")
             
             c1, c2 = st.columns(2)
-            # 발주서 다운로드
             order_buf = BytesIO()
             with pd.ExcelWriter(order_buf, engine='openpyxl') as writer:
                 edited_order.to_excel(writer, index=False)
@@ -116,19 +110,38 @@ if st.session_state.df_raw is not None:
         else:
             st.info("발주 권장 항목이 없습니다.")
 
-    # 6단계: 과거 확인
+    # 6단계: 과거 확인 (스크롤 최적화 버전)
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
+        # 1. 날짜 먼저 선택
         h_dates = sorted(st.session_state.history.keys(), reverse=True)
-        s_date = st.selectbox("날짜 선택", h_dates)
+        s_date = st.selectbox("📅 조회할 날짜 선택", h_dates)
+        
+        # 2. 해당 날짜의 저장 시각들을 리스트로 추출
+        time_options = [h['저장시각'].iloc[0] for h in st.session_state.history[s_date]]
+        # 인덱스를 역순으로 하여 최근 저장 시각이 먼저 나오게 함
+        selected_time = st.selectbox("⏰ 저장 시각 선택", time_options[::-1])
+        
+        # 3. 선택한 시각의 데이터만 찾아서 표시
         for hist in st.session_state.history[s_date]:
-            with st.expander(f"저장 시각: {hist['저장시각'].iloc[0]}"):
+            if hist['저장시각'].iloc[0] == selected_time:
                 f_cols = [c for c in edit_cols if c in hist.columns]
+                st.write(f"✅ **{s_date} {selected_time}** 저장 기록")
                 st.dataframe(hist[f_cols], use_container_width=True)
+                
+                # 해당 시점 데이터만 별도 다운로드 기능
+                hist_buf = BytesIO()
+                with pd.ExcelWriter(hist_buf, engine='openpyxl') as writer:
+                    hist[f_cols].to_excel(writer, index=False)
+                st.download_button(f"📥 {selected_time} 기록 다운로드", data=hist_buf.getvalue(), 
+                                   file_name=f"발주기록_{s_date}_{selected_time}.xlsx", key=f"dl_{selected_time}")
+                break
+    else:
+        st.info("저장된 과거 기록이 없습니다.")
 
     # 전체 데이터 다운로드
     st.divider()
     all_buf = BytesIO()
     with pd.ExcelWriter(all_buf, engine='openpyxl') as writer:
         st.session_state.df_raw.to_excel(writer, index=False)
-    st.download_button("📥 전체 결과 다운로드", data=all_buf.getvalue(), file_name="최종결과데이터.xlsx")
+    st.download_button("📥 전체 원본 데이터 다운로드", data=all_buf.getvalue(), file_name="최종결과데이터.xlsx")
