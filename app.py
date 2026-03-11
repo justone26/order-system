@@ -5,7 +5,7 @@ from io import BytesIO
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 st.title("📦 재고 관리 및 발주 시스템")
 
-# [세션 관리]
+# [세션 상태 관리]
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 
 def get_idx(cols, keywords):
@@ -26,8 +26,8 @@ if uploaded_file is not None and st.session_state.df_raw is None:
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-    # [1단계: 매핑 설정]
-    st.subheader("⚙️ 1단계: 자동 매핑")
+    # [1단계: 자동 매핑]
+    st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
         sold_out = st.selectbox("품절 여부", cols, index=get_idx(cols, ['품절', '판매중단']))
@@ -41,45 +41,32 @@ if st.session_state.df_raw is not None:
         t3day = st.selectbox("3일 발주 합계", cols, index=get_idx(cols, ['3일', '최근3일']))
         t1week = st.selectbox("1주 발주 합계", cols, index=get_idx(cols, ['1주', '7일', '최근7일']))
 
-    # [2단계: 기간 설정 (직관적인 레이아웃)]
+    # [2단계: 기간 설정 및 분석 실행]
     st.write("---")
-    st.subheader("⚙️ 2단계: 분석 파라미터 설정")
-    l1, l2, l3 = st.columns([1, 1, 2])
-    with l1: lead_time = st.number_input("리드타임 (일)", min_value=0, value=0)
-    with l2: safety_stock = st.number_input("안전재고 확보 (일)", min_value=0, value=3)
-    with l3:
-        st.write("") # 간격 맞춤
-        if st.button("🚀 분석 실행 (데이터 계산 반영)"):
+    st.subheader("⚙️ 2단계: 기간 설정 및 분석 실행")
+    c3, c4, c5 = st.columns([1, 1, 2])
+    with c3: lead_time = st.number_input("리드타임 (일)", min_value=0, value=0)
+    with c4: safety_stock = st.number_input("안전재고 확보 (일)", min_value=0, value=3)
+    with c5:
+        st.write("") # 정렬용
+        if st.button("🚀 분석 실행 (결과 반영)"):
             st.session_state.df_raw['일일 판매량'] = (pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce') / 3).round(0)
             st.session_state.df_raw['권장 발주량'] = (st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock) - 
                                                 (pd.to_numeric(st.session_state.df_raw[avail], errors='coerce') + st.session_state.df_raw["입고예정수량(리오더)"])).clip(lower=0)
             st.rerun()
 
-    # [3단계: 데이터 검색 및 편집]
+    # [3단계: 데이터 편집 및 검색]
     st.write("---")
-    st.subheader("📊 데이터 편집 및 결과 확인")
+    st.subheader("📊 3단계: 검색 및 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search = f1.text_input("🔍 상품명 검색")
     filter_mode = f2.selectbox("품절 필터", ["전체보기", "품절만", "정상만"])
     
-    # 필터링 적용
+    # 필터링 및 데이터 보여주기
     df_disp = st.session_state.df_raw.copy()
     if filter_mode == "품절만": df_disp = df_disp[df_disp[sold_out].astype(str).str.upper() == 'Y']
     if filter_mode == "정상만": df_disp = df_disp[df_disp[sold_out].astype(str).str.upper() != 'Y']
     if search: df_disp = df_disp[df_disp[item].astype(str).str.contains(search, na=False)]
 
-    # 핵심 데이터만 노출
     display_cols = [sold_out, vendor, item, option, vendor_option, stock, avail, "입고예정수량(리오더)", t3day, t1week, '일일 판매량', '권장 발주량']
     df_final = df_disp[[c for c in display_cols if c in df_disp.columns]]
-    
-    
-    
-    # 편집기
-    edited_df = st.data_editor(df_final, use_container_width=True)
-    st.session_state.df_raw.update(edited_df)
-
-    # 다운로드
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        st.session_state.df_raw.to_excel(writer, index=False)
-    st.download_button("📥 최종 결과 엑셀 다운로드", buffer.getvalue(), "최종_발주서.xlsx")
