@@ -4,30 +4,35 @@ from io import BytesIO
 from datetime import datetime
 import holidays
 
-# 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [핵심] HTML/CSS를 직접 삽입하여 스트림릿의 버튼 스타일을 강제 무시하고 55px 적용
+# [핵심] 제목 크기를 55px로 강제 고정하는 스타일
 st.markdown("""
     <style>
-    .custom-title-btn {
-        background: none !important;
-        border: none !important;
-        padding: 0 !important;
-        margin: 0 0 20px 0 !important;
+    .big-title {
         font-size: 55px !important;
         font-weight: 900 !important;
         color: #000 !important;
-        cursor: pointer !important;
-        text-align: left !important;
-        outline: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 1.2 !important;
     }
-    .custom-title-btn:hover { color: #333 !important; }
+    /* 버튼을 제목 크기와 동일하게 투명하게 덮어씌움 */
+    div[data-testid="stButton"] button {
+        opacity: 0 !important;
+        position: absolute !important;
+        width: 100% !important;
+        height: 80px !important;
+        cursor: pointer !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# 페이지 새로고침(초기화) 기능
-if st.button("📦 재고 관리 및 발주 시스템", key="main_title"):
+# 1. 시각적인 제목 출력
+st.markdown('<div class="big-title">📦 재고 관리 및 발주 시스템</div>', unsafe_allow_html=True)
+
+# 2. 제목 위치에 투명 버튼을 배치하여 클릭 기능을 수행
+if st.button(" "):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
@@ -96,7 +101,7 @@ if st.session_state.df_raw is not None:
         st.success("✅ 분석 완료!")
         st.rerun()
 
-    # 4단계: 편집
+    # 4단계: 검색 및 데이터 편집
     st.subheader("📊 4단계: 검색 및 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search = f1.text_input("🔍 상품명 검색")
@@ -133,7 +138,7 @@ if st.session_state.df_raw is not None:
                 st.session_state.history[date_key].append(record)
                 st.success("기록 저장 완료!")
 
-    # 6단계: 과거 확인
+    # 6단계: 과거 데이터 확인
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         s_date = st.selectbox("📅 날짜 선택", sorted(st.session_state.history.keys(), reverse=True))
