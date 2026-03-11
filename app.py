@@ -4,35 +4,34 @@ from io import BytesIO
 from datetime import datetime
 import holidays
 
+# 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [핵심] 제목 크기를 55px로 강제 고정하는 스타일
+# [핵심 디자인] 첫 번째 버튼만 55px 적용, 나머지는 영향 없음
 st.markdown("""
     <style>
-    .big-title {
+    /* 첫 번째 버튼(제목)만 타겟팅하여 55px 적용 */
+    div.stButton:nth-of-type(1) button {
+        background: none !important;
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        width: 100% !important;
+        text-align: left !important;
+        box-shadow: none !important;
         font-size: 55px !important;
         font-weight: 900 !important;
         color: #000 !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        line-height: 1.2 !important;
+        height: auto !important;
     }
-    /* 버튼을 제목 크기와 동일하게 투명하게 덮어씌움 */
-    div[data-testid="stButton"] button {
-        opacity: 0 !important;
-        position: absolute !important;
-        width: 100% !important;
-        height: 80px !important;
-        cursor: pointer !important;
-    }
+    div.stButton:nth-of-type(1) button:hover { color: #555 !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# 1. 시각적인 제목 출력
-st.markdown('<div class="big-title">📦 재고 관리 및 발주 시스템</div>', unsafe_allow_html=True)
-
-# 2. 제목 위치에 투명 버튼을 배치하여 클릭 기능을 수행
-if st.button(" "):
+# 1. 제목 버튼 (이 녀석만 크게 나옵니다)
+if st.button("📦 재고 관리 및 발주 시스템"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
@@ -81,6 +80,7 @@ if st.session_state.df_raw is not None:
     lead_time = l1.number_input("리드타임 (일)", value=0)
     safety_stock = l2.number_input("안전재고 (일)", value=3)
     
+    # 이 버튼은 영향을 받지 않아 원래대로 보입니다
     if st.button("🚀 분석 실행", type="primary"):
         today = datetime.now()
         kr_holidays = holidays.KR(years=today.year)
@@ -138,7 +138,7 @@ if st.session_state.df_raw is not None:
                 st.session_state.history[date_key].append(record)
                 st.success("기록 저장 완료!")
 
-    # 6단계: 과거 데이터 확인
+    # 6단계: 과거 확인
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         s_date = st.selectbox("📅 날짜 선택", sorted(st.session_state.history.keys(), reverse=True))
