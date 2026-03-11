@@ -7,16 +7,34 @@ import holidays
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [제목 클릭 시 초기화 기능] 제목을 클릭하면 페이지를 새로고침하여 초기 상태로 돌아갑니다.
+# [제목 클릭(버튼) 시 초기화 기능] 
+# CSS를 사용하여 버튼을 제목처럼 보이게 처리하여 현재 창에서 새로고침되도록 함
 st.markdown("""
     <style>
-    .title-link { text-decoration: none; color: inherit; }
-    .title-link:hover { cursor: pointer; opacity: 0.7; }
+    div.stButton > button:first-child {
+        background-color: transparent !important;
+        border: none !important;
+        font-size: 40px !important;
+        font-weight: bold !important;
+        color: #333 !important;
+        padding: 0 !important;
+        text-align: left !important;
+        box-shadow: none !important;
+    }
+    div.stButton > button:hover {
+        color: #555 !important;
+        cursor: pointer;
+    }
     </style>
-    <a href="/" class="title-link"><h1>📦 재고 관리 및 발주 시스템</h1></a>
 """, unsafe_allow_html=True)
 
-# 세션 관리 (데이터가 없으면 초기화)
+if st.button("📦 재고 관리 및 발주 시스템"):
+    # 세션 전체 초기화 (데이터 삭제 후 새로고침)
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
+
+# 세션 관리
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'history' not in st.session_state: st.session_state.history = {}
 
