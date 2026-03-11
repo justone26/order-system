@@ -30,7 +30,7 @@ if uploaded_file is not None and st.session_state.df_raw is None:
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 5:5 매핑
+    # 1단계: 5:5 비율 매핑 설정
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -54,7 +54,6 @@ if st.session_state.df_raw is not None:
     
     if st.button("🚀 분석 실행", type="primary"):
         today = datetime.now()
-        # 현재 연도 기준 한국 공휴일 자동 호출
         kr_holidays = holidays.KR(years=today.year)
         
         def get_biz_days(start_date):
@@ -72,18 +71,18 @@ if st.session_state.df_raw is not None:
         
         st.session_state.df_raw['일일 판매량'] = (v_3day / divisors).round(1)
         st.session_state.df_raw['권장 발주량'] = ((st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock)) - (v_avail + v_reorder)).clip(lower=0).round(0)
-        st.success("✅ 공휴일 자동 계산 완료!")
+        st.success("✅ 분석 완료!")
         st.rerun()
 
-    # 4단계: 편집
+    # 4단계: 검색 및 데이터 편집
     st.subheader("📊 4단계: 검색 및 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search = f1.text_input("🔍 상품명 검색")
-    filter_mode = f2.selectbox("품절 필터", ["전체보기", "품절만", "정상만"])
+    filter_mode = f2.selectbox("품절 필터", ["정상만", "품절만", "전체보기"])
     
     df_disp = st.session_state.df_raw.copy()
-    if filter_mode == "품절만": df_disp = df_disp[df_disp[sold_out].astype(str).str.contains('품절', na=False)]
-    elif filter_mode == "정상만": df_disp = df_disp[~df_disp[sold_out].astype(str).str.contains('품절', na=False)]
+    if filter_mode == "정상만": df_disp = df_disp[~df_disp[sold_out].astype(str).str.contains('품절', na=False)]
+    elif filter_mode == "품절만": df_disp = df_disp[df_disp[sold_out].astype(str).str.contains('품절', na=False)]
     if search: df_disp = df_disp[df_disp[item].astype(str).str.contains(search, na=False)]
     
     edit_cols = [sold_out, vendor, item, option, vendor_item_name, stock, avail, "입고예정수량(리오더)", t3day, t1week, '권장 발주량']
