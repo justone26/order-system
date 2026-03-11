@@ -35,53 +35,54 @@ if st.session_state.df_data is not None:
     df = st.session_state.df_data
     columns = df.columns.tolist()
 
-    # 1단계: 매핑
+    # 1. 자동 매핑 섹션
     st.subheader("⚙️ 1단계: 자동 매핑 확인")
     col1, col2 = st.columns(2)
     with col1:
         sold_out = st.selectbox("품절 여부", columns, index=get_best_match(['품절', '판매중단'], columns))
         vendor = st.selectbox("공급처", columns, index=get_best_match(['공급처', '업체명'], columns))
         item = st.selectbox("상품명", columns, index=get_best_match(['상품명', '상품'], columns))
-        option = st.selectbox("옵션", columns, index=get_best_match(['옵션'], columns))
-        vendor_option = st.selectbox("공급처옵션", columns, index=get_best_match(['공급처옵션', '거래처옵션'], columns))
     with col2:
-        stock = st.selectbox("정상재고", columns, index=get_best_match(['정상재고', '재고'], columns))
         avail = st.selectbox("가용재고", columns, index=get_best_match(['가용재고', '가용'], columns))
         t3day = st.selectbox("3일 발주 합계", columns, index=get_best_match(['3일', '최근3일'], columns))
-        t1week = st.selectbox("1주 발주 합계", columns, index=get_best_match(['1주', '7일', '최근7일'], columns))
 
+    # 2. 분석 실행 및 필터링 기능
     st.write("---")
-    st.subheader("⚙️ 2단계: 기간 설정 및 컬럼 필터")
-    c1, c2, c3 = st.columns(3)
-    with c1: lead_time = st.number_input("리드타임 (일)", min_value=0, value=0)
-    with c2: safety_stock = st.number_input("안전재고 (일)", min_value=0, value=3)
-    with c3: 
-        # [핵심 추가] 표시할 컬럼 선택 기능
-        selected_cols = st.multiselect("보여줄 데이터 선택", columns, default=columns[:8])
+    st.subheader("⚙️ 2단계: 필터링 및 분석")
+    
+    # 품절 데이터 필터링 제어
+    c1, c2, c3 = st.columns([2, 1, 1])
+    with c1:
+        search_term = st.text_input("🔍 상품 검색 (상품명 기준)")
+    with c2:
+        filter_option = st.selectbox("품절 처리", ["전체 보기", "품절만 남기기", "품절 삭제"])
+    with c3:
+        if st.button("🚀 분석 실행"):
+            st.session_state.df_data['일일 판매량(기준)'] = (pd.to_numeric(st.session_state.df_data[t3day], errors='coerce') / 3).round(0)
+            st.rerun()
 
-    if st.button("🚀 분석 실행"):
-        for col in [t3day, avail, "입고예정수량(리오더)"]:
-            st.session_state.df_data[col] = pd.to_numeric(st.session_state.df_data[col], errors='coerce').fillna(0).astype(int)
-        st.session_state.df_data['일일 판매량(기준)'] = (st.session_state.df_data[t3day] / 3).round(0).astype(int)
-        st.session_state.df_data['권장 발주량'] = (st.session_state.df_data['일일 판매량(기준)'] * (lead_time + safety_stock) - 
-                                             (st.session_state.df_data[avail] + st.session_state.df_data["입고예정수량(리오더)"])).clip(lower=0).astype(int)
-        st.rerun()
+    # 데이터 필터링 로직
+    df_show = st.session_state.df_data.copy()
+    
+    # 1) 품절 필터 적용
+    if filter_option == "품절만 남기기":
+        df_show = df_show[df_show[sold_out].astype(str).str.upper() == 'Y']
+    elif filter_option == "품절 삭제":
+        df_show = df_show[df_show[sold_out].astype(str).str.upper() != 'Y']
+        
+    # 2) 검색 필터 적용
+    if search_term:
+        df_show = df_show[df_show[item].astype(str).str.contains(search_term, na=False)]
 
+    # 3. 데이터 편집 및 결과
     st.subheader("📊 데이터 편집 및 결과 확인")
+    edited_df = st.data_editor(df_show, use_container_width=True)
     
-    # 선택된 컬럼만 필터링하여 편집기 노출
-    result_df = st.session_state.df_data[selected_cols]
-    
-    
-    
-    edited_df = st.data_editor(result_df, use_container_width=True)
-    
-    # 편집된 값을 원본(session_state)에 동기화
-    for col in edited_df.columns:
-        st.session_state.df_data[col] = edited_df[col]
+    # 수정된 데이터 원본 동기화
+    st.session_state.df_data.update(edited_df)
 
+    # 4. 다운로드
     buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+    with pd.ExcelWriter(buffer, engine='openxmlformats.spreadsheetml.sheet') as writer:
         st.session_state.df_data.to_excel(writer, index=False)
-    
-    st.download_button("📥 전체 결과 엑셀 다운로드", data=buffer.getvalue(), file_name="최종_발주서.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button("📥 최종 결과 엑셀 다운로드", data=buffer.getvalue(), file_name="최종_발주서.xlsx")
