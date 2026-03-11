@@ -14,7 +14,7 @@ def get_idx(cols, keywords):
             if key in str(c): return i
     return 0
 
-# 파일 업로드
+# 1. 파일 업로드
 uploaded_file = st.file_uploader("엑셀 또는 CSV 파일을 업로드하세요", type=['xlsx', 'xls', 'csv'])
 if uploaded_file is not None and st.session_state.df_raw is None:
     df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
@@ -26,7 +26,7 @@ if uploaded_file is not None and st.session_state.df_raw is None:
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-    # [1단계: 자동 매핑]
+    # [1단계: 매핑]
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -57,7 +57,7 @@ if st.session_state.df_raw is not None:
                                             (pd.to_numeric(st.session_state.df_raw[avail], errors='coerce') + st.session_state.df_raw["입고예정수량(리오더)"])).clip(lower=0)
         st.rerun()
 
-    # [4단계: 검색 및 편집]
+    # [4단계: 검색 및 데이터 편집]
     st.write("---")
     st.subheader("📊 4단계: 검색 및 데이터 편집")
     f1, f2 = st.columns([3, 1])
@@ -73,8 +73,18 @@ if st.session_state.df_raw is not None:
     df_final = df_disp[[c for c in display_cols if c in df_disp.columns]]
     
     
+
+    # 편집기: '입고예정수량(리오더)'만 수정 가능하도록 설정
+    edited_df = st.data_editor(
+        df_final, 
+        use_container_width=True,
+        column_config={
+            col: st.column_config.Column(disabled=True) 
+            for col in df_final.columns if col != "입고예정수량(리오더)"
+        }
+    )
     
-    edited_df = st.data_editor(df_final, use_container_width=True)
+    # 원본 데이터 동기화
     st.session_state.df_raw.update(edited_df)
 
     # [다운로드]
