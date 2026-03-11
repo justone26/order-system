@@ -41,19 +41,19 @@ if st.session_state.df_raw is not None:
         t3day = st.selectbox("3일 발주 합계", cols, index=get_idx(cols, ['3일', '최근3일']))
         t1week = st.selectbox("1주 발주 합계", cols, index=get_idx(cols, ['1주', '7일', '최근7일']))
 
-    # [2단계: 기간 설정 및 분석 실행]
+    # [2단계: 기간 설정 및 분석 실행 (아래쪽 버튼)]
     st.write("---")
-    st.subheader("⚙️ 2단계: 기간 설정 및 분석 실행")
-    c3, c4, c5 = st.columns([1, 1, 2])
-    with c3: lead_time = st.number_input("리드타임 (일)", min_value=0, value=0)
-    with c4: safety_stock = st.number_input("안전재고 확보 (일)", min_value=0, value=3)
-    with c5:
-        st.write("") # 정렬용
-        if st.button("🚀 분석 실행 (결과 반영)"):
-            st.session_state.df_raw['일일 판매량'] = (pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce') / 3).round(0)
-            st.session_state.df_raw['권장 발주량'] = (st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock) - 
-                                                (pd.to_numeric(st.session_state.df_raw[avail], errors='coerce') + st.session_state.df_raw["입고예정수량(리오더)"])).clip(lower=0)
-            st.rerun()
+    st.subheader("⚙️ 2단계: 기간 설정 및 분석")
+    l1, l2 = st.columns(2)
+    with l1: lead_time = st.number_input("리드타임 (일)", min_value=0, value=0)
+    with l2: safety_stock = st.number_input("안전재고 확보 (일)", min_value=0, value=3)
+    
+    # 버튼을 설정 아래쪽 전체 너비로 배치
+    if st.button("🚀 분석 실행 (결과 반영)", use_container_width=True):
+        st.session_state.df_raw['일일 판매량'] = (pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce') / 3).round(0)
+        st.session_state.df_raw['권장 발주량'] = (st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock) - 
+                                            (pd.to_numeric(st.session_state.df_raw[avail], errors='coerce') + st.session_state.df_raw["입고예정수량(리오더)"])).clip(lower=0)
+        st.rerun()
 
     # [3단계: 데이터 편집 및 검색]
     st.write("---")
@@ -70,3 +70,15 @@ if st.session_state.df_raw is not None:
 
     display_cols = [sold_out, vendor, item, option, vendor_option, stock, avail, "입고예정수량(리오더)", t3day, t1week, '일일 판매량', '권장 발주량']
     df_final = df_disp[[c for c in display_cols if c in df_disp.columns]]
+    
+    
+    
+    # 편집기
+    edited_df = st.data_editor(df_final, use_container_width=True)
+    st.session_state.df_raw.update(edited_df)
+
+    # [다운로드]
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        st.session_state.df_raw.to_excel(writer, index=False)
+    st.download_button("📥 최종 결과 엑셀 다운로드", buffer.getvalue(), "최종_발주서.xlsx")
