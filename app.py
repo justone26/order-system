@@ -28,22 +28,27 @@ if uploaded_file is not None and st.session_state.df_raw is None:
     st.session_state.df_raw = df
     st.rerun()
 
-# [데이터가 로드된 경우 전체 프로세스 실행]
 if st.session_state.df_raw is not None:
+    def get_auto_index(cols, keywords):
+        for key in keywords:
+            for i, c in enumerate(cols):
+                if key in str(c): return i
+        return 0
+
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 매핑
+    # 1단계 매핑 (매핑 인덱스 복구)
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
-    sold_out = c1.selectbox("품절 여부", cols, index=0)
-    vendor = c1.selectbox("공급처", cols, index=0)
-    item = c1.selectbox("상품명", cols, index=0)
-    option = c1.selectbox("옵션", cols, index=0)
-    reg_date_col = c2.selectbox("등록일 컬럼", cols, index=0)
-    avail = c2.selectbox("가용재고", cols, index=0)
-    t3day = c2.selectbox("3일 발주 합계", cols, index=0)
+    sold_out = c1.selectbox("품절 여부", cols, index=get_auto_index(cols, ['품절', '판매중단']))
+    vendor = c1.selectbox("공급처", cols, index=get_auto_index(cols, ['공급처', '업체명']))
+    item = c1.selectbox("상품명", cols, index=get_auto_index(cols, ['상품명', '상품']))
+    option = c1.selectbox("옵션", cols, index=get_auto_index(cols, ['옵션']))
+    reg_date_col = c2.selectbox("등록일 컬럼", cols, index=get_auto_index(cols, ['등록일', '생성일', '입점일']))
+    avail = c2.selectbox("가용재고", cols, index=get_auto_index(cols, ['가용재고', '가용']))
+    t3day = c2.selectbox("3일 발주 합계", cols, index=get_auto_index(cols, ['3일', '최근3일']))
 
-    # 2~3단계: 분석
+    # 2~3단계 분석
     st.subheader("⚙️ 2~3단계: 분석 설정")
     l1, l2 = st.columns(2)
     lead_time = l1.number_input("리드타임 (일)", value=0)
@@ -51,37 +56,36 @@ if st.session_state.df_raw is not None:
     
     if st.button("🚀 분석 실행"):
         df = st.session_state.df_raw
-        df['일일 판매량'] = (pd.to_numeric(df[t3day], errors='coerce').fillna(0) / 3).round(0).astype(int)
+        divisors = 3 # 단순화
+        df['일일 판매량'] = (pd.to_numeric(df[t3day], errors='coerce').fillna(0) / divisors).round(0).astype(int)
         v_reorder = pd.to_numeric(df["1차 리오더"], errors='coerce').fillna(0) + pd.to_numeric(df["2차 리오더"], errors='coerce').fillna(0)
         df['권장 발주량'] = ((df['일일 판매량'] * (lead_time + safety_stock)) - (pd.to_numeric(df[avail], errors='coerce') + v_reorder)).clip(lower=0).astype(int)
         st.session_state.df_raw = df
         st.rerun()
 
-    # 4단계: 편집
-    st.subheader("📊 4단계: 데이터 편집 (1차/2차 리오더 수정 가능)")
-    df_disp = st.session_state.df_raw
-    edited_df = st.data_editor(
-        df_disp, 
-        use_container_width=True, 
-        disabled=[c for c in df_disp.columns if c not in ["1차 리오더", "2차 리오더"]]
-    )
+    # 4단계 편집 (지정된 컬럼만 출력)
+    st.subheader("📊 4단계: 데이터 편집")
+    edit_cols = [sold_out, vendor, item, option, avail, "1차 리오더", "2차 리오더", "일일 판매량", t3day, '권장 발주량']
+    df_final = st.session_state.df_raw[[c for c in edit_cols if c in st.session_state.df_raw.columns]]
+    edited_df = st.data_editor(df_final, use_container_width=True, disabled=[c for c in df_final.columns if c not in ["1차 리오더", "2차 리오더"]])
     st.session_state.df_raw.update(edited_df)
 
-    # 5단계: 요약
+    # 5단계: 발주 리스트 요약 (필터링된 것만)
     st.subheader("📋 5단계: 발주 리스트 요약")
-    to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0]
+    to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
     if not to_order.empty:
         st.dataframe(to_order, use_container_width=True)
-        buf = BytesIO()
-        with pd.ExcelWriter(buf, engine='openpyxl') as w: to_order.to_excel(w, index=False)
-        st.download_button("📥 발주 리스트 다운로드", data=buf.getvalue(), file_name="발주서.xlsx")
-        
         if st.button("💾 기록 저장"):
-            st.session_state.history[datetime.now().strftime("%Y-%m-%d %H:%M:%S")] = to_order.copy().reset_index(drop=True)
+            date_key = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # 타입 에러 방지: 데이터프레임 복사본을 명시적으로 저장
+            st.session_state.history[date_key] = to_order.copy()
             st.success("기록 저장 완료!")
-
-    # 6단계: 과거 확인
+    
+    # 6단계: 과거 기록 확인 (데이터 타입 체크)
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
-        s_time = st.selectbox("⏰ 저장 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
-        st.dataframe(st.session_state.history[s_time], use_container_width=True)
+        s_time = st.selectbox("⏰ 저장된 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
+        hist_data = st.session_state.history[s_time]
+        # 타입 체크하여 Streamlit API 오류 방지
+        if isinstance(hist_data, pd.DataFrame):
+            st.dataframe(hist_data, use_container_width=True)
