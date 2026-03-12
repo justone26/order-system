@@ -71,29 +71,31 @@ if st.session_state.df_raw is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-    # 4단계: 데이터 편집 (요청하신 컬럼 순서 고정)
+    # 4단계: 데이터 편집 (품절 필터 순서 변경)
     st.subheader("📊 4단계: 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search_query = f1.text_input("🔍 상품명 검색")
-    filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"])
+    # [수정] 필터 순서: 정상만 -> 품절만 -> 전체보기
+    filter_mode = f2.selectbox("품절 필터", ["정상만", "품절만", "전체보기"])
     
     df_filtered = st.session_state.df_raw.copy()
-    if filter_mode == "정상만": df_filtered = df_filtered[~df_filtered[sold_out].astype(str).str.contains('품절', na=False)]
-    elif filter_mode == "품절만": df_filtered = df_filtered[df_filtered[sold_out].astype(str).str.contains('품절', na=False)]
-    if search_query: df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_query, na=False)]
+    if filter_mode == "정상만":
+        df_filtered = df_filtered[~df_filtered[sold_out].astype(str).str.contains('품절', na=False)]
+    elif filter_mode == "품절만":
+        df_filtered = df_filtered[df_filtered[sold_out].astype(str).str.contains('품절', na=False)]
+    
+    if search_query:
+        df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_query, na=False)]
 
-    # [핵심] 4단계 컬럼 순서 정의
+    # 4단계 요청 컬럼 순서 고정
     target_cols = [
         sold_out, vendor, item, option, vendor_item_name, 
         stock, avail, "1차 리오더", "2차 리오더"
     ]
-    # 분석 후 생성되는 컬럼들 추가
     if '일일 판매량' in df_filtered.columns: target_cols.append('일일 판매량')
-    target_cols.append(t3day)
-    target_cols.append(t1week)
+    target_cols.extend([t3day, t1week])
     if '권장 발주량' in df_filtered.columns: target_cols.append('권장 발주량')
     
-    # 실제 존재하는 컬럼만 필터링
     display_cols = [c for c in target_cols if c in df_filtered.columns]
 
     edited_df = st.data_editor(
@@ -104,7 +106,7 @@ if st.session_state.df_raw is not None:
     )
     st.session_state.df_raw.update(edited_df)
 
-    # 5단계: 발주 리스트 요약 (필요 정보만 요약)
+    # 5단계: 발주 리스트 요약 (권장발주량 중심 요약)
     st.subheader("📋 5단계: 발주 리스트 요약")
     if '권장 발주량' in st.session_state.df_raw.columns:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
@@ -122,7 +124,8 @@ if st.session_state.df_raw is not None:
                 time_key = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 st.session_state.history[time_key] = to_order_summary.copy().reset_index(drop=True)
                 st.success("저장 완료!")
-        else: st.info("발주 대상 없음")
+        else:
+            st.info("발주 대상 없음")
 
     # 6단계: 과거 데이터 확인
     st.subheader("📜 6단계: 과거 데이터 확인")
