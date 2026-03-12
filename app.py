@@ -5,6 +5,12 @@ from datetime import datetime
 
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
+# [1] 상태 초기화
+if 'df_raw' not in st.session_state: st.session_state.df_raw = None
+if 'history' not in st.session_state: st.session_state.history = {}
+
+st.title("📦 재고 관리 및 발주 시스템")
+
 # [핵심] 시스템 전체 초기화 (업로드 파일까지 제거)
 if st.button("🔄 시스템 전체 초기화"):
     # 세션 상태 전부 삭제
@@ -101,4 +107,5 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         s_time = st.selectbox("⏰ 저장 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
         st.dataframe(st.session_state.history[s_time], use_container_width=False)
+
 
