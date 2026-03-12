@@ -3,6 +3,6 @@ pandas
 gspread
 oauth2client
 openpyxl
-gspread
-oauth2client
+
+
 
