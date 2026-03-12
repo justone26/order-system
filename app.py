@@ -7,13 +7,17 @@ import holidays
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [제목 및 사이드바 관리]
+# [제목]
 st.title("📦 재고 관리 및 발주 시스템")
 
-if st.sidebar.button("🔄 시스템 초기화 (데이터 삭제)"):
+# [요청하신 대로 버튼 위치를 업로드 위로 이동]
+if st.button("🔄 시스템 초기화 (데이터 삭제)"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
+
+# [파일 업로드]
+uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
 
 # 세션 관리
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
@@ -25,8 +29,6 @@ def get_auto_index(cols, keywords):
             if key in str(c): return i
     return 0
 
-# 1. 파일 업로드
-uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
 if uploaded_file is not None and st.session_state.df_raw is None:
     df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
     st.session_state.df_raw = df.loc[:, ~df.columns.duplicated()]
@@ -38,7 +40,7 @@ if st.session_state.df_raw is not None:
     df = st.session_state.df_raw
     cols = df.columns.tolist()
 
-    # 1단계: 5:5 매핑 (건드리지 않음)
+    # 1단계: 매핑 설정 (건드리지 않음)
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -54,7 +56,7 @@ if st.session_state.df_raw is not None:
         t3day = st.selectbox("3일 발주 합계", cols, index=get_auto_index(cols, ['3일', '최근3일']))
         t1week = st.selectbox("1주 발주 합계", cols, index=get_auto_index(cols, ['1주', '7일', '최근7일']))
 
-    # 2~3단계: 기간 설정 및 분석
+    # 2~3단계: 분석
     st.subheader("⚙️ 2~3단계: 기간 설정 및 분석")
     l1, l2 = st.columns(2)
     lead_time = l1.number_input("리드타임 (일)", value=0)
@@ -80,7 +82,7 @@ if st.session_state.df_raw is not None:
         st.success("✅ 분석 완료!")
         st.rerun()
 
-    # 4단계: 검색 및 데이터 편집
+    # 4단계: 편집
     st.subheader("📊 4단계: 검색 및 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search = f1.text_input("🔍 상품명 검색")
@@ -96,13 +98,13 @@ if st.session_state.df_raw is not None:
     edited_df = st.data_editor(df_final, use_container_width=True, disabled=[c for c in df_final.columns if c != "입고예정수량(리오더)"])
     st.session_state.df_raw.update(edited_df)
     
-    # [기능] 위험 경고 라인
+    # [위험 경고]
     danger_df = st.session_state.df_raw[pd.to_numeric(st.session_state.df_raw[avail], errors='coerce') < 5]
     if not danger_df.empty:
         st.warning(f"⚠️ 재고 부족 경고: {len(danger_df)}개 상품의 가용재고가 5 미만입니다.")
         st.dataframe(danger_df[[item, option, avail]], use_container_width=True)
 
-    # 5단계: 발주 리스트 요약
+    # 5단계: 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
     if '권장 발주량' in st.session_state.df_raw.columns:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
@@ -123,7 +125,7 @@ if st.session_state.df_raw is not None:
                 st.session_state.history[date_key].append(record)
                 st.success("기록 저장 완료!")
 
-    # 6단계: 과거 데이터 확인
+    # 6단계: 과거 확인
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         s_date = st.selectbox("📅 날짜 선택", sorted(st.session_state.history.keys(), reverse=True))
