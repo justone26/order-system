@@ -7,33 +7,21 @@ import json
 
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [1] 인증 및 구글 시트 함수 (Secrets 사용)
 def get_sheet():
+    # 1. Secrets에서 키 정보를 가져옴
     creds_dict = dict(st.secrets["gcp_service_account"])
+    
     scope = ["https://spreadsheets.google.com/feeds", 
              'https://www.googleapis.com/auth/spreadsheets', 
              "https://www.googleapis.com/auth/drive"]
+    
+    # 2. 인증
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    return client.open('재고관리_데이터').sheet1
-
-def load_reorder_data():
-    try:
-        sheet = get_sheet()
-        return pd.DataFrame(sheet.get_all_records())
-    except: return pd.DataFrame(columns=['상품코드', '1차 리오더', '2차 리오더'])
-
-def save_reorder_data(df):
-    sheet = get_sheet()
-    sheet.clear()
-    sheet.update([df.columns.values.tolist()] + df.values.tolist())
-
-# [2] 유틸리티 함수
-def get_auto_index(cols, keywords):
-    for key in keywords:
-        for i, c in enumerate(cols):
-            if key in str(c): return i
-    return 0
+    
+    # 3. 파일 이름 대신 '고유 키값'으로 직접 접근
+    spreadsheet_key = "1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg"
+    return client.open_by_key(spreadsheet_key).sheet1
 
 # [상태 초기화]
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
@@ -135,6 +123,7 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
