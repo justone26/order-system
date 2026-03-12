@@ -71,11 +71,10 @@ if st.session_state.df_raw is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-    # 4단계: 데이터 편집 (품절 필터 순서 변경)
+    # 4단계: 데이터 편집
     st.subheader("📊 4단계: 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search_query = f1.text_input("🔍 상품명 검색")
-    # [수정] 필터 순서: 정상만 -> 품절만 -> 전체보기
     filter_mode = f2.selectbox("품절 필터", ["정상만", "품절만", "전체보기"])
     
     df_filtered = st.session_state.df_raw.copy()
@@ -87,11 +86,7 @@ if st.session_state.df_raw is not None:
     if search_query:
         df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_query, na=False)]
 
-    # 4단계 요청 컬럼 순서 고정
-    target_cols = [
-        sold_out, vendor, item, option, vendor_item_name, 
-        stock, avail, "1차 리오더", "2차 리오더"
-    ]
+    target_cols = [sold_out, vendor, item, option, vendor_item_name, stock, avail, "1차 리오더", "2차 리오더"]
     if '일일 판매량' in df_filtered.columns: target_cols.append('일일 판매량')
     target_cols.extend([t3day, t1week])
     if '권장 발주량' in df_filtered.columns: target_cols.append('권장 발주량')
@@ -106,7 +101,7 @@ if st.session_state.df_raw is not None:
     )
     st.session_state.df_raw.update(edited_df)
 
-    # 5단계: 발주 리스트 요약 (권장발주량 중심 요약)
+    # 5단계: 발주 리스트 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
     if '권장 발주량' in st.session_state.df_raw.columns:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
@@ -121,15 +116,37 @@ if st.session_state.df_raw is not None:
             c1.download_button("📥 요약 발주서 다운로드", data=buf.getvalue(), file_name=f"발주요약_{datetime.now().strftime('%m%d')}.xlsx")
             
             if c2.button("💾 이 리스트 기록 저장"):
-                time_key = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                st.session_state.history[time_key] = to_order_summary.copy().reset_index(drop=True)
-                st.success("저장 완료!")
-        else:
-            st.info("발주 대상 없음")
+                today_date = datetime.now().strftime("%Y-%m-%d")
+                save_time = datetime.now().strftime("%H:%M:%S")
+                
+                # 날짜별로 딕셔너리 구조 생성
+                if today_date not in st.session_state.history:
+                    st.session_state.history[today_date] = {}
+                
+                st.session_state.history[today_date][save_time] = to_order_summary.copy().reset_index(drop=True)
+                st.success(f"✅ {today_date} {save_time} 기록 저장 완료!")
+        else: st.info("발주 대상 없음")
 
-    # 6단계: 과거 데이터 확인
+    # 6단계: 과거 데이터 확인 (날짜별 그룹화)
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
-        s_time = st.selectbox("⏰ 저장된 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
-        if isinstance(st.session_state.history[s_time], pd.DataFrame):
-            st.dataframe(st.session_state.history[s_time], use_container_width=True)
+        h_dates = sorted(st.session_state.history.keys(), reverse=True)
+        col_date, col_time = st.columns(2)
+        
+        with col_date:
+            selected_date = st.selectbox("📅 날짜 선택", h_dates)
+        
+        with col_time:
+            h_times = sorted(st.session_state.history[selected_date].keys(), reverse=True)
+            selected_time = st.selectbox("⏰ 시간 선택", h_times)
+            
+        hist_df = st.session_state.history[selected_date][selected_time]
+        
+        if isinstance(hist_df, pd.DataFrame):
+            st.dataframe(hist_df, use_container_width=True)
+            # 과거 데이터 다시 다운로드 기능
+            h_buf = BytesIO()
+            with pd.ExcelWriter(h_buf, engine='openpyxl') as w: hist_df.to_excel(w, index=False)
+            st.download_button(f"📥 {selected_date}_{selected_time} 기록 다운로드", data=h_buf.getvalue(), file_name=f"과거기록_{selected_date}_{selected_time}.xlsx")
+    else:
+        st.info("저장된 기록이 없습니다.")
