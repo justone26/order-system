@@ -63,27 +63,44 @@ if st.session_state.df_raw is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-    # 4단계: 데이터 편집 (요청하신 순서와 필터 완벽 적용)
+# 4단계: 데이터 편집 (분석된 컬럼을 강제로 포함시키기)
     st.subheader("📊 4단계: 데이터 편집")
+    
+    # 1. 원본 세션에서 데이터를 가져옴
+    df_working = st.session_state.df_raw.copy()
+    
+    # 2. 검색 및 필터 UI
     f1, f2 = st.columns([3, 1])
     search_query = f1.text_input("🔍 상품명 검색")
     filter_mode = f2.selectbox("품절 필터", ["정상만", "품절만", "전체보기"], index=0)
     
-    df_filtered = st.session_state.df_raw.copy()
-    if filter_mode == "정상만": df_filtered = df_filtered[~df_filtered[sold_out].astype(str).str.contains('품절', na=False)]
-    elif filter_mode == "품절만": df_filtered = df_filtered[df_filtered[sold_out].astype(str).str.contains('품절', na=False)]
-    if search_query: df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_query, na=False)]
+    # 3. 필터링 적용
+    if filter_mode == "정상만": 
+        df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
+    elif filter_mode == "품절만": 
+        df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
+    if search_query: 
+        df_working = df_working[df_working[item].astype(str).str.contains(search_query, na=False)]
 
-    # 4단계: 컬럼 순서 고정
+    # 4. [핵심] 컬럼 순서 지정 및 분석 컬럼 강제 포함
+    # '일일 판매량'과 '권장 발주량'이 계산되었다면 컬럼 리스트에 무조건 넣음
     target_cols = [sold_out, vendor, item, option, vendor_item_name, reg_date_col, stock, avail, "1차 리오더", "2차 리오더"]
-    if '일일 판매량' in df_filtered.columns: target_cols.append('일일 판매량')
+    
+    if '일일 판매량' in df_working.columns:
+        target_cols.append('일일 판매량')
     target_cols.extend([t3day, t1week])
-    if '권장 발주량' in df_filtered.columns: target_cols.append('권장 발주량')
-    display_cols = [c for c in target_cols if c in df_filtered.columns]
+    if '권장 발주량' in df_working.columns:
+        target_cols.append('권장 발주량')
+    
+    # 실제 존재하는 컬럼만 필터링해서 표시
+    display_cols = [c for c in target_cols if c in df_working.columns]
 
-    edited_df = st.data_editor(df_filtered[display_cols], use_container_width=True, key="main_editor")
+    # 5. 데이터 에디터 (수정 후 즉시 session에 반영)
+    edited_df = st.data_editor(df_working[display_cols], use_container_width=True, key="main_editor")
+    
+    # 수정된 내용을 세션 원본에 반영 (이 부분이 중요해!)
     st.session_state.df_raw.update(edited_df)
-
+    
     # 5~6단계는 그대로... (위에 코드와 동일)
 
     # 5단계: 발주 리스트 요약
@@ -110,4 +127,5 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         s_time = st.selectbox("⏰ 저장된 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
         st.dataframe(st.session_state.history[s_time], use_container_width=True)
+
 
