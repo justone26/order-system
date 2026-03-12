@@ -53,15 +53,22 @@ if 'df_raw' in st.session_state and st.session_state.df_raw is not None:
         st.session_state.df_raw = edit_df
         st.rerun()
 
-    # 5단계: 발주 리스트 요약 (누락 방지)
+ # 5단계: 발주 리스트 요약 (수정된 안전 로직)
     st.subheader("📋 5단계: 발주 리스트 요약")
     if '권장 발주량' in df.columns:
+        # 1. 중복 컬럼 제거 (중복된 열이 있으면 첫 번째 열만 남김)
+        df = df.loc[:, ~df.columns.duplicated()]
+        
         order_list = df[df['권장 발주량'] > 0]
+        
         if not order_list.empty:
-            st.dataframe(order_list[[vendor, item, option, '권장 발주량']], use_container_width=True)
+            # 2. 선택된 컬럼들이 실제 데이터프레임에 있는지 확인 후 추출
+            required_cols = [vendor, item, option, '권장 발주량']
+            valid_cols = [c for c in required_cols if c in df.columns]
+            
+            # 3. 중복되지 않은 리스트로 최종 출력
+            st.dataframe(order_list[valid_cols].drop_duplicates(), use_container_width=True)
         else:
             st.info("발주할 상품이 없습니다.")
     else:
         st.warning("먼저 '분석 실행'을 진행해주세요.")
-else:
-    st.info("파일을 업로드하면 1단계 매핑 설정을 시작할 수 있습니다.")
