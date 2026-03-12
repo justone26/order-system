@@ -24,7 +24,6 @@ if uploaded_file is not None and st.session_state.df_raw is None:
     try:
         df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
         df = df.loc[:, ~df.columns.duplicated()]
-        # 리오더 컬럼 초기 생성
         if "1차 리오더" not in df.columns: df["1차 리오더"] = 0
         if "2차 리오더" not in df.columns: df["2차 리오더"] = 0
         st.session_state.df_raw = df
@@ -70,40 +69,48 @@ if st.session_state.df_raw is not None:
         v_reorder = pd.to_numeric(df["1차 리오더"], errors='coerce').fillna(0) + pd.to_numeric(df["2차 리오더"], errors='coerce').fillna(0)
         df['권장 발주량'] = ((df['일일 판매량'] * (lead_time + safety_stock)) - (v_avail + v_reorder)).clip(lower=0).astype(int)
         st.session_state.df_raw = df
-        st.success("분석 완료! 아래 4단계를 확인하세요.")
         st.rerun()
 
-    # 4단계: 데이터 편집 (데이터 노출 보장)
+    # 4단계: 데이터 편집 (요청하신 컬럼 순서 고정)
     st.subheader("📊 4단계: 데이터 편집")
-    # 보여줄 컬럼 리스트 (존재하는 것만 필터링)
-    target_cols = [sold_out, vendor, item, option, vendor_item_name, stock, avail, "1차 리오더", "2차 리오더"]
-    if '일일 판매량' in st.session_state.df_raw.columns: target_cols.append('일일 판매량')
-    if '권장 발주량' in st.session_state.df_raw.columns: target_cols.append('권장 발주량')
+    f1, f2 = st.columns([3, 1])
+    search_query = f1.text_input("🔍 상품명 검색")
+    filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"])
     
-    # 4단계용 데이터프레임 생성
-    df_4step = st.session_state.df_raw.copy()
+    df_filtered = st.session_state.df_raw.copy()
+    if filter_mode == "정상만": df_filtered = df_filtered[~df_filtered[sold_out].astype(str).str.contains('품절', na=False)]
+    elif filter_mode == "품절만": df_filtered = df_filtered[df_filtered[sold_out].astype(str).str.contains('품절', na=False)]
+    if search_query: df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_query, na=False)]
+
+    # [핵심] 4단계 컬럼 순서 정의
+    target_cols = [
+        sold_out, vendor, item, option, vendor_item_name, 
+        stock, avail, "1차 리오더", "2차 리오더"
+    ]
+    # 분석 후 생성되는 컬럼들 추가
+    if '일일 판매량' in df_filtered.columns: target_cols.append('일일 판매량')
+    target_cols.append(t3day)
+    target_cols.append(t1week)
+    if '권장 발주량' in df_filtered.columns: target_cols.append('권장 발주량')
     
-    # [수정] 데이터가 안 나오는 현상 방지를 위해 강제로 컬럼 선택
-    display_cols = [c for c in target_cols if c in df_4step.columns]
-    
+    # 실제 존재하는 컬럼만 필터링
+    display_cols = [c for c in target_cols if c in df_filtered.columns]
+
     edited_df = st.data_editor(
-        df_4step[display_cols], 
-        use_container_width=True, 
-        disabled=[c for c in display_cols if c not in ["1차 리오더", "2차 리오더"]]
+        df_filtered[display_cols],
+        use_container_width=True,
+        disabled=[c for c in display_cols if c not in ["1차 리오더", "2차 리오더"]],
+        key="main_editor"
     )
-    # 편집 내용 원본에 반영
     st.session_state.df_raw.update(edited_df)
 
-    # 5단계: 발주 리스트 요약 (권장 발주량 중심 요약)
+    # 5단계: 발주 리스트 요약 (필요 정보만 요약)
     st.subheader("📋 5단계: 발주 리스트 요약")
     if '권장 발주량' in st.session_state.df_raw.columns:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
-        
         if not to_order.empty:
-            # [수정] 권장발주량 위주의 요약 리스트만 노출
             summary_cols = [vendor, item, option, vendor_item_name, '권장 발주량']
             to_order_summary = to_order[[c for c in summary_cols if c in to_order.columns]]
-            
             st.dataframe(to_order_summary, use_container_width=True)
             
             c1, c2 = st.columns(2)
@@ -113,17 +120,13 @@ if st.session_state.df_raw is not None:
             
             if c2.button("💾 이 리스트 기록 저장"):
                 time_key = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                st.session_state.history[time_key] = to_order_summary.copy()
-                st.success(f"{time_key} 기록 저장 완료!")
-        else:
-            st.info("권장 발주량이 있는 상품이 없습니다.")
-    else:
-        st.warning("먼저 2~3단계에서 '분석 실행' 버튼을 눌러주세요.")
+                st.session_state.history[time_key] = to_order_summary.copy().reset_index(drop=True)
+                st.success("저장 완료!")
+        else: st.info("발주 대상 없음")
 
     # 6단계: 과거 데이터 확인
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         s_time = st.selectbox("⏰ 저장된 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
-        hist_df = st.session_state.history[s_time]
-        if isinstance(hist_df, pd.DataFrame):
-            st.dataframe(hist_df, use_container_width=True)
+        if isinstance(st.session_state.history[s_time], pd.DataFrame):
+            st.dataframe(st.session_state.history[s_time], use_container_width=True)
