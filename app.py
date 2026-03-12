@@ -7,33 +7,35 @@ st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
 # [1] 상태 초기화
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
-if 'history' not in st.session_state: st.session_state.history = {}
 
 st.title("📦 재고 관리 및 발주 시스템")
 
-# 시스템 전체 초기화 버튼
-if st.button("🔄 시스템 전체 초기화"):
-    for key in list(st.session_state.keys()): del st.session_state[key]
-    st.rerun()
-
-# [1단계: 업로드 로직]
+# [1단계: 엑셀 업로드]
 uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
 if uploaded_file is not None:
-    try:
-        df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
-        st.session_state.df_raw = df.loc[:, ~df.columns.duplicated()]
-        st.success("파일 로드 성공!")
-    except Exception as e: st.error(f"파일 오류: {e}")
+    st.session_state.df_raw = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
+    st.success("데이터가 로드되었습니다!")
 
-# [핵심] 1~6단계 UI (파일 유무와 상관없이 상단에 고정하거나, 데이터 있을 때만 표시)
+# [핵심: 파일 유무와 관계없이 데이터가 있으면 무조건 화면 그리기]
 if st.session_state.df_raw is not None:
     df = st.session_state.df_raw
     
-    # 여기서부터 기존 1단계 매핑 설정, 2단계 분석, 3단계 편집 등을 쭉 나열하면 됨!
-    st.subheader("📊 데이터 편집")
-    edited_df = st.data_editor(df, use_container_width=True)
-    st.session_state.df_raw.update(edited_df)
+    # --- 여기서부터 네가 만든 1~6단계 로직을 순서대로 복사해서 붙여넣어! ---
     
-    # 5, 6단계 코드도 여기 아래에 이어 붙이면 화면에 잘 나올 거야.
+    # 1단계: 매핑 설정
+    st.subheader("⚙️ 1단계: 매핑 설정")
+    # ... 네가 만든 매핑 설정 코드 ...
+    
+    # 2~3단계: 분석 설정 및 버튼
+    st.subheader("⚙️ 2~3단계: 분석 설정")
+    # ... 네가 만든 분석/계산 로직 코드 ...
+    
+    # 4단계: 데이터 편집
+    st.subheader("📊 4단계: 데이터 편집")
+    # ... 네가 만든 데이터 에디터 코드 ...
+    
+    # 5단계, 6단계: 요약 및 기록
+    # ... 네가 만든 나머지 코드 ...
+    
 else:
-    st.info("파일을 업로드하면 분석 도구가 나타납니다.")
+    st.info("엑셀 파일을 업로드하면 1~6단계 도구가 나타납니다.")
