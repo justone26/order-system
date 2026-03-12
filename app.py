@@ -11,6 +11,11 @@ if 'history' not in st.session_state: st.session_state.history = {}
 
 st.title("📦 재고 관리 및 발주 시스템")
 
+# [복구된 초기화 버튼]
+if st.button("🔄 시스템 전체 초기화"):
+    for key in list(st.session_state.keys()): del st.session_state[key]
+    st.rerun()
+
 # 자동 매핑 함수
 def get_auto_index(cols, keywords):
     for key in keywords:
@@ -57,7 +62,7 @@ if st.session_state.df_raw is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-    # 4단계: 데이터 편집 (가로 스크롤 최적화)
+    # 4단계: 데이터 편집
     st.subheader("📊 4단계: 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search_query = f1.text_input("🔍 상품명 검색")
@@ -80,17 +85,17 @@ if st.session_state.df_raw is not None:
     if '권장 발주량' in st.session_state.df_raw.columns:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
         if not to_order.empty:
+            st.warning(f"🚨 알림: 발주가 필요한 상품이 {len(to_order)}개 있습니다!")
             summary_cols = [vendor, item, option, vendor_item, "권장 발주량"]
             st.dataframe(to_order[summary_cols], use_container_width=False)
             c1, c2 = st.columns(2)
             buf = BytesIO()
             with pd.ExcelWriter(buf, engine='openpyxl') as w: to_order[summary_cols].to_excel(w, index=False)
-            file_name = f"발주서_{datetime.now().strftime('%m%d')}.xlsx"
-            c1.download_button("📥 요약 발주서 다운로드", data=buf.getvalue(), file_name=file_name)
+            c1.download_button("📥 요약 발주서 다운로드", data=buf.getvalue(), file_name=f"발주서_{datetime.now().strftime('%m%d')}.xlsx")
             if c2.button("💾 기록 저장"):
                 st.session_state.history[datetime.now().strftime("%Y-%m-%d %H:%M:%S")] = to_order[summary_cols].copy()
                 st.success("저장 완료!")
-        else: st.info("발주 대상 없음")
+        else: st.success("✅ 현재 모든 상품의 재고가 충분합니다.")
 
     # 6단계: 과거 기록
     st.subheader("📜 6단계: 과거 데이터 확인")
