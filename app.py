@@ -71,19 +71,39 @@ if st.session_state.df_raw is not None:
         st.session_state.df_raw = df # 분석 결과를 세션에 고정
         st.rerun()
 
-    # 4단계: 데이터 편집
+  # 4단계: 데이터 편집 (검색/필터 기능 복구!)
     st.subheader("📊 4단계: 데이터 편집")
+    
+    # 1. 검색 및 필터 UI 영역
+    f1, f2 = st.columns([3, 1])
+    search_query = f1.text_input("🔍 상품명 검색")
+    # 품절 필터 기본값을 '정상만'으로 설정
+    filter_mode = f2.selectbox("품절 필터", ["정상만", "품절만", "전체보기"], index=0)
+    
+    # 2. 데이터 필터링 로직
     df_filtered = st.session_state.df_raw.copy()
     
-    # 4단계 컬럼 정렬
+    # 품절 필터 적용 (sold_out 변수 활용)
+    if filter_mode == "정상만": 
+        df_filtered = df_filtered[~df_filtered[sold_out].astype(str).str.contains('품절', na=False)]
+    elif filter_mode == "품절만": 
+        df_filtered = df_filtered[df_filtered[sold_out].astype(str).str.contains('품절', na=False)]
+    
+    # 검색어 필터 적용 (item 변수 활용)
+    if search_query: 
+        df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_query, na=False)]
+
+    # 3. 컬럼 순서 및 편집기
     target_cols = [sold_out, vendor, item, option, vendor_item_name, stock, avail, "1차 리오더", "2차 리오더"]
     if '일일 판매량' in df_filtered.columns: target_cols.append('일일 판매량')
     target_cols.extend([t3day, t1week])
     if '권장 발주량' in df_filtered.columns: target_cols.append('권장 발주량')
+    
     display_cols = [c for c in target_cols if c in df_filtered.columns]
 
+    # 편집기: 여기서 수정하면 바로 df_raw에 반영됨
     edited_df = st.data_editor(df_filtered[display_cols], use_container_width=True, key="main_editor")
-    st.session_state.df_raw.update(edited_df) # 편집 사항 즉시 반영
+    st.session_state.df_raw.update(edited_df)
 
     # 5단계: 발주 리스트 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
@@ -103,3 +123,4 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         s_time = st.selectbox("⏰ 저장된 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
         st.dataframe(st.session_state.history[s_time], use_container_width=True)
+
