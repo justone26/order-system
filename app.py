@@ -78,18 +78,32 @@ if st.session_state.df_raw is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-    # [4단계: 편집 및 필터링]
+# [4단계: 데이터 편집]
     st.subheader("📊 4단계: 데이터 편집")
+    
+    # 여기서 우리가 계산한 '권장 발주량'까지 포함해서 보여줄 리스트를 구성해
+    # (매핑된 변수 + 계산된 컬럼들)
+    display_cols = [sold_out, vendor, item, option, stock, avail, t3day, "1차 리오더", "2차 리오더", "권장 발주량"]
+    
+    # 만약 '권장 발주량' 컬럼이 아직 없으면 에러가 날 수 있으니 체크
+    if '권장 발주량' not in st.session_state.df_raw.columns:
+        st.session_state.df_raw['권장 발주량'] = 0
+
     f1, f2 = st.columns([3, 1])
     search = f1.text_input("🔍 상품명 검색")
     filter_mode = f2.selectbox("필터", ["전체", "품절만", "발주필요만"])
     
     df_show = st.session_state.df_raw.copy()
+    
+    # 검색 및 필터 로직
     if search: df_show = df_show[df_show[item].astype(str).str.contains(search, na=False)]
     if filter_mode == "품절만": df_show = df_show[df_show[sold_out].astype(str).str.contains('품절', na=False)]
     elif filter_mode == "발주필요만": df_show = df_show[df_show['권장 발주량'] > 0]
     
-    edited_df = st.data_editor(df_show, use_container_width=False)
+    # [핵심] 계산된 컬럼들까지 포함된 리스트로 보여주기
+    edited_df = st.data_editor(df_show[display_cols], use_container_width=True)
+    
+    # 편집된 값을 원본에 반영
     st.session_state.df_raw.update(edited_df)
 
     # 5단계: 발주 리스트 요약 (에러 방어 버전)
@@ -117,4 +131,5 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
