@@ -6,39 +6,40 @@ import holidays
 
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [1] 상태 및 세션 초기화
+# [1] 세션 및 키 초기화
 if 'file_key' not in st.session_state: st.session_state.file_key = 0
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'history' not in st.session_state: st.session_state.history = {}
 
 st.title("📦 재고 관리 및 발주 시스템")
 
-# [2] 시스템 초기화 버튼 (파일 위젯과 데이터 삭제)
+# [2] 시스템 초기화 (데이터 및 위젯 삭제)
 if st.button("🔄 시스템 초기화 (데이터 및 파일 삭제)"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    st.session_state.file_key = 1 # 키 값을 바꿔서 위젯을 새로고침함
+    st.session_state.file_key = 1
     st.rerun()
 
-# [3] 파일 업로더 (키 값을 통해 강제 초기화 지원)
+# [3] 파일 업로드
 uploaded_file = st.file_uploader(
     "엑셀/CSV 업로드", 
     type=['xlsx', 'xls', 'csv'], 
     key=f"uploader_{st.session_state.file_key}"
 )
 
-# 파일 로드 로직
+# 데이터 로드
 if uploaded_file is not None and st.session_state.df_raw is None:
     try:
         df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
         st.session_state.df_raw = df.loc[:, ~df.columns.duplicated()]
-        if "입고예정수량(리오더)" not in st.session_state.df_raw.columns:
-            st.session_state.df_raw["입고예정수량(리오더)"] = 0
+        # 리오더 컬럼 강제 생성
+        if "1차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["1차 리오더"] = 0
+        if "2차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["2차 리오더"] = 0
         st.rerun()
     except Exception as e:
         st.error(f"파일 처리 중 오류 발생: {e}")
 
-# [4] 데이터 처리 (데이터가 있을 때만 실행)
+# [4] 데이터 처리 로직
 if st.session_state.df_raw is not None:
     def get_auto_index(cols, keywords):
         for key in keywords:
@@ -48,7 +49,6 @@ if st.session_state.df_raw is not None:
 
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 매핑 설정
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -64,7 +64,6 @@ if st.session_state.df_raw is not None:
         t3day = st.selectbox("3일 발주 합계", cols, index=get_auto_index(cols, ['3일', '최근3일']))
         t1week = st.selectbox("1주 발주 합계", cols, index=get_auto_index(cols, ['1주', '7일', '최근7일']))
 
-    # 2~3단계: 분석
     st.subheader("⚙️ 2~3단계: 기간 설정 및 분석")
     l1, l2 = st.columns(2)
     lead_time = l1.number_input("리드타임 (일)", value=0)
@@ -83,14 +82,15 @@ if st.session_state.df_raw is not None:
         divisors = [min(3, get_biz_days(rd)) for rd in reg_dates]
         v_avail = pd.to_numeric(st.session_state.df_raw[avail], errors='coerce').fillna(0)
         v_3day = pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce').fillna(0)
-        v_reorder = pd.to_numeric(st.session_state.df_raw["입고예정수량(리오더)"], errors='coerce').fillna(0)
+        v_reorder = pd.to_numeric(st.session_state.df_raw["1차 리오더"], errors='coerce').fillna(0) + \
+                    pd.to_numeric(st.session_state.df_raw["2차 리오더"], errors='coerce').fillna(0)
         
-        st.session_state.df_raw['일일 판매량'] = (v_3day / divisors).round(1)
-        st.session_state.df_raw['권장 발주량'] = ((st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock)) - (v_avail + v_reorder)).clip(lower=0).round(0)
+        # [수정] 일일 판매량 및 발주량 정수화
+        st.session_state.df_raw['일일 판매량'] = (v_3day / divisors).round(0).astype(int)
+        st.session_state.df_raw['권장 발주량'] = ((st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock)) - (v_avail + v_reorder)).clip(lower=0).astype(int)
         st.success("✅ 분석 완료!")
         st.rerun()
 
-    # 4단계: 편집
     st.subheader("📊 4단계: 검색 및 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search = f1.text_input("🔍 상품명 검색")
@@ -101,18 +101,25 @@ if st.session_state.df_raw is not None:
     elif filter_mode == "품절만": df_disp = df_disp[df_disp[sold_out].astype(str).str.contains('품절', na=False)]
     if search: df_disp = df_disp[df_disp[item].astype(str).str.contains(search, na=False)]
     
-    edit_cols = [sold_out, vendor, item, option, vendor_item_name, stock, avail, "입고예정수량(리오더)", "일일 판매량", t3day, t1week, '권장 발주량']
+    # 4단계 편집 컬럼 리스트
+    edit_cols = [sold_out, vendor, item, option, vendor_item_name, stock, avail, "1차 리오더", "2차 리오더", "일일 판매량", t3day, t1week, '권장 발주량']
     df_final = df_disp[[c for c in edit_cols if c in df_disp.columns]]
-    edited_df = st.data_editor(df_final, use_container_width=True, disabled=[c for c in df_final.columns if c != "입고예정수량(리오더)"])
+    
+    # [수정] 강제 홀딩: 1차/2차 리오더 외 수정 불가
+    editable = ["1차 리오더", "2차 리오더"]
+    edited_df = st.data_editor(
+        df_final, 
+        use_container_width=True, 
+        disabled=[c for c in df_final.columns if c not in editable]
+    )
     st.session_state.df_raw.update(edited_df)
     
-    # [위험 경고]
+    # 위험 경고
     danger_df = st.session_state.df_raw[pd.to_numeric(st.session_state.df_raw[avail], errors='coerce') < 5]
     if not danger_df.empty:
         st.warning(f"⚠️ 재고 부족 경고: {len(danger_df)}개 상품의 가용재고가 5 미만입니다.")
         st.dataframe(danger_df[[item, option, avail]], use_container_width=True)
 
-    # 5단계: 발주 리스트 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
     if '권장 발주량' in st.session_state.df_raw.columns:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
@@ -133,7 +140,6 @@ if st.session_state.df_raw is not None:
                 st.session_state.history[date_key].append(record)
                 st.success("기록 저장 완료!")
 
-    # 6단계: 과거 데이터 확인
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         s_date = st.selectbox("📅 날짜 선택", sorted(st.session_state.history.keys(), reverse=True))
