@@ -69,23 +69,39 @@ if st.session_state.df_raw is not None:
     edited_df = st.data_editor(st.session_state.df_raw[display_cols], use_container_width=True)
     st.session_state.df_raw.update(edited_df)
 
-    # 5단계: 발주 리스트 요약
+# 5단계: 발주 리스트 요약 (핵심 정보만 추출)
     st.subheader("📋 5단계: 발주 리스트 요약")
+    
     if '권장 발주량' in st.session_state.df_raw.columns:
-        to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0]
+        # 1. 발주가 필요한 항목만 필터링
+        to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
+        
         if not to_order.empty:
-            st.dataframe(to_order, use_container_width=True)
+            # 2. 요약에 필요한 컬럼만 정의
+            summary_cols = [vendor, item, option, vendor_item, "권장 발주량"]
+            # 리스트에 포함된 컬럼만 골라내기
+            summary_cols = [c for c in summary_cols if c in to_order.columns]
+            
+            # 3. 요약표 출력
+            st.dataframe(to_order[summary_cols], use_container_width=True)
+            
             c1, c2 = st.columns(2)
+            # 4. 엑셀 다운로드 (정확한 요약 데이터만)
             buf = BytesIO()
-            with pd.ExcelWriter(buf, engine='openpyxl') as w: to_order.to_excel(w, index=False)
-            c1.download_button("📥 요약 발주서 다운로드", data=buf.getvalue(), file_name="발주서.xlsx")
+            with pd.ExcelWriter(buf, engine='openpyxl') as w: 
+                to_order[summary_cols].to_excel(w, index=False)
+            c1.download_button("📥 요약 발주서 다운로드", data=buf.getvalue(), file_name=f"발주서_{datetime.now().strftime('%m%d').xlsx}")
+            
+            # 5. 기록 저장
             if c2.button("💾 기록 저장"):
-                st.session_state.history[datetime.now().strftime("%Y-%m-%d %H:%M:%S")] = to_order.copy()
+                st.session_state.history[datetime.now().strftime("%Y-%m-%d %H:%M:%S")] = to_order[summary_cols].copy()
                 st.success("저장 완료!")
-        else: st.info("발주 대상 없음")
-
+        else:
+            st.info("현재 발주할 상품이 없습니다.")
+            
     # 6단계: 과거 기록
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         s_time = st.selectbox("⏰ 저장 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
         st.dataframe(st.session_state.history[s_time], use_container_width=True)
+
