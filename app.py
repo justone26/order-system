@@ -1,38 +1,39 @@
 import streamlit as st
 import pandas as pd
-from io import BytesIO
 from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json
 
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# 기존에 있던 get_sheet 함수를 찾아서 이 내용으로 바꿔!
+# [1] 인증 및 구글 시트 함수 (Secrets 사용)
 def get_sheet():
-    # 1. Secrets에 저장된 정보를 딕셔너리로 확실하게 구성
-    creds_dict = {
-        "type": st.secrets["gcp_service_account"]["type"],
-        "project_id": st.secrets["gcp_service_account"]["project_id"],
-        "private_key_id": st.secrets["gcp_service_account"]["private_key_id"],
-        "private_key": st.secrets["gcp_service_account"]["private_key"],
-        "client_email": st.secrets["gcp_service_account"]["client_email"],
-        "client_id": st.secrets["gcp_service_account"]["client_id"],
-        "auth_uri": st.secrets["gcp_service_account"]["auth_uri"],
-        "token_uri": st.secrets["gcp_service_account"]["token_uri"],
-        "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
-        "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"]
-    }
-    
+    creds_dict = dict(st.secrets["gcp_service_account"])
     scope = ["https://spreadsheets.google.com/feeds", 
              'https://www.googleapis.com/auth/spreadsheets', 
              "https://www.googleapis.com/auth/drive"]
-    
-    # 2. 딕셔너리 기반 인증 (파일 경로 대신 딕셔너리 전달)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    
-    # 3. 구글 시트 연결
     return client.open('재고관리_데이터').sheet1
+
+def load_reorder_data():
+    try:
+        sheet = get_sheet()
+        return pd.DataFrame(sheet.get_all_records())
+    except: return pd.DataFrame(columns=['상품코드', '1차 리오더', '2차 리오더'])
+
+def save_reorder_data(df):
+    sheet = get_sheet()
+    sheet.clear()
+    sheet.update([df.columns.values.tolist()] + df.values.tolist())
+
+# [2] 유틸리티 함수
+def get_auto_index(cols, keywords):
+    for key in keywords:
+        for i, c in enumerate(cols):
+            if key in str(c): return i
+    return 0
 
 # [상태 초기화]
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
@@ -134,6 +135,7 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
