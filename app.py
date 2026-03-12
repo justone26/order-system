@@ -4,48 +4,37 @@ from io import BytesIO
 from datetime import datetime
 import holidays
 
+# 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [1] 상태 및 세션 초기화
+# [1] 상태 관리 초기화
 if 'file_key' not in st.session_state: st.session_state.file_key = 0
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'history' not in st.session_state: st.session_state.history = {}
 
 st.title("📦 재고 관리 및 발주 시스템")
 
-# [2] 시스템 초기화 버튼
+# [시스템 초기화]
 if st.button("🔄 시스템 초기화 (데이터 및 파일 삭제)"):
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.session_state.file_key = 1 
+    # history는 유지하고 싶다면 이 부분에서 제외해도 되지만, 완벽 초기화를 위해 전부 삭제함
+    for key in list(st.session_state.keys()): del st.session_state[key]
+    st.session_state.file_key = 1
     st.rerun()
 
-# [3] 파일 업로드
-uploaded_file = st.file_uploader(
-    "엑셀/CSV 업로드", 
-    type=['xlsx', 'xls', 'csv'], 
-    key=f"uploader_{st.session_state.file_key}"
-)
+# [파일 업로드]
+uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'], key=f"uploader_{st.session_state.file_key}")
 
-# 파일 로드 및 안전한 컬럼 생성
 if uploaded_file is not None and st.session_state.df_raw is None:
     try:
         df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
         df = df.loc[:, ~df.columns.duplicated()]
-        # 파일 로드 시점에 컬럼 보장
         if "1차 리오더" not in df.columns: df["1차 리오더"] = 0
         if "2차 리오더" not in df.columns: df["2차 리오더"] = 0
         st.session_state.df_raw = df
         st.rerun()
-    except Exception as e:
-        st.error(f"파일 처리 중 오류 발생: {e}")
+    except Exception as e: st.error(f"파일 오류: {e}")
 
-# [4] 데이터 처리 로직
 if st.session_state.df_raw is not None:
-    # 혹시 모를 경우를 대비해 여기서도 한번 더 확인
-    if "1차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["1차 리오더"] = 0
-    if "2차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["2차 리오더"] = 0
-
     def get_auto_index(cols, keywords):
         for key in keywords:
             for i, c in enumerate(cols):
@@ -76,8 +65,7 @@ if st.session_state.df_raw is not None:
     lead_time = l1.number_input("리드타임 (일)", value=0)
     safety_stock = l2.number_input("안전재고 (일)", value=3)
     
-    if st.button("🚀 분석 실행", type="primary"):
-        # 분석 시점에 안전하게 데이터 연산
+    if st.button("🚀 분석 실행"):
         df = st.session_state.df_raw
         today = datetime.now()
         kr_holidays = holidays.KR(years=today.year)
@@ -89,13 +77,11 @@ if st.session_state.df_raw is not None:
         
         reg_dates = pd.to_datetime(df[reg_date_col], errors='coerce')
         divisors = [min(3, get_biz_days(rd)) for rd in reg_dates]
-        v_avail = pd.to_numeric(df[avail], errors='coerce').fillna(0)
-        v_3day = pd.to_numeric(df[t3day], errors='coerce').fillna(0)
-        v_reorder = pd.to_numeric(df["1차 리오더"], errors='coerce').fillna(0) + \
-                    pd.to_numeric(df["2차 리오더"], errors='coerce').fillna(0)
         
-        df['일일 판매량'] = (v_3day / divisors).round(0).astype(int)
-        df['권장 발주량'] = ((df['일일 판매량'] * (lead_time + safety_stock)) - (v_avail + v_reorder)).clip(lower=0).astype(int)
+        df['일일 판매량'] = (pd.to_numeric(df[t3day], errors='coerce').fillna(0) / divisors).round(0).astype(int)
+        v_reorder = pd.to_numeric(df["1차 리오더"], errors='coerce').fillna(0) + pd.to_numeric(df["2차 리오더"], errors='coerce').fillna(0)
+        df['권장 발주량'] = ((df['일일 판매량'] * (lead_time + safety_stock)) - (pd.to_numeric(df[avail], errors='coerce') + v_reorder)).clip(lower=0).astype(int)
+        
         st.session_state.df_raw = df
         st.success("✅ 분석 완료!")
         st.rerun()
@@ -113,55 +99,23 @@ if st.session_state.df_raw is not None:
     
     edit_cols = [sold_out, vendor, item, option, vendor_item_name, stock, avail, "1차 리오더", "2차 리오더", "일일 판매량", t3day, t1week, '권장 발주량']
     df_final = df_disp[[c for c in edit_cols if c in df_disp.columns]]
-    
-    editable = ["1차 리오더", "2차 리오더"]
-    edited_df = st.data_editor(
-        df_final, 
-        use_container_width=True, 
-        disabled=[c for c in df_final.columns if c not in editable]
-    )
+    edited_df = st.data_editor(df_final, use_container_width=True, disabled=[c for c in df_final.columns if c not in ["1차 리오더", "2차 리오더"]])
     st.session_state.df_raw.update(edited_df)
-    
-    # 경고
-    danger_df = st.session_state.df_raw[pd.to_numeric(st.session_state.df_raw[avail], errors='coerce') < 5]
-    if not danger_df.empty:
-        st.warning(f"⚠️ 재고 부족 경고: {len(danger_df)}개 상품의 가용재고가 5 미만입니다.")
-        st.dataframe(danger_df[[item, option, avail]], use_container_width=True)
 
-    # 5, 6단계
+    # 5단계 요약 및 저장
     st.subheader("📋 5단계: 발주 리스트 요약")
-    if '권장 발주량' in st.session_state.df_raw.columns:
-        to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
-        if not to_order.empty:
-            display_df = to_order[[vendor, item, option, vendor_item_name, '권장 발주량']].rename(columns={
-                vendor: "공급처", item: "상품명", option: "옵션", vendor_item_name: "공급처 상품명", '권장 발주량': "최종 발주량"
-            })
-            edited_order = st.data_editor(display_df, use_container_width=True)
-            c1, c2 = st.columns(2)
-            buf = BytesIO()
-            with pd.ExcelWriter(buf, engine='openpyxl') as w: edited_order.to_excel(w, index=False)
-            c1.download_button("📥 발주 리스트 다운로드", data=buf.getvalue(), file_name="발주서.xlsx")
-            if c2.button("💾 기록 저장"):
-                date_key = datetime.now().strftime("%Y-%m-%d")
-                record = to_order.copy()
-                record['저장시각'] = datetime.now().strftime("%H:%M:%S")
-                if date_key not in st.session_state.history: st.session_state.history[date_key] = []
-                st.session_state.history[date_key].append(record)
-                st.success("기록 저장 완료!")
+    to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
+    if not to_order.empty:
+        st.dataframe(to_order[[vendor, item, option, '권장 발주량']], use_container_width=True)
+        if st.button("💾 기록 저장"):
+            date_key = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.history[date_key] = to_order.copy()
+            st.success("기록 저장 완료!")
 
+    # 6단계 과거 기록
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
-        s_date = st.selectbox("📅 날짜 선택", sorted(st.session_state.history.keys(), reverse=True))
-        s_time = st.selectbox("⏰ 시간 선택", [h['저장시각'].iloc[0] for h in st.session_state.history[s_date]][::-1])
-        for h in st.session_state.history[s_date]:
-            if h['저장시각'].iloc[0] == s_time:
-                st.dataframe(h[[c for c in edit_cols if c in h.columns]], use_container_width=True)
-                hist_buf = BytesIO()
-                with pd.ExcelWriter(hist_buf, engine='openpyxl') as w: h.to_excel(w, index=False)
-                st.download_button("📥 기록 다운로드", data=hist_buf.getvalue(), file_name=f"기록_{s_date}_{s_time}.xlsx")
-
-    st.divider()
-    all_buf = BytesIO()
-    with pd.ExcelWriter(all_buf, engine='openpyxl') as w: st.session_state.df_raw.to_excel(w, index=False)
-    st.download_button("📥 전체 원본 데이터 다운로드", data=all_buf.getvalue(), file_name="최종결과데이터.xlsx")
-
+        s_time = st.selectbox("⏰ 시간 선택", sorted(st.session_state.history.keys(), reverse=True))
+        st.dataframe(st.session_state.history[s_time], use_container_width=True)
+    
+    #
