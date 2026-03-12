@@ -5,31 +5,31 @@ from datetime import datetime
 
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [핵심] 자동 매핑 함수 (키워드로 컬럼 인덱스 찾기)
+# [1] 상태 초기화
+if 'df_raw' not in st.session_state: st.session_state.df_raw = None
+if 'history' not in st.session_state: st.session_state.history = {}
+
+st.title("📦 재고 관리 및 발주 시스템")
+
+# 자동 매핑 함수
 def get_auto_index(cols, keywords):
     for key in keywords:
         for i, c in enumerate(cols):
             if key in str(c): return i
     return 0
 
-if 'df_raw' not in st.session_state: st.session_state.df_raw = None
-if 'history' not in st.session_state: st.session_state.history = {}
-
-st.title("📦 재고 관리 및 발주 시스템")
-
-if st.button("🔄 시스템 전체 초기화"):
-    for key in list(st.session_state.keys()): del st.session_state[key]
-    st.rerun()
-
+# [파일 업로드]
 uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
 if uploaded_file is not None and st.session_state.df_raw is None:
     df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
     st.session_state.df_raw = df.loc[:, ~df.columns.duplicated()]
     st.rerun()
 
+# [메인 로직]
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
+    # 1단계: 매핑 설정 (10개 항목 모두 복구)
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -37,7 +37,7 @@ if st.session_state.df_raw is not None:
         vendor = st.selectbox("공급처", cols, index=get_auto_index(cols, ['공급처', '업체명']))
         item = st.selectbox("상품명", cols, index=get_auto_index(cols, ['상품명', '상품']))
         option = st.selectbox("옵션", cols, index=get_auto_index(cols, ['옵션']))
-        vendor_item_name = st.selectbox("공급처 상품명", cols, index=get_auto_index(cols, ['공급처상품명', '거래처옵션']))
+        vendor_item = st.selectbox("공급처 상품명", cols, index=get_auto_index(cols, ['공급처상품명', '거래처옵션']))
     with c2:
         reg_date = st.selectbox("등록일", cols, index=get_auto_index(cols, ['등록일', '생성일']))
         stock = st.selectbox("정상재고", cols, index=get_auto_index(cols, ['정상재고', '재고']))
@@ -45,18 +45,18 @@ if st.session_state.df_raw is not None:
         t3day = st.selectbox("3일 발주합계", cols, index=get_auto_index(cols, ['3일']))
         t1week = st.selectbox("7일 발주합계", cols, index=get_auto_index(cols, ['7일', '1주']))
 
-    # 분석 및 나머지 로직은 이전과 동일...
-    # (여기에 분석, 편집, 요약 코드 그대로 넣으면 됨)
-
     # 2~3단계: 분석 설정
     st.subheader("⚙️ 2~3단계: 분석 설정")
-    lead_time = st.number_input("리드타임 (일)", value=0)
-    safety_stock = st.number_input("안전재고 (일)", value=3)
+    l1, l2 = st.columns(2)
+    lead_time = l1.number_input("리드타임 (일)", value=0)
+    safety_stock = l2.number_input("안전재고 (일)", value=3)
     
     if st.button("🚀 분석 실행"):
         df = st.session_state.df_raw.copy()
+        for col in ["1차 리오더", "2차 리오더"]:
+            if col not in df.columns: df[col] = 0
         df['일일 판매량'] = (pd.to_numeric(df[t3day], errors='coerce').fillna(0) / 3).round(0)
-        df['권장 발주량'] = ((df['일일 판매량'] * (lead_time + safety_stock)) - (pd.to_numeric(df[avail], errors='coerce') + pd.to_numeric(df["1차 리오더"], errors='coerce') + pd.to_numeric(df["2차 리오더"], errors='coerce'))).clip(lower=0)
+        df['권장 발주량'] = ((df['일일 판매량'] * (lead_time + safety_stock)) - (pd.to_numeric(df[avail], errors='coerce').fillna(0) + pd.to_numeric(df["1차 리오더"], errors='coerce') + pd.to_numeric(df["2차 리오더"], errors='coerce'))).clip(lower=0)
         st.session_state.df_raw = df
         st.rerun()
 
@@ -65,7 +65,7 @@ if st.session_state.df_raw is not None:
     edited_df = st.data_editor(st.session_state.df_raw, use_container_width=True)
     st.session_state.df_raw.update(edited_df)
 
-    # 5단계: 발주 리스트 요약 (다운로드 및 저장 복구)
+    # 5단계: 발주 리스트 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
     if '권장 발주량' in st.session_state.df_raw.columns:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0]
@@ -80,9 +80,8 @@ if st.session_state.df_raw is not None:
                 st.success("저장 완료!")
         else: st.info("발주 대상 없음")
 
-    # 6단계: 과거 기록 확인 (제목만 나오는 문제 해결)
+    # 6단계: 과거 기록
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         s_time = st.selectbox("⏰ 저장 기록 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[s_time], use_container_width=True)
-
