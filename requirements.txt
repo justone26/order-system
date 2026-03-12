@@ -1,7 +1,6 @@
 streamlit
 pandas
-openpyxl
-xlsxwriter
-xlrd
-holidays
 gspread
+oauth2client
+openpyxl
+
