@@ -57,51 +57,43 @@ if st.session_state.df_raw is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-    # 4단계: 데이터 편집 (필요한 컬럼만 깔끔하게!)
+    # 4단계: 데이터 편집 (가로 스크롤 최적화)
     st.subheader("📊 4단계: 데이터 편집")
-    # 보여줄 핵심 컬럼만 정의
+    f1, f2 = st.columns([3, 1])
+    search_query = f1.text_input("🔍 상품명 검색")
+    filter_mode = f2.selectbox("품절 필터", ["정상만", "품절만", "전체보기"], index=0)
+    
+    df_working = st.session_state.df_raw.copy()
+    if filter_mode == "정상만": df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
+    elif filter_mode == "품절만": df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
+    if search_query: df_working = df_working[df_working[item].astype(str).str.contains(search_query, na=False)]
+    
     display_cols = [sold_out, vendor, item, option, vendor_item, reg_date, stock, avail, "1차 리오더", "2차 리오더"]
-    if '일일 판매량' in st.session_state.df_raw.columns: display_cols += ['일일 판매량', t3day, t1week, '권장 발주량']
+    if '일일 판매량' in df_working.columns: display_cols += ['일일 판매량', t3day, t1week, '권장 발주량']
+    display_cols = [c for c in dict.fromkeys(display_cols) if c in df_working.columns]
     
-    # 중복 제거 및 존재하는 컬럼만 필터링
-    display_cols = [c for c in dict.fromkeys(display_cols) if c in st.session_state.df_raw.columns]
-    
-    edited_df = st.data_editor(st.session_state.df_raw[display_cols], use_container_width=True)
+    edited_df = st.data_editor(df_working[display_cols], use_container_width=False, key="main_editor")
     st.session_state.df_raw.update(edited_df)
 
-# 5단계: 발주 리스트 요약 (핵심 정보만 추출)
+    # 5단계: 발주 리스트 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
-    
     if '권장 발주량' in st.session_state.df_raw.columns:
-        # 1. 발주가 필요한 항목만 필터링
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
-        
         if not to_order.empty:
-            # 2. 요약에 필요한 컬럼만 정의
             summary_cols = [vendor, item, option, vendor_item, "권장 발주량"]
-            # 리스트에 포함된 컬럼만 골라내기
-            summary_cols = [c for c in summary_cols if c in to_order.columns]
-            
-            # 3. 요약표 출력
-            st.dataframe(to_order[summary_cols], use_container_width=True)
-            
+            st.dataframe(to_order[summary_cols], use_container_width=False)
             c1, c2 = st.columns(2)
-            # 4. 엑셀 다운로드 (정확한 요약 데이터만)
             buf = BytesIO()
-            with pd.ExcelWriter(buf, engine='openpyxl') as w: 
-                to_order[summary_cols].to_excel(w, index=False)
-            c1.download_button("📥 요약 발주서 다운로드", data=buf.getvalue(), file_name=f"발주서_{datetime.now().strftime('%m%d').xlsx}")
-            
-            # 5. 기록 저장
+            with pd.ExcelWriter(buf, engine='openpyxl') as w: to_order[summary_cols].to_excel(w, index=False)
+            file_name = f"발주서_{datetime.now().strftime('%m%d')}.xlsx"
+            c1.download_button("📥 요약 발주서 다운로드", data=buf.getvalue(), file_name=file_name)
             if c2.button("💾 기록 저장"):
                 st.session_state.history[datetime.now().strftime("%Y-%m-%d %H:%M:%S")] = to_order[summary_cols].copy()
                 st.success("저장 완료!")
-        else:
-            st.info("현재 발주할 상품이 없습니다.")
-            
+        else: st.info("발주 대상 없음")
+
     # 6단계: 과거 기록
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         s_time = st.selectbox("⏰ 저장 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
-        st.dataframe(st.session_state.history[s_time], use_container_width=True)
-
+        st.dataframe(st.session_state.history[s_time], use_container_width=False)
