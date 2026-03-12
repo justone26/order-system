@@ -7,22 +7,10 @@ import holidays
 # 페이지 설정
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [제목 클릭 시 새로고침] - 버튼 스타일을 제목처럼 크게 조정
-st.markdown("""
-    <style>
-    div.stButton > button {
-        background-color: transparent;
-        border: none;
-        font-size: 40px;
-        font-weight: 900;
-        color: #000;
-        padding: 0;
-        margin: 0;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# [제목 및 사이드바 관리]
+st.title("📦 재고 관리 및 발주 시스템")
 
-if st.button("📦 재고 관리 및 발주 시스템"):
+if st.sidebar.button("🔄 시스템 초기화 (데이터 삭제)"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
@@ -50,7 +38,7 @@ if st.session_state.df_raw is not None:
     df = st.session_state.df_raw
     cols = df.columns.tolist()
 
-    # 1단계: 5:5 비율 매핑 설정 (사용자님 요청대로 건드리지 않음)
+    # 1단계: 5:5 매핑 (건드리지 않음)
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -66,7 +54,7 @@ if st.session_state.df_raw is not None:
         t3day = st.selectbox("3일 발주 합계", cols, index=get_auto_index(cols, ['3일', '최근3일']))
         t1week = st.selectbox("1주 발주 합계", cols, index=get_auto_index(cols, ['1주', '7일', '최근7일']))
 
-    # 2~3단계: 분석
+    # 2~3단계: 기간 설정 및 분석
     st.subheader("⚙️ 2~3단계: 기간 설정 및 분석")
     l1, l2 = st.columns(2)
     lead_time = l1.number_input("리드타임 (일)", value=0)
@@ -92,7 +80,7 @@ if st.session_state.df_raw is not None:
         st.success("✅ 분석 완료!")
         st.rerun()
 
-    # 4단계: 편집
+    # 4단계: 검색 및 데이터 편집
     st.subheader("📊 4단계: 검색 및 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search = f1.text_input("🔍 상품명 검색")
@@ -108,10 +96,46 @@ if st.session_state.df_raw is not None:
     edited_df = st.data_editor(df_final, use_container_width=True, disabled=[c for c in df_final.columns if c != "입고예정수량(리오더)"])
     st.session_state.df_raw.update(edited_df)
     
-    # 위험 경고 라인
+    # [기능] 위험 경고 라인
     danger_df = st.session_state.df_raw[pd.to_numeric(st.session_state.df_raw[avail], errors='coerce') < 5]
     if not danger_df.empty:
         st.warning(f"⚠️ 재고 부족 경고: {len(danger_df)}개 상품의 가용재고가 5 미만입니다.")
         st.dataframe(danger_df[[item, option, avail]], use_container_width=True)
 
-    # 5~6단계 (생략된 기존 로직 그대로 붙여주면 완성!)
+    # 5단계: 발주 리스트 요약
+    st.subheader("📋 5단계: 발주 리스트 요약")
+    if '권장 발주량' in st.session_state.df_raw.columns:
+        to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
+        if not to_order.empty:
+            display_df = to_order[[vendor, item, option, vendor_item_name, '권장 발주량']].rename(columns={
+                vendor: "공급처", item: "상품명", option: "옵션", vendor_item_name: "공급처 상품명", '권장 발주량': "최종 발주량"
+            })
+            edited_order = st.data_editor(display_df, use_container_width=True)
+            c1, c2 = st.columns(2)
+            buf = BytesIO()
+            with pd.ExcelWriter(buf, engine='openpyxl') as w: edited_order.to_excel(w, index=False)
+            c1.download_button("📥 발주 리스트 다운로드", data=buf.getvalue(), file_name="발주서.xlsx")
+            if c2.button("💾 기록 저장"):
+                date_key = datetime.now().strftime("%Y-%m-%d")
+                record = to_order.copy()
+                record['저장시각'] = datetime.now().strftime("%H:%M:%S")
+                if date_key not in st.session_state.history: st.session_state.history[date_key] = []
+                st.session_state.history[date_key].append(record)
+                st.success("기록 저장 완료!")
+
+    # 6단계: 과거 데이터 확인
+    st.subheader("📜 6단계: 과거 데이터 확인")
+    if st.session_state.history:
+        s_date = st.selectbox("📅 날짜 선택", sorted(st.session_state.history.keys(), reverse=True))
+        s_time = st.selectbox("⏰ 시간 선택", [h['저장시각'].iloc[0] for h in st.session_state.history[s_date]][::-1])
+        for h in st.session_state.history[s_date]:
+            if h['저장시각'].iloc[0] == s_time:
+                st.dataframe(h[[c for c in edit_cols if c in h.columns]], use_container_width=True)
+                hist_buf = BytesIO()
+                with pd.ExcelWriter(hist_buf, engine='openpyxl') as w: h.to_excel(w, index=False)
+                st.download_button("📥 기록 다운로드", data=hist_buf.getvalue(), file_name=f"기록_{s_date}_{s_time}.xlsx")
+
+    st.divider()
+    all_buf = BytesIO()
+    with pd.ExcelWriter(all_buf, engine='openpyxl') as w: st.session_state.df_raw.to_excel(w, index=False)
+    st.download_button("📥 전체 원본 데이터 다운로드", data=all_buf.getvalue(), file_name="최종결과데이터.xlsx")
