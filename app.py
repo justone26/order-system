@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from datetime import datetime
-import holidays
 
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
@@ -16,20 +15,20 @@ if st.button("🔄 시스템 전체 초기화"):
     for key in list(st.session_state.keys()): del st.session_state[key]
     st.rerun()
 
-# [파일 업로드]
+# [업로드]
 uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
 if uploaded_file is not None:
     df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
     st.session_state.df_raw = df.loc[:, ~df.columns.duplicated()]
-    if "1차 리오더" not in df.columns: st.session_state.df_raw["1차 리오더"] = 0
-    if "2차 리오더" not in df.columns: st.session_state.df_raw["2차 리오더"] = 0
+    if "1차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["1차 리오더"] = 0
+    if "2차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["2차 리오더"] = 0
     st.success("데이터 로드 완료!")
 
-# [핵심] 데이터가 로드된 후의 전체 로직
+# [핵심 로직]
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 매핑
+    # 1단계: 매핑 (등록일 포함 완벽 복구)
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     def get_auto_index(cols, keywords):
         for key in keywords:
@@ -45,6 +44,7 @@ if st.session_state.df_raw is not None:
         option = st.selectbox("옵션", cols, index=get_auto_index(cols, ['옵션']))
         vendor_item_name = st.selectbox("공급처 상품명", cols, index=get_auto_index(cols, ['공급처상품명', '거래처옵션']))
     with c2:
+        reg_date_col = st.selectbox("등록일 컬럼", cols, index=get_auto_index(cols, ['등록일', '생성일']))
         stock = st.selectbox("정상재고", cols, index=get_auto_index(cols, ['정상재고', '재고']))
         avail = st.selectbox("가용재고", cols, index=get_auto_index(cols, ['가용재고', '가용']))
         t3day = st.selectbox("3일 발주 합계", cols, index=get_auto_index(cols, ['3일']))
@@ -63,7 +63,7 @@ if st.session_state.df_raw is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-    # 4단계: 데이터 편집
+    # 4단계: 데이터 편집 (요청하신 순서와 필터 완벽 적용)
     st.subheader("📊 4단계: 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search_query = f1.text_input("🔍 상품명 검색")
@@ -74,8 +74,17 @@ if st.session_state.df_raw is not None:
     elif filter_mode == "품절만": df_filtered = df_filtered[df_filtered[sold_out].astype(str).str.contains('품절', na=False)]
     if search_query: df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_query, na=False)]
 
-    edited_df = st.data_editor(df_filtered, use_container_width=True, key="main_editor")
+    # 4단계: 컬럼 순서 고정
+    target_cols = [sold_out, vendor, item, option, vendor_item_name, reg_date_col, stock, avail, "1차 리오더", "2차 리오더"]
+    if '일일 판매량' in df_filtered.columns: target_cols.append('일일 판매량')
+    target_cols.extend([t3day, t1week])
+    if '권장 발주량' in df_filtered.columns: target_cols.append('권장 발주량')
+    display_cols = [c for c in target_cols if c in df_filtered.columns]
+
+    edited_df = st.data_editor(df_filtered[display_cols], use_container_width=True, key="main_editor")
     st.session_state.df_raw.update(edited_df)
+
+    # 5~6단계는 그대로... (위에 코드와 동일)
 
     # 5단계: 발주 리스트 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
@@ -101,3 +110,4 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         s_time = st.selectbox("⏰ 저장된 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
         st.dataframe(st.session_state.history[s_time], use_container_width=True)
+
