@@ -102,20 +102,38 @@ if st.session_state.df_raw is not None:
     edited_df = st.data_editor(df_final, use_container_width=True, disabled=[c for c in df_final.columns if c not in ["1차 리오더", "2차 리오더"]])
     st.session_state.df_raw.update(edited_df)
 
-    # 5단계 요약 및 저장
+    # 5단계: 발주 리스트 요약 및 저장
     st.subheader("📋 5단계: 발주 리스트 요약")
     to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
+    
     if not to_order.empty:
-        st.dataframe(to_order[[vendor, item, option, '권장 발주량']], use_container_width=True)
+        # 화면 출력용
+        st.dataframe(to_order, use_container_width=True)
+        
         if st.button("💾 기록 저장"):
             date_key = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            st.session_state.history[date_key] = to_order.copy()
-            st.success("기록 저장 완료!")
+            # [수정] 명시적으로 데이터프레임 복사본을 저장하여 타입 에러 방지
+            st.session_state.history[date_key] = to_order.copy().reset_index(drop=True)
+            st.success("✅ 현재 상태가 과거 기록으로 저장되었습니다!")
+            st.rerun()
 
-    # 6단계 과거 기록
+    # 6단계: 과거 데이터 확인
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
-        s_time = st.selectbox("⏰ 시간 선택", sorted(st.session_state.history.keys(), reverse=True))
-        st.dataframe(st.session_state.history[s_time], use_container_width=True)
-    
-    #
+        # 시간 선택
+        s_time = st.selectbox("⏰ 저장된 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
+        
+        # [수정] 저장된 데이터가 데이터프레임인지 확실히 확인하고 출력
+        hist_data = st.session_state.history[s_time]
+        if isinstance(hist_data, pd.DataFrame):
+            st.dataframe(hist_data, use_container_width=True)
+            
+            # 엑셀 다운로드 로직
+            hist_buf = BytesIO()
+            with pd.ExcelWriter(hist_buf, engine='openpyxl') as w: 
+                hist_data.to_excel(w, index=False)
+            st.download_button("📥 기록 다운로드", data=hist_buf.getvalue(), file_name=f"기록_{s_time}.xlsx")
+        else:
+            st.error("저장된 데이터 형식이 올바르지 않습니다.")
+    else:
+        st.info("아직 저장된 과거 기록이 없습니다.")
