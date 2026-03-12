@@ -27,19 +27,25 @@ uploaded_file = st.file_uploader(
     key=f"uploader_{st.session_state.file_key}"
 )
 
+# 파일 로드 및 안전한 컬럼 생성
 if uploaded_file is not None and st.session_state.df_raw is None:
     try:
         df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
-        st.session_state.df_raw = df.loc[:, ~df.columns.duplicated()]
-        # 리오더 컬럼 강제 생성
-        if "1차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["1차 리오더"] = 0
-        if "2차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["2차 리오더"] = 0
+        df = df.loc[:, ~df.columns.duplicated()]
+        # 파일 로드 시점에 컬럼 보장
+        if "1차 리오더" not in df.columns: df["1차 리오더"] = 0
+        if "2차 리오더" not in df.columns: df["2차 리오더"] = 0
+        st.session_state.df_raw = df
         st.rerun()
     except Exception as e:
         st.error(f"파일 처리 중 오류 발생: {e}")
 
 # [4] 데이터 처리 로직
 if st.session_state.df_raw is not None:
+    # 혹시 모를 경우를 대비해 여기서도 한번 더 확인
+    if "1차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["1차 리오더"] = 0
+    if "2차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["2차 리오더"] = 0
+
     def get_auto_index(cols, keywords):
         for key in keywords:
             for i, c in enumerate(cols):
@@ -48,7 +54,7 @@ if st.session_state.df_raw is not None:
 
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 매핑
+    # 1단계 매핑
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
@@ -64,13 +70,15 @@ if st.session_state.df_raw is not None:
         t3day = st.selectbox("3일 발주 합계", cols, index=get_auto_index(cols, ['3일', '최근3일']))
         t1week = st.selectbox("1주 발주 합계", cols, index=get_auto_index(cols, ['1주', '7일', '최근7일']))
 
-    # 2~3단계: 분석
+    # 2~3단계 분석
     st.subheader("⚙️ 2~3단계: 기간 설정 및 분석")
     l1, l2 = st.columns(2)
     lead_time = l1.number_input("리드타임 (일)", value=0)
     safety_stock = l2.number_input("안전재고 (일)", value=3)
     
     if st.button("🚀 분석 실행", type="primary"):
+        # 분석 시점에 안전하게 데이터 연산
+        df = st.session_state.df_raw
         today = datetime.now()
         kr_holidays = holidays.KR(years=today.year)
         def get_biz_days(start_date):
@@ -79,20 +87,20 @@ if st.session_state.df_raw is not None:
             biz_days = [d for d in days if d.weekday() < 5 and d not in kr_holidays]
             return max(1, len(biz_days))
         
-        reg_dates = pd.to_datetime(st.session_state.df_raw[reg_date_col], errors='coerce')
+        reg_dates = pd.to_datetime(df[reg_date_col], errors='coerce')
         divisors = [min(3, get_biz_days(rd)) for rd in reg_dates]
-        v_avail = pd.to_numeric(st.session_state.df_raw[avail], errors='coerce').fillna(0)
-        v_3day = pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce').fillna(0)
-        # 리오더 합산
-        v_reorder = pd.to_numeric(st.session_state.df_raw["1차 리오더"], errors='coerce').fillna(0) + \
-                    pd.to_numeric(st.session_state.df_raw["2차 리오더"], errors='coerce').fillna(0)
+        v_avail = pd.to_numeric(df[avail], errors='coerce').fillna(0)
+        v_3day = pd.to_numeric(df[t3day], errors='coerce').fillna(0)
+        v_reorder = pd.to_numeric(df["1차 리오더"], errors='coerce').fillna(0) + \
+                    pd.to_numeric(df["2차 리오더"], errors='coerce').fillna(0)
         
-        st.session_state.df_raw['일일 판매량'] = (v_3day / divisors).round(0).astype(int)
-        st.session_state.df_raw['권장 발주량'] = ((st.session_state.df_raw['일일 판매량'] * (lead_time + safety_stock)) - (v_avail + v_reorder)).clip(lower=0).astype(int)
+        df['일일 판매량'] = (v_3day / divisors).round(0).astype(int)
+        df['권장 발주량'] = ((df['일일 판매량'] * (lead_time + safety_stock)) - (v_avail + v_reorder)).clip(lower=0).astype(int)
+        st.session_state.df_raw = df
         st.success("✅ 분석 완료!")
         st.rerun()
 
-    # 4단계: 편집
+    # 4단계 편집
     st.subheader("📊 4단계: 검색 및 데이터 편집")
     f1, f2 = st.columns([3, 1])
     search = f1.text_input("🔍 상품명 검색")
@@ -106,7 +114,6 @@ if st.session_state.df_raw is not None:
     edit_cols = [sold_out, vendor, item, option, vendor_item_name, stock, avail, "1차 리오더", "2차 리오더", "일일 판매량", t3day, t1week, '권장 발주량']
     df_final = df_disp[[c for c in edit_cols if c in df_disp.columns]]
     
-    # 리오더 항목만 수정 가능하게 홀딩
     editable = ["1차 리오더", "2차 리오더"]
     edited_df = st.data_editor(
         df_final, 
@@ -157,3 +164,4 @@ if st.session_state.df_raw is not None:
     all_buf = BytesIO()
     with pd.ExcelWriter(all_buf, engine='openpyxl') as w: st.session_state.df_raw.to_excel(w, index=False)
     st.download_button("📥 전체 원본 데이터 다운로드", data=all_buf.getvalue(), file_name="최종결과데이터.xlsx")
+
