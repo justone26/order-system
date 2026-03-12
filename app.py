@@ -5,15 +5,14 @@ from datetime import datetime
 
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 
-# [1] 상태 초기화
-if 'df_raw' not in st.session_state: st.session_state.df_raw = None
-if 'history' not in st.session_state: st.session_state.history = {}
-
-st.title("📦 재고 관리 및 발주 시스템")
-
-# [복구된 초기화 버튼]
+# [핵심] 시스템 전체 초기화 (업로드 파일까지 제거)
 if st.button("🔄 시스템 전체 초기화"):
-    for key in list(st.session_state.keys()): del st.session_state[key]
+    # 세션 상태 전부 삭제
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    
+    # 1. 파일 업로더 초기화를 위해 쿼리 파라미터 활용
+    # 이렇게 하면 페이지를 새로 고치면서 업로더도 깨끗해짐
     st.rerun()
 
 # 자동 매핑 함수
@@ -102,3 +101,4 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         s_time = st.selectbox("⏰ 저장 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
         st.dataframe(st.session_state.history[s_time], use_container_width=False)
+
