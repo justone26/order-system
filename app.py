@@ -11,121 +11,74 @@ if 'history' not in st.session_state: st.session_state.history = {}
 
 st.title("📦 재고 관리 및 발주 시스템")
 
+# 시스템 전체 초기화
 if st.button("🔄 시스템 전체 초기화"):
     for key in list(st.session_state.keys()): del st.session_state[key]
     st.rerun()
 
-# [업로드]
+# [1단계: 업로드]
 uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
 if uploaded_file is not None:
     df = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
     st.session_state.df_raw = df.loc[:, ~df.columns.duplicated()]
     if "1차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["1차 리오더"] = 0
     if "2차 리오더" not in st.session_state.df_raw.columns: st.session_state.df_raw["2차 리오더"] = 0
-    st.success("데이터 로드 완료!")
+    st.rerun()
 
-# [핵심 로직]
+# [데이터가 있을 때만 실행]
 if st.session_state.df_raw is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
     # 1단계: 매핑 (등록일 포함 완벽 복구)
-    st.subheader("⚙️ 1단계: 자동 매핑 설정")
-    def get_auto_index(cols, keywords):
-        for key in keywords:
-            for i, c in enumerate(cols):
-                if key in str(c): return i
-        return 0
-
+    st.subheader("⚙️ 1단계: 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
-        sold_out = st.selectbox("품절 여부", cols, index=get_auto_index(cols, ['품절', '판매중단']))
-        vendor = st.selectbox("공급처", cols, index=get_auto_index(cols, ['공급처', '업체명']))
-        item = st.selectbox("상품명", cols, index=get_auto_index(cols, ['상품명', '상품']))
-        option = st.selectbox("옵션", cols, index=get_auto_index(cols, ['옵션']))
-        vendor_item_name = st.selectbox("공급처 상품명", cols, index=get_auto_index(cols, ['공급처상품명', '거래처옵션']))
+        sold_out = st.selectbox("품절 여부", cols, index=0)
+        vendor = st.selectbox("공급처", cols, index=1)
+        item = st.selectbox("상품명", cols, index=2)
+        option = st.selectbox("옵션", cols, index=3)
     with c2:
-        reg_date_col = st.selectbox("등록일 컬럼", cols, index=get_auto_index(cols, ['등록일', '생성일']))
-        stock = st.selectbox("정상재고", cols, index=get_auto_index(cols, ['정상재고', '재고']))
-        avail = st.selectbox("가용재고", cols, index=get_auto_index(cols, ['가용재고', '가용']))
-        t3day = st.selectbox("3일 발주 합계", cols, index=get_auto_index(cols, ['3일']))
-        t1week = st.selectbox("7일 발주 합계", cols, index=get_auto_index(cols, ['7일', '1주']))
+        reg_date = st.selectbox("등록일 컬럼", cols, index=4) # 등록일 복구
+        stock = st.selectbox("정상재고", cols, index=5)
+        avail = st.selectbox("가용재고", cols, index=6)
+        t3day = st.selectbox("3일 발주 합계", cols, index=7)
 
-    # 2~3단계: 분석 설정
+    # 2~3단계: 분석
     st.subheader("⚙️ 2~3단계: 분석 설정")
     l1, l2 = st.columns(2)
     lead_time = l1.number_input("리드타임 (일)", value=0)
     safety_stock = l2.number_input("안전재고 (일)", value=3)
     
-    if st.button("🚀 분석 실행", type="primary"):
+    if st.button("🚀 분석 실행"):
         df = st.session_state.df_raw.copy()
         df['일일 판매량'] = (pd.to_numeric(df[t3day], errors='coerce').fillna(0) / 3).round(0).astype(int)
-        df['권장 발주량'] = ((df['일일 판매량'] * (lead_time + safety_stock)) - (pd.to_numeric(df[avail], errors='coerce').fillna(0) + pd.to_numeric(df["1차 리오더"], errors='coerce') + pd.to_numeric(df["2차 리오더"], errors='coerce'))).clip(lower=0).astype(int)
+        df['권장 발주량'] = ((df['일일 판매량'] * (lead_time + safety_stock)) - (pd.to_numeric(df[avail], errors='coerce') + pd.to_numeric(df["1차 리오더"], errors='coerce') + pd.to_numeric(df["2차 리오더"], errors='coerce'))).clip(lower=0).astype(int)
         st.session_state.df_raw = df
         st.rerun()
 
-# 4단계: 데이터 편집 (분석된 컬럼을 강제로 포함시키기)
+    # 4단계: 데이터 편집 (모든 컬럼 포함)
     st.subheader("📊 4단계: 데이터 편집")
-    
-    # 1. 원본 세션에서 데이터를 가져옴
-    df_working = st.session_state.df_raw.copy()
-    
-    # 2. 검색 및 필터 UI
-    f1, f2 = st.columns([3, 1])
-    search_query = f1.text_input("🔍 상품명 검색")
-    filter_mode = f2.selectbox("품절 필터", ["정상만", "품절만", "전체보기"], index=0)
-    
-    # 3. 필터링 적용
-    if filter_mode == "정상만": 
-        df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
-    elif filter_mode == "품절만": 
-        df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
-    if search_query: 
-        df_working = df_working[df_working[item].astype(str).str.contains(search_query, na=False)]
-
-    # 4. [핵심] 컬럼 순서 지정 및 분석 컬럼 강제 포함
-    # '일일 판매량'과 '권장 발주량'이 계산되었다면 컬럼 리스트에 무조건 넣음
-    target_cols = [sold_out, vendor, item, option, vendor_item_name, reg_date_col, stock, avail, "1차 리오더", "2차 리오더"]
-    
-    if '일일 판매량' in df_working.columns:
-        target_cols.append('일일 판매량')
-    target_cols.extend([t3day, t1week])
-    if '권장 발주량' in df_working.columns:
-        target_cols.append('권장 발주량')
-    
-    # 실제 존재하는 컬럼만 필터링해서 표시
-    display_cols = [c for c in target_cols if c in df_working.columns]
-
-    # 5. 데이터 에디터 (수정 후 즉시 session에 반영)
-    edited_df = st.data_editor(df_working[display_cols], use_container_width=True, key="main_editor")
-    
-    # 수정된 내용을 세션 원본에 반영 (이 부분이 중요해!)
+    edited_df = st.data_editor(st.session_state.df_raw, use_container_width=True)
     st.session_state.df_raw.update(edited_df)
-    
-    # 5~6단계는 그대로... (위에 코드와 동일)
 
-    # 5단계: 발주 리스트 요약
+    # 5단계: 요약 (다운로드 및 저장 복구)
     st.subheader("📋 5단계: 발주 리스트 요약")
-    if '권장 발주량' in st.session_state.df_raw.columns:
-        to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
-        if not to_order.empty:
-            summary_cols = [c for c in [vendor, item, option, '권장 발주량'] if c in to_order.columns]
-            to_order_summary = to_order[summary_cols]
-            st.dataframe(to_order_summary, use_container_width=True)
-            
-            c1, c2 = st.columns(2)
-            buf = BytesIO()
-            with pd.ExcelWriter(buf, engine='openpyxl') as w: to_order_summary.to_excel(w, index=False)
-            c1.download_button("📥 요약 발주서 다운로드", data=buf.getvalue(), file_name=f"발주요약_{datetime.now().strftime('%m%d')}.xlsx")
-            if c2.button("💾 이 리스트 기록 저장"):
-                time_key = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                st.session_state.history[time_key] = to_order_summary.copy()
-                st.success("기록 저장 완료!")
-        else: st.info("발주 대상 없음")
+    to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0] if '권장 발주량' in st.session_state.df_raw.columns else pd.DataFrame()
+    
+    if not to_order.empty:
+        st.dataframe(to_order, use_container_width=True)
+        c1, c2 = st.columns(2)
+        buf = BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as w: to_order.to_excel(w, index=False)
+        c1.download_button("📥 요약 발주서 다운로드", data=buf.getvalue(), file_name="발주서.xlsx")
+        if c2.button("💾 기록 저장"):
+            time_key = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.history[time_key] = to_order.copy()
+            st.success("저장 완료!")
+    else: st.info("발주 대상 없음")
 
-    # 6단계: 과거 기록
+    # 6단계: 과거 기록 (복구 완료)
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
-        s_time = st.selectbox("⏰ 저장된 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
+        s_time = st.selectbox("⏰ 저장 기록 선택", sorted(st.session_state.history.keys(), reverse=True))
         st.dataframe(st.session_state.history[s_time], use_container_width=True)
-
-
