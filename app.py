@@ -118,31 +118,49 @@ if st.session_state.get('df_raw') is not None:
         on_change=update_reorder
     )
                 
-  # 5단계: 발주 리스트 요약
+# 5단계: 발주 리스트 요약 (수정됨)
     st.subheader("📋 5단계: 발주 리스트 요약")
-    
-    # 1. 사용할 컬럼 리스트 정의 (이름 확인 필수!)
-    summary_cols = [vendor, item, option, "1차 리오더", "2차 리오더", "권장 발주량"]
-    
-    # 2. 데이터프레임에 해당 컬럼이 없는 경우 대비 (강제 생성)
-    for col in summary_cols:
-        if col not in st.session_state.df_raw.columns:
-            st.session_state.df_raw[col] = 0
 
-    # 3. 데이터 출력
     if '권장 발주량' in st.session_state.df_raw.columns:
+        # 발주 대상 필터링 (권장 발주량이 0보다 큰 경우)
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
         
         if not to_order.empty:
             st.warning(f"🚨 발주 대상 {len(to_order)}개 확인")
-            # 컬럼이 있는지 확인 후 출력
-            available_cols = [c for c in summary_cols if c in to_order.columns]
-            st.dataframe(to_order[available_cols], use_container_width=True)
+            
+            # 1. 추가 리오더 입력용 편집기 구성
+            # '리오더 수량'을 가져오고 '추가 리오더' 셀을 0으로 생성
+            to_order['추가 리오더'] = 0
+            
+            # 입력받을 컬럼 정의
+            cols_to_show = [vendor, item, option, "리오더 수량", "추가 리오더", "권장 발주량"]
+            
+            # 2. 발주 리스트 편집기 (추가 리오더 입력 가능)
+            edited_to_order = st.data_editor(
+                to_order[cols_to_show],
+                use_container_width=True,
+                key="order_editor"
+            )
             
             if st.button("💾 구글 시트 및 기록 저장"):
-                save_reorder_data(to_order[['상품코드', '1차 리오더', '2차 리오더']])
-                st.session_state.history[datetime.now().strftime("%Y-%m-%d %H:%M:%S")] = to_order.copy()
-                st.success("저장 완료!")
+                # 3. 추가 리오더와 기존 리오더 합산 계산
+                # edited_to_order에서 수정된 값 가져오기
+                for idx, row in edited_to_order.iterrows():
+                    added = float(row['추가 리오더'])
+                    if added > 0:
+                        # 원본 데이터에 합산
+                        st.session_state.df_raw.at[idx, '리오더 수량'] = float(row['리오더 수량']) + added
+                
+                # 4. 저장할 최종 데이터 정리 (상품코드, 합산된 리오더 수량)
+                # '리오더 수량'이 곧 합산된 값
+                final_save_df = st.session_state.df_raw.loc[to_order.index, ['상품코드', '리오더 수량']].copy()
+                final_save_df.columns = ['상품코드', '합산 리오더'] # 구글 시트 규격에 맞게 컬럼명 조정
+                
+                save_reorder_data(final_save_df)
+                
+                # 기록 저장
+                st.session_state.history[datetime.now().strftime("%Y-%m-%d %H:%M:%S")] = edited_to_order.copy()
+                st.success("✅ 합산 완료 및 구글 시트 저장 완료!")
         else:
             st.info("✅ 현재 발주할 상품이 없습니다.")
 
@@ -151,6 +169,7 @@ if st.session_state.get('df_raw') is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
