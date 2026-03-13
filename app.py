@@ -114,29 +114,31 @@ if st.session_state.df_raw is not None:
     col_search, col_filter = st.columns([2, 1])
     search_term = col_search.text_input("🔍 상품명 또는 옵션 검색", "")
 
+    # 판매 상태 필터 - '전체보기'를 기본값(index=2)으로 두어 데이터 실종 방지
     status_option = col_filter.selectbox(
         "판매 상태 필터",
         ["정상 (빈칸)", "품절 (글자있음)", "전체보기"],
-        index=2  # 데이터가 안 보일 때는 일단 '전체보기'로 index를 2로 바꿔서 테스트해봐!
+        index=2 
     )
 
     # --- 데이터 필터링 로직 ---
+    # 원본은 건드리지 않고 보여줄 데이터(display_df)만 가공함
     display_df = st.session_state.df_raw.copy()
 
-    # 1. 판매 상태 필터링 (NaN 및 공백 처리 강화)
+    # 1. 판매 상태 필터링 (사용자 요청 로직)
     if status_option == "정상 (빈칸)":
-        # 문자열로 변환 후 앞뒤 공백 제거했을 때 빈 값인 것만 추출
+        # 값이 없거나, 공백이거나, 문자열 'nan'인 경우
         display_df = display_df[
             (display_df[sold_out].isna()) | 
             (display_df[sold_out].astype(str).str.strip() == "") |
-            (display_df[sold_out].astype(str).str.strip() == "nan")
+            (display_df[sold_out].astype(str).str.strip().lower() == "nan")
         ]
     elif status_option == "품절 (글자있음)":
-        # 문자열이 있고, 'nan'이 아니며, 공백이 아닌 것
+        # 뭐라도 써져 있는 경우 (정상의 반대)
         display_df = display_df[
             (display_df[sold_out].notna()) & 
             (display_df[sold_out].astype(str).str.strip() != "") &
-            (display_df[sold_out].astype(str).str.strip() != "nan")
+            (display_df[sold_out].astype(str).str.strip().lower() != "nan")
         ]
 
     # 2. 검색어 필터링
@@ -153,6 +155,7 @@ if st.session_state.df_raw is not None:
         '리오더 수량', '입고 완료', '권장 발주량'
     ]
 
+    # 필터링된 결과가 있을 때만 에디터 표시
     if not display_df.empty:
         edited_df = st.data_editor(
             display_df[display_cols], 
@@ -160,13 +163,10 @@ if st.session_state.df_raw is not None:
             key="data_editor_main"
         )
         if edited_df is not None:
-            # 수정된 내용 반영 (index 기준으로 업데이트)
+            # 에디터에서 수정한 값을 원본(df_raw)에 인덱스 기준으로 업데이트
             st.session_state.df_raw.update(edited_df)
     else:
-        st.info("💡 해당 조건의 데이터가 없습니다. 필터를 '전체보기'로 변경해보세요.")
-        # 만약 전체보기에서도 안 나오면 매핑 문제!
-        if status_option == "전체보기" and st.session_state.df_raw.empty:
-             st.error("⚠️ 원본 데이터가 비어있습니다. 1단계 파일을 다시 확인해주세요.")
+        st.info(f"💡 '{status_option}' 조건에 해당하는 데이터가 없습니다.")
                 
     # 5단계: 발주 리스트 요약 (에러 방어 버전)
     st.subheader("📋 5단계: 발주 리스트 요약")
@@ -193,6 +193,7 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
