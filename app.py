@@ -21,19 +21,18 @@ def save_reorder_data(df):
     except Exception as e:
         st.error(f"구글 시트 저장 실패: {e}")
 
-# 정확한 매핑을 위한 개선된 함수
 def find_idx(cols, target_keywords):
     for keyword in target_keywords:
         for i, col in enumerate(cols):
             if keyword in str(col): return i
     return 0
 
-# --- [2. 앱 설정 및 초기화] ---
+# --- [2. 앱 설정 및 세션 초기화] ---
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 st.title("📦 재고 관리 및 발주 시스템")
 if 'history' not in st.session_state: st.session_state.history = {}
 
-# --- [3. 업로드 및 초기화] ---
+# --- [3. 데이터 업로드 및 초기화] ---
 st.subheader("📁 데이터 업로드")
 if st.button("🔄 전체 데이터 초기화 및 재업로드"):
     st.session_state.clear()
@@ -60,7 +59,6 @@ if st.session_state.get('df_raw') is not None:
     item = c1.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
     option = c1.selectbox("옵션", cols, index=find_idx(cols, ['옵션']))
     vendor_item = c1.selectbox("공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
-    
     reg_date = c2.selectbox("등록일", cols, index=find_idx(cols, ['등록일']))
     stock = c2.selectbox("정상재고", cols, index=find_idx(cols, ['정상재고']))
     avail = c2.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
@@ -78,8 +76,14 @@ if st.session_state.get('df_raw') is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-    # 4단계: 데이터 편집 (편집 즉시 저장 반영)
+    # 4단계: 데이터 편집 (모든 컬럼 포함)
     st.subheader("📊 4단계: 데이터 편집")
+    # 분석 후 생성된 컬럼을 확인하고 편집기에 모두 노출
+    if '권장 발주량' not in st.session_state.df_raw.columns:
+        st.session_state.df_raw['권장 발주량'] = 0
+    if '일판매량' not in st.session_state.df_raw.columns:
+        st.session_state.df_raw['일판매량'] = (pd.to_numeric(st.session_state.df_raw.get(t3day, 0), errors='coerce') / 3).round(1)
+    
     st.session_state.df_raw = st.data_editor(st.session_state.df_raw, use_container_width=True, key="main_editor")
 
     # 5단계: 발주 리스트 요약
@@ -91,6 +95,7 @@ if st.session_state.get('df_raw') is not None:
             display_cols = [vendor, item, option, "리오더 수량", "추가 리오더", "권장 발주량"]
             edited = st.data_editor(to_order[display_cols], use_container_width=True, key="order_editor")
             
+            # 스타일링
             def highlight_urgent(row):
                 avail_val = float(row.get('가용재고', 0))
                 sale_3d = float(row.get(t3day, 0)) / 3
@@ -117,5 +122,3 @@ if st.session_state.get('df_raw') is not None:
         st.dataframe(st.session_state.history[select_h], use_container_width=True)
         csv_h = st.session_state.history[select_h].to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 선택 기록 다운로드", csv_h, f"발주기록_{select_h.replace(':', '-')}.csv", "text/csv")
-    else:
-        st.info("💡 아직 저장된 기록이 없습니다.")
