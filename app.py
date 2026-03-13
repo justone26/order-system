@@ -118,16 +118,26 @@ if st.session_state.get('df_raw') is not None:
         on_change=update_reorder
     )
                 
-    # 5단계: 발주 리스트 요약 (에러 방어 버전)
+  # 5단계: 발주 리스트 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
     
-    # [방어 로직] 데이터프레임에 '권장 발주량' 컬럼이 존재하는지 먼저 확인
+    # 1. 사용할 컬럼 리스트 정의 (이름 확인 필수!)
+    summary_cols = [vendor, item, option, "1차 리오더", "2차 리오더", "권장 발주량"]
+    
+    # 2. 데이터프레임에 해당 컬럼이 없는 경우 대비 (강제 생성)
+    for col in summary_cols:
+        if col not in st.session_state.df_raw.columns:
+            st.session_state.df_raw[col] = 0
+
+    # 3. 데이터 출력
     if '권장 발주량' in st.session_state.df_raw.columns:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
         
         if not to_order.empty:
             st.warning(f"🚨 발주 대상 {len(to_order)}개 확인")
-            st.dataframe(to_order[[vendor, item, option, "1차 리오더", "2차 리오더", "권장 발주량"]], use_container_width=True)
+            # 컬럼이 있는지 확인 후 출력
+            available_cols = [c for c in summary_cols if c in to_order.columns]
+            st.dataframe(to_order[available_cols], use_container_width=True)
             
             if st.button("💾 구글 시트 및 기록 저장"):
                 save_reorder_data(to_order[['상품코드', '1차 리오더', '2차 리오더']])
@@ -135,14 +145,13 @@ if st.session_state.get('df_raw') is not None:
                 st.success("저장 완료!")
         else:
             st.info("✅ 현재 발주할 상품이 없습니다.")
-    else:
-        st.info("💡 '분석 실행' 버튼을 누르면 발주 리스트가 나타납니다.")
 
     # [6단계: 과거 기록]
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
