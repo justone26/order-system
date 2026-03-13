@@ -104,44 +104,54 @@ if st.session_state.get('df_raw') is not None:
 
     st.data_editor(df_working[target_cols], use_container_width=True, key="main_editor", on_change=update_reorder)
                 
-# 5단계: 발주 리스트 요약
+# 5단계: 발주 리스트 요약 (수정된 코드)
     st.subheader("📋 5단계: 발주 리스트 요약")
 
     if '권장 발주량' in st.session_state.df_raw.columns:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
         
         if not to_order.empty:
-            st.warning(f"🚨 발주 대상 {len(to_order)}개 확인 (붉은색: 가용재고 부족)")
+            st.warning(f"🚨 발주 대상 {len(to_order)}개 확인")
             
-            # 스타일링 함수: 가용재고가 1일치 미만이면 빨간색
-            def highlight_urgent(row):
-                is_urgent = float(row['가용재고']) <= (float(row['3일발주합계']) / 3)
-                return ['background-color: #ffcccc' if is_urgent else '' for _ in row]
-
             to_order['추가 리오더'] = 0
             cols_to_show = [vendor, item, option, "리오더 수량", "추가 리오더", "권장 발주량", "가용재고"]
             
-            # 여기서 입력을 받음
-            edited_to_order = st.data_editor(to_order[cols_to_show].style.apply(highlight_urgent, axis=1), 
-                                           use_container_width=True, key="order_editor")
+            # 1. 스타일링을 뺀 편집기 (에러 방지)
+            edited_to_order = st.data_editor(
+                to_order[cols_to_show], 
+                use_container_width=True, 
+                key="order_editor"
+            )
+            
+            # 2. 결과 확인 및 경고 표시 (스타일링은 여기서 적용)
+            def highlight_urgent(row):
+                # 3일 발주합계가 없는 경우를 대비해 0으로 처리
+                val3 = float(row['3일발주합계']) if '3일발주합계' in row else 0
+                is_urgent = float(row['가용재고']) <= (val3 / 3)
+                return ['background-color: #ffcccc' if is_urgent else '' for _ in row]
+
+            st.write("### 🔍 긴급 발주 확인 (가용재고 1일치 미만)")
+            st.dataframe(
+                edited_to_order.style.apply(highlight_urgent, axis=1), 
+                use_container_width=True
+            )
             
             if st.button("💾 구글 시트 및 기록 저장"):
-                # 입력된 추가 리오더를 기존 리오더 수량에 합산
                 for idx, row in edited_to_order.iterrows():
                     st.session_state.df_raw.at[idx, '리오더 수량'] = float(row['리오더 수량']) + float(row['추가 리오더'])
                 
-                # 구글 시트 저장용 데이터 생성
                 final_save = st.session_state.df_raw.loc[to_order.index, ['상품코드', '리오더 수량']]
                 save_reorder_data(final_save)
                 st.success("✅ 합산 완료 및 구글 시트 저장 완료!")
         else:
             st.info("✅ 현재 발주할 상품이 없습니다.")
-
+            
     # [6단계: 과거 기록]
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
