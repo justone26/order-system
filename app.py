@@ -136,21 +136,31 @@ if st.session_state.get('df_raw') is not None:
                 use_container_width=True
             )
             
-            if st.button("💾 구글 시트 및 기록 저장"):
+if st.button("💾 구글 시트 및 기록 저장"):
+                # 1. 데이터 업데이트
                 for idx, row in edited_to_order.iterrows():
-                    st.session_state.df_raw.at[idx, '리오더 수량'] = float(row['리오더 수량']) + float(row['추가 리오더'])
+                    # st.session_state.df_raw가 해당 idx를 가지고 있는지 확인
+                    if idx in st.session_state.df_raw.index:
+                        new_val = float(row['리오더 수량']) + float(row['추가 리오더'])
+                        st.session_state.df_raw.at[idx, '리오더 수량'] = new_val
                 
-                final_save = st.session_state.df_raw.loc[to_order.index, ['상품코드', '리오더 수량']]
-                save_reorder_data(final_save)
-                st.success("✅ 합산 완료 및 구글 시트 저장 완료!")
-        else:
-            st.info("✅ 현재 발주할 상품이 없습니다.")
+                # 2. 구글 시트 저장용 데이터 생성
+                final_save = st.session_state.df_raw.loc[to_order.index, ['상품코드', '리오더 수량']].copy()
+                final_save.columns = ['상품코드', '1차 리오더', '2차 리오더'] # 기존 함수 규격에 맞게 컬럼명 재조정
+                
+                # 3. 함수 호출 (함수가 코드 최상단에 있는지 확인!)
+                try:
+                    save_reorder_data(final_save)
+                    st.success("✅ 합산 완료 및 구글 시트 저장 완료!")
+                except Exception as e:
+                    st.error(f"저장 중 오류 발생: {e}")
             
     # [6단계: 과거 기록]
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
