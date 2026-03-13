@@ -105,7 +105,7 @@ if st.session_state.df_raw is not None:
 # 4단계: 데이터 편집 및 리오더 관리
     st.subheader("📊 4단계: 데이터 편집 및 리오더 관리")
 
-    # [필수 열 생성/확인] - 모든 줄의 앞 간격이 동일해야 함
+    # [필수 열 생성/확인]
     for col in ['리오더 수량', '입고 완료', '권장 발주량']:
         if col not in st.session_state.df_raw.columns:
             st.session_state.df_raw[col] = 0
@@ -113,45 +113,45 @@ if st.session_state.df_raw is not None:
     # --- 검색 및 필터 설정 구역 ---
     col_search, col_filter = st.columns([2, 1])
     search_term = col_search.text_input("🔍 상품명 또는 옵션 검색", "")
+
+    # 사용자가 요청한 딱 3가지 옵션
     status_option = col_filter.selectbox(
         "판매 상태 필터",
-        ["전체 보기", "정상 (판매중)", "품절"],
+        ["정상 (빈칸)", "품절 (글자있음)", "전체보기"],
         index=0 
     )
 
     # --- 데이터 필터링 로직 ---
     display_df = st.session_state.df_raw.copy()
 
-    if status_option == "정상 (판매중)":
-        # 비어있거나 '정상' 포함
+    # 1. 판매 상태 필터링
+    if status_option == "정상 (빈칸)":
+        # 엑셀 칸이 비어있는 데이터만 (NaN 또는 공백)
         display_df = display_df[
             (display_df[sold_out].isna()) | 
-            (display_df[sold_out].astype(str).str.strip() == "") |
-            (display_df[sold_out].astype(str).str.contains('정상|판매중', na=False))
+            (display_df[sold_out].astype(str).str.strip() == "")
         ]
-    elif status_option == "품절":
-        # 글자가 있거나 '품절' 관련 단어 포함
+    elif status_option == "품절 (글자있음)":
+        # 엑셀 칸에 뭐라도 적혀있는 데이터만
         display_df = display_df[
             (display_df[sold_out].notna()) & 
-            (display_df[sold_out].astype(str).str.strip() != "") &
-            (display_df[sold_out].astype(str).str.contains('품절|판매중단|Y|N', na=False))
+            (display_df[sold_out].astype(str).str.strip() != "")
         ]
 
-    # 검색어 필터 적용
+    # 2. 검색어 필터링
     if search_term:
         display_df = display_df[
             display_df[item].astype(str).str.contains(search_term, case=False, na=False) | 
             display_df[option].astype(str).str.contains(search_term, case=False, na=False)
         ]
 
-    # 최종 보여줄 열 리스트
+    # --- 데이터 편집기 출력 ---
     display_cols = [
         sold_out, vendor, item, option, vendor_item, 
         stock, avail, t1week, 
         '리오더 수량', '입고 완료', '권장 발주량'
     ]
 
-    # 데이터 편집기 실행
     if not display_df.empty:
         edited_df = st.data_editor(
             display_df[display_cols], 
@@ -161,21 +161,7 @@ if st.session_state.df_raw is not None:
         if edited_df is not None:
             st.session_state.df_raw.update(edited_df)
     else:
-        st.info("💡 표시할 데이터가 없습니다. 필터를 변경해 보세요.")
-
-    # [재계산 버튼]
-    if st.button("🚀 다시 계산하기"):
-        df = st.session_state.df_raw.copy()
-        daily_avg = pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7
-        reorder_remained = pd.to_numeric(df['리오더 수량'], errors='coerce').fillna(0) - \
-                           pd.to_numeric(df['입고 완료'], errors='coerce').fillna(0)
-        current_total_inv = pd.to_numeric(df[avail], errors='coerce').fillna(0) + reorder_remained
-        needed = (daily_avg * lead_time) + (daily_avg * safety_stock)
-        
-        df['권장 발주량'] = (needed - current_total_inv).clip(lower=0).astype(int)
-        st.session_state.df_raw = df
-        st.success("계산 완료!")
-        st.rerun()
+        st.info("💡 해당 조건의 데이터가 없습니다.")
                 
     # 5단계: 발주 리스트 요약 (에러 방어 버전)
     st.subheader("📋 5단계: 발주 리스트 요약")
@@ -202,6 +188,7 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
