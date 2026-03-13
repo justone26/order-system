@@ -51,18 +51,27 @@ if st.button("🔄 시스템 전체 초기화"):
 
 # [파일 업로드]
 uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
+
+# 수정된 부분: 파일을 새로 올리면 세션 데이터를 강제로 리셋함
+if uploaded_file is not None:
+    # 마지막 업로드된 파일명이나 상태를 확인하여 변경 시 초기화
+    if 'last_filename' not in st.session_state or st.session_state.last_filename != uploaded_file.name:
+        st.session_state.df_raw = None
+        st.session_state.last_filename = uploaded_file.name
+        st.rerun() # 전체 페이지 새로고침
+
+# 데이터 로드 로직
 if uploaded_file is not None and st.session_state.df_raw is None:
     df = pd.read_excel(uploaded_file)
+    # (나머지 병합 로직 동일)
     reorder_df = load_reorder_data()
     if not reorder_df.empty:
         df = df.merge(reorder_df[['상품코드', '1차 리오더', '2차 리오더']], on='상품코드', how='left').fillna(0)
     else:
         df['1차 리오더'] = 0; df['2차 리오더'] = 0
+        
     st.session_state.df_raw = df.loc[:, ~df.columns.duplicated()]
     st.rerun()
-
-if st.session_state.df_raw is not None:
-    cols = st.session_state.df_raw.columns.tolist()
     
  # 1단계: 매핑 설정
     st.subheader("⚙️ 1단계: 자동 매핑 설정")
@@ -178,6 +187,7 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
