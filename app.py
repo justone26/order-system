@@ -112,7 +112,7 @@ if st.session_state.get('df_raw') is not None:
 
     st.data_editor(df_working[target_cols], use_container_width=True, key="main_editor", on_change=update_reorder)
     
-  # 5단계: 발주 리스트 요약
+# 5단계: 발주 리스트 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
     
     if '권장 발주량' in st.session_state.df_raw.columns:
@@ -147,7 +147,7 @@ if st.session_state.get('df_raw') is not None:
                 st.success("✅ 저장 완료!")
             with col2:
                 # ... (기존 다운로드 로직 동일)
-
+                
     # 6단계: 과거 데이터 확인
     st.subheader("📜 6단계: 과거 데이터 확인")
     if st.session_state.history:
@@ -155,6 +155,7 @@ if st.session_state.get('df_raw') is not None:
         st.dataframe(st.session_state.history[select_h], use_container_width=True)
         csv_h = st.session_state.history[select_h].to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 선택 기록 다운로드", csv_h, f"발주기록_{select_h.replace(':', '-')}.csv", "text/csv")
+
 
 
 
