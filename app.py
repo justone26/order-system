@@ -115,14 +115,20 @@ if st.session_state.get('df_raw') is not None:
 
         st.data_editor(df_working[target_cols], use_container_width=True, key="main_editor", on_change=update_reorder)
         
-        # 5단계: 발주 리스트 요약
+   # 5단계: 발주 리스트 요약
         st.subheader("📋 5단계: 발주 리스트 요약")
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
+        
         if not to_order.empty:
             to_order['추가 리오더'] = 0
             display_cols = [vendor, item, option, vendor_item, "리오더 수량", "추가 리오더", "권장 발주량"]
+            
+            # [1] 편집기 (수량 수정용)
+            st.write("### ✏️ 발주 수량 입력")
             edited = st.data_editor(to_order[display_cols], use_container_width=True, key="order_editor")
             
+            # [2] 긴급 발주 상품 확인 (색상 강조용)
+            st.write("### 🚨 긴급 발주 상품 확인")
             def highlight_urgent(row):
                 avg_3d = float(row.get(t3day, 0)) / 3
                 avail_val = float(row.get('가용재고', 0))
@@ -130,10 +136,26 @@ if st.session_state.get('df_raw') is not None:
             
             st.dataframe(edited.style.apply(highlight_urgent, axis=1), use_container_width=True)
             
-            if st.button("💾 구글 시트 및 기록 저장"):
-                save_reorder_data(st.session_state.df_raw.loc[edited.index, ['상품코드', '리오더 수량']])
+            # [3] 저장 및 다운로드 버튼 (두 버튼 모두 포함)
+            col1, col2 = st.columns(2)
+            
+            if col1.button("💾 구글 시트 및 기록 저장"):
+                # 실제 데이터 반영 및 저장
+                save_reorder_data(st.session_state.df_raw.loc[edited.index, ['상품코드', '리오더 수량']]) # '상품코드' 컬럼이 df에 있어야 함
                 st.session_state.history[datetime.now().strftime("%Y-%m-%d %H:%M:%S")] = edited.copy()
                 st.success("✅ 저장 완료!")
+                
+            with col2:
+                # 엑셀 다운로드 버튼 추가
+                csv_data = edited.to_csv(index=False).encode('utf-8-sig')
+                st.download_button(
+                    label="📥 발주 리스트 엑셀 다운로드",
+                    data=csv_data,
+                    file_name=f"발주_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv"
+                )
+        else:
+            st.info("💡 권장 발주량이 0보다 큰 상품이 없습니다.")
 
         # 6단계: 과거 데이터 확인 (날짜별 조회)
     st.subheader("📜 6단계: 과거 데이터 확인")
@@ -164,6 +186,7 @@ if st.session_state.get('df_raw') is not None:
             st.info(f"📅 {target_date_str} 날짜에 저장된 기록이 없습니다.")
     else:
         st.info("아직 저장된 발주 기록이 없습니다.")
+
 
 
 
