@@ -102,18 +102,11 @@ if st.session_state.df_raw is not None:
         st.success("분석 완료!")
         st.rerun()
 
-# 4단계: 데이터 편집 (요청하신 컬럼 구성)
+# 4단계: 데이터 편집 및 계산
     st.subheader("📊 4단계: 데이터 편집")
     
-    # 1. 컬럼 리스트 정의 (순서대로 정렬)
-    # 1차/2차 리오더 대신 '리오더', '리오더 입고'를 사용
-    target_cols = [
-        sold_out, vendor, item, option, vendor_item, 
-        stock, avail, t3day, t1week, 
-        "리오더", "리오더 입고", "권장 발주량"
-    ]
-    
-    # 데이터프레임에 실제 존재하는 컬럼만 필터링하여 구성
+    # 1. 컬럼 구성
+    target_cols = [sold_out, vendor, item, option, vendor_item, stock, avail, t3day, t1week, "리오더", "리오더 입고", "권장 발주량"]
     display_cols = [c for c in target_cols if c in st.session_state.df_raw.columns]
     
     # 2. 검색 및 필터 UI
@@ -121,27 +114,46 @@ if st.session_state.df_raw is not None:
     search_query = f1.text_input("🔍 상품명 검색")
     filter_mode = f2.selectbox("품절 필터", ["정상만", "품절만", "전체보기"], index=0)
     
-    # 3. 데이터 필터링 로직
+    # 3. 데이터 필터링
     df_working = st.session_state.df_raw.copy()
-    
     if filter_mode == "정상만":
         df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절|판매중단', na=False)]
     elif filter_mode == "품절만":
         df_working = df_working[df_working[sold_out].astype(str).str.contains('품절|판매중단', na=False)]
-    
     if search_query:
-        df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
+        df_working = df_working[df_working[item].astype(str).contains(search_query, case=False, na=False)]
     
-    # 4. 데이터 편집기
-    edited_df = st.data_editor(
-        df_working[display_cols], 
-        use_container_width=True, 
-        key="main_editor"
-    )
+    # 4. 데이터 편집기 실행
+    edited_df = st.data_editor(df_working[display_cols], use_container_width=True, key="main_editor")
     
-    # 수정된 내용 원본에 즉시 반영
+    # 수정 내용 즉시 세션 반영
     if edited_df is not None:
         st.session_state.df_raw.update(edited_df)
+
+    # 5. [추가] 분석 및 발주량 계산 버튼 (편집기 바로 아래에 위치)
+    if st.button("🚀 발주량 다시 계산하기"):
+        df = st.session_state.df_raw.copy()
+        
+        # 주간 판매량 기반 일일 평균
+        daily_avg = pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7
+        
+        # 리오더 잔량 계산 (리오더 - 리오더 입고)
+        reorder_remained = (pd.to_numeric(df['리오더'], errors='coerce').fillna(0) - 
+                            pd.to_numeric(df['리오더 입고'], errors='coerce').fillna(0)).clip(lower=0)
+        
+        # 총 가용 재고 = 현재 가용재고 + 리오더 잔량
+        current_total_inv = pd.to_numeric(df[avail], errors='coerce').fillna(0) + reorder_remained
+        
+        # 필요 재고 = (일일 판매량 * 리드타임) + (일일 판매량 * 안전재고일수)
+        needed = (daily_avg * lead_time) + (daily_avg * safety_stock)
+        
+        # 권장 발주량 계산 (필요량 - 총 재고)
+        df['권장 발주량'] = (needed - current_total_inv).clip(lower=0).astype(int)
+        
+        # 반영
+        st.session_state.df_raw = df
+        st.success("✅ 발주량이 리오더 잔량을 반영하여 계산되었습니다!")
+        st.rerun()
                 
     # 5단계: 발주 리스트 요약 (에러 방어 버전)
     st.subheader("📋 5단계: 발주 리스트 요약")
@@ -168,6 +180,7 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
