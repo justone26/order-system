@@ -110,63 +110,62 @@ if st.session_state.df_raw is not None:
         if col not in st.session_state.df_raw.columns:
             st.session_state.df_raw[col] = 0
 
-    # --- 검색 및 필터 설정 구역 ---
-    col_search, col_filter = st.columns([2, 1])
-    search_term = col_search.text_input("🔍 상품명 또는 옵션 검색", "")
-
-    # 판매 상태 필터 - '전체보기'를 기본값(index=2)으로 두어 데이터 실종 방지
-    status_option = col_filter.selectbox(
-        "판매 상태 필터",
-        ["정상 (빈칸)", "품절 (글자있음)", "전체보기"],
-        index=2 
-    )
-
-    # --- 데이터 필터링 로직 ---
-    # 원본은 건드리지 않고 보여줄 데이터(display_df)만 가공함
-    display_df = st.session_state.df_raw.copy()
-
-    # 1. 판매 상태 필터링 (사용자 요청 로직)
-    if status_option == "정상 (빈칸)":
-        # 값이 없거나, 공백이거나, 문자열 'nan'인 경우
-        display_df = display_df[
-            (display_df[sold_out].isna()) | 
-            (display_df[sold_out].astype(str).str.strip() == "") |
-            (display_df[sold_out].astype(str).str.strip().lower() == "nan")
-        ]
-    elif status_option == "품절 (글자있음)":
-        # 뭐라도 써져 있는 경우 (정상의 반대)
-        display_df = display_df[
-            (display_df[sold_out].notna()) & 
-            (display_df[sold_out].astype(str).str.strip() != "") &
-            (display_df[sold_out].astype(str).str.strip().lower() != "nan")
-        ]
-
-    # 2. 검색어 필터링
-    if search_term:
-        display_df = display_df[
-            display_df[item].astype(str).str.contains(search_term, case=False, na=False) | 
-            display_df[option].astype(str).str.contains(search_term, case=False, na=False)
-        ]
-
-    # --- 데이터 편집기 출력 ---
-    display_cols = [
-        sold_out, vendor, item, option, vendor_item, 
-        stock, avail, t1week, 
-        '리오더 수량', '입고 완료', '권장 발주량'
-    ]
-
-    # 필터링된 결과가 있을 때만 에디터 표시
-    if not display_df.empty:
-        edited_df = st.data_editor(
-            display_df[display_cols], 
-            use_container_width=True,
-            key="data_editor_main"
+    # 매핑 변수가 정상적으로 정의되었는지 확인 (에러 방지 핵심)
+    try:
+        # --- 검색 및 필터 설정 구역 ---
+        col_search, col_filter = st.columns([2, 1])
+        search_term = col_search.text_input("🔍 상품명 또는 옵션 검색", "")
+        status_option = col_filter.selectbox(
+            "판매 상태 필터",
+            ["정상 (빈칸)", "품절 (글자있음)", "전체보기"],
+            index=2 
         )
-        if edited_df is not None:
-            # 에디터에서 수정한 값을 원본(df_raw)에 인덱스 기준으로 업데이트
-            st.session_state.df_raw.update(edited_df)
-    else:
-        st.info(f"💡 '{status_option}' 조건에 해당하는 데이터가 없습니다.")
+
+        # --- 데이터 필터링 로직 ---
+        display_df = st.session_state.df_raw.copy()
+
+        # 1. 판매 상태 필터링
+        if status_option == "정상 (빈칸)":
+            # sold_out 컬럼이 실제 존재하는지 한 번 더 체크
+            display_df = display_df[
+                (display_df[sold_out].isna()) | 
+                (display_df[sold_out].astype(str).str.strip().replace('nan', '') == "")
+            ]
+        elif status_option == "품절 (글자있음)":
+            display_df = display_df[
+                (display_df[sold_out].notna()) & 
+                (display_df[sold_out].astype(str).str.strip().replace('nan', '') != "")
+            ]
+
+        # 2. 검색어 필터링
+        if search_term:
+            display_df = display_df[
+                display_df[item].astype(str).str.contains(search_term, case=False, na=False) | 
+                display_df[option].astype(str).str.contains(search_term, case=False, na=False)
+            ]
+
+        # --- 데이터 편집기 출력 ---
+        display_cols = [
+            sold_out, vendor, item, option, vendor_item, 
+            stock, avail, t1week, 
+            '리오더 수량', '입고 완료', '권장 발주량'
+        ]
+
+        if not display_df.empty:
+            edited_df = st.data_editor(
+                display_df[display_cols], 
+                use_container_width=True,
+                key="data_editor_main"
+            )
+            if edited_df is not None:
+                st.session_state.df_raw.update(edited_df)
+        else:
+            st.info(f"💡 '{status_option}' 조건에 해당하는 데이터가 없습니다.")
+
+    except NameError as e:
+        st.error("⚠️ 매핑 설정이 완료되지 않았습니다. 1단계에서 모든 항목을 선택해주세요.")
+    except KeyError as e:
+        st.error(f"⚠️ 매핑된 컬럼을 찾을 수 없습니다: {e}")
                 
     # 5단계: 발주 리스트 요약 (에러 방어 버전)
     st.subheader("📋 5단계: 발주 리스트 요약")
@@ -193,6 +192,7 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
