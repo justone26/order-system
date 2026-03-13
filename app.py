@@ -168,16 +168,35 @@ if st.session_state.get('df_raw') is not None:
         else:
             st.info("💡 발주가 필요한 상품이 없습니다.")
                 
-    # 6단계: 과거 데이터 확인
+    # 6단계: 과거 데이터 확인 (날짜별 조회)
     st.subheader("📜 6단계: 과거 데이터 확인")
+    
     if st.session_state.history:
-        select_h = st.selectbox("⏰ 기록된 시간 선택", list(st.session_state.history.keys()))
-        st.dataframe(st.session_state.history[select_h], use_container_width=True)
-        csv_h = st.session_state.history[select_h].to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 선택 기록 다운로드", csv_h, f"발주기록_{select_h.replace(':', '-')}.csv", "text/csv")
-
-
-
+        # 1. 저장된 기록의 키값들을 날짜 객체로 변환하여 리스트화
+        # 키 포맷: "YYYY-MM-DD HH:MM:SS" -> 앞의 YYYY-MM-DD 추출
+        history_dates = sorted(list(set([k.split(' ')[0] for k in st.session_state.history.keys()])))
+        
+        # 2. 날짜 선택기 추가
+        selected_date = st.date_input("조회할 날짜를 선택하세요", datetime.now())
+        target_date_str = selected_date.strftime("%Y-%m-%d")
+        
+        # 3. 해당 날짜에 맞는 데이터 필터링
+        filtered_keys = [k for k in st.session_state.history.keys() if k.startswith(target_date_str)]
+        
+        if filtered_keys:
+            # 해당 날짜에 기록이 여러 개일 경우 시간을 선택
+            select_h = st.selectbox("⏰ 해당 날짜의 기록 시간 선택", filtered_keys)
+            
+            # 선택된 데이터 출력
+            st.dataframe(st.session_state.history[select_h], use_container_width=True)
+            
+            # 다운로드 버튼
+            csv_h = st.session_state.history[select_h].to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 선택 기록 다운로드", csv_h, f"발주기록_{select_h.replace(':', '-')}.csv", "text/csv")
+        else:
+            st.info(f"📅 {target_date_str} 날짜에 저장된 기록이 없습니다.")
+    else:
+        st.info("아직 저장된 발주 기록이 없습니다.")
 
 
 
