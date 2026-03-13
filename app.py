@@ -115,17 +115,34 @@ st.subheader("📊 4단계: 데이터 편집 및 리오더 관리")
     # 1. 상품명 검색창
     search_term = col_search.text_input("🔍 상품명 또는 옵션 검색", "")
 
-    # 2. 품절 제외 필터 (체크박스)
-    # 기본적으로 체크되어 있게 하여 품절되지 않은 상품 위주로 보이게 함
-    hide_sold_out = col_filter.checkbox("품절 상품 제외하고 보기", value=True)
+    # 2. 품절 상태 필터 (Selectbox)
+    # 옵션: 정상(글씨없는 것), 품절, 전체
+    status_option = col_filter.selectbox(
+        "판매 상태 필터",
+        ["정상 (판매중)", "품절", "전체 보기"],
+        index=0  # 기본값을 '정상'으로 설정
+    )
 
     # --- 데이터 필터링 로직 ---
     display_df = st.session_state.df_raw.copy()
 
-    # 품절 필터 적용 (매핑된 sold_out 열 기준)
-    if hide_sold_out:
-        # '품절', 'Y', '품절중' 등의 키워드가 포함되지 않은 데이터만 남김
-        display_df = display_df[~display_df[sold_out].astype(str).str.contains('품절|판매중단|Y', na=False)]
+    # 품절 열의 빈 값(NaN)이나 공백을 처리하기 위해 임시 복사본 생성
+    # 실제 sold_out 매핑 열의 값을 기준으로 필터링
+    if status_option == "정상 (판매중)":
+        # 값이 비어있거나(NaN), 공백('')인 경우만 추출
+        display_df = display_df[
+            (display_df[sold_out].isna()) | 
+            (display_df[sold_out].astype(str).str.strip() == "") |
+            (display_df[sold_out].astype(str).str.contains('정상', na=False))
+        ]
+    elif status_option == "품절":
+        # '품절', '판매중단', 'Y' 등 글씨가 있는 경우 추출
+        display_df = display_df[
+            (display_df[sold_out].notna()) & 
+            (display_df[sold_out].astype(str).str.strip() != "") &
+            (display_df[sold_out].astype(str).str.contains('품절|판매중단|Y', na=False))
+        ]
+    # '전체 보기'일 때는 필터를 적용하지 않음
 
     # 검색어 필터 적용
     if search_term:
@@ -144,17 +161,15 @@ st.subheader("📊 4단계: 데이터 편집 및 리오더 관리")
     edited_df = st.data_editor(
         display_df[display_cols], 
         use_container_width=True,
-        key="data_editor_main",
-        # 인덱스를 숨기고 싶다면 여기에 추가 설정을 넣을 수 있어
+        key="data_editor_main"
     )
 
-    # 수정 사항을 원본 session_state에 반영
+    # 수정 사항 반영
     if edited_df is not None:
         st.session_state.df_raw.update(edited_df)
 
     # [분석 실행/다시 계산 버튼]
     if st.button("🚀 다시 계산하기"):
-        # 계산 로직은 이전과 동일 (lead_time, safety_stock 변수 활용)
         df = st.session_state.df_raw.copy()
         daily_avg = pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7
         reorder_remained = pd.to_numeric(df['리오더 수량'], errors='coerce').fillna(0) - \
@@ -164,8 +179,6 @@ st.subheader("📊 4단계: 데이터 편집 및 리오더 관리")
         
         df['권장 발주량'] = (needed - current_total_inv).clip(lower=0).astype(int)
         st.session_state.df_raw = df
-        st.success("계산이 업데이트되었습니다!")
-        st.rerun()
 
     # 5단계: 발주 리스트 요약 (에러 방어 버전)
     st.subheader("📋 5단계: 발주 리스트 요약")
@@ -192,6 +205,7 @@ st.subheader("📊 4단계: 데이터 편집 및 리오더 관리")
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
