@@ -112,42 +112,34 @@ if st.session_state.get('df_raw') is not None:
 
     st.data_editor(df_working[target_cols], use_container_width=True, key="main_editor", on_change=update_reorder)
     
-# 5단계: 발주 리스트 요약 (입력 및 실시간 강조 확인)
+# 5단계: 발주 리스트 요약 (통합 편집기)
     st.subheader("📋 5단계: 발주 리스트 요약")
     
     if '권장 발주량' in st.session_state.df_raw.columns:
-        # 권장 발주량이 0보다 큰 항목만 추출
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
         
         if not to_order.empty:
-            # 기본 추가 리오더 컬럼 초기화
-            if '추가 리오더' not in to_order.columns:
-                to_order['추가 리오더'] = 0
+            # 1. 경고 아이콘 추가
+            to_order.insert(0, "경고", to_order.apply(
+                lambda row: '🚨 긴급' if float(row.get('가용재고', 0)) <= (float(row.get(t3day, 0)) / 3) else '', 
+                axis=1
+            ))
             
-            display_cols = [vendor, item, option, "리오더 수량", "추가 리오더", "권장 발주량"]
+            to_order['추가 리오더'] = 0
             
-            # [1] 편집기 (데이터 수정용)
-            st.write("### ✏️ 발주 수량 입력")
-            edited = st.data_editor(to_order[display_cols], use_container_width=True, key="order_editor")
+            # [수정] 옵션(option) 다음으로 공급처 상품명(vendor_item) 추가
+            display_cols = ["경고", vendor, item, option, vendor_item, "리오더 수량", "추가 리오더", "권장 발주량"]
             
-            # [2] 스타일링 확인용 테이블 (실시간 경고 표시)
-            st.write("### 🚨 긴급 발주 상품 확인")
+            # 2. 통합 편집기
+            st.write("### ✏️ 발주 수량 입력 및 긴급 확인")
+            edited = st.data_editor(
+                to_order[display_cols], 
+                use_container_width=True, 
+                key="order_editor",
+                column_config={"경고": st.column_config.TextColumn("경고", disabled=True)}
+            )
             
-            def highlight_row(row):
-                # 3일치 평균 판매량 = t3day 컬럼값 / 3
-                avg_3d = pd.to_numeric(row.get(t3day, 0), errors='coerce') / 3
-                avail_val = pd.to_numeric(row.get('가용재고', 0), errors='coerce')
-                
-                # 가용재고가 3일치 판매량보다 적으면 행 전체 분홍색
-                if avail_val <= avg_3d:
-                    return ['background-color: #ffcccc'] * len(row)
-                else:
-                    return [''] * len(row)
-
-            # 수정된 edited 데이터를 사용하여 스타일 적용
-            st.dataframe(edited.style.apply(highlight_row, axis=1), use_container_width=True)
-            
-            # [3] 버튼 로직
+            # 3. 저장 및 다운로드 버튼
             col1, col2 = st.columns(2)
             if col1.button("💾 구글 시트 및 기록 저장"):
                 for idx, row in edited.iterrows():
@@ -165,8 +157,6 @@ if st.session_state.get('df_raw') is not None:
                 # 엑셀 다운로드
                 csv_data = edited.to_csv(index=False).encode('utf-8-sig')
                 st.download_button("📥 발주 리스트 엑셀 다운로드", csv_data, f"발주_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
-        else:
-            st.info("💡 발주가 필요한 상품이 없습니다.")
                 
     # 6단계: 과거 데이터 확인 (날짜별 조회)
     st.subheader("📜 6단계: 과거 데이터 확인")
@@ -197,6 +187,7 @@ if st.session_state.get('df_raw') is not None:
             st.info(f"📅 {target_date_str} 날짜에 저장된 기록이 없습니다.")
     else:
         st.info("아직 저장된 발주 기록이 없습니다.")
+
 
 
 
