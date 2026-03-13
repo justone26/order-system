@@ -35,19 +35,27 @@ if 'history' not in st.session_state: st.session_state.history = {}
 
 # --- [3. 데이터 업로드 및 초기화] ---
 st.subheader("📁 데이터 업로드")
-uploaded_file = st.file_uploader("엑셀/CSV 파일을 여기에 드래그하거나 선택하세요", type=['xlsx', 'xls', 'csv'])
 
+# 1. 초기화 버튼을 최상단에 배치
 if st.button("🔄 전체 데이터 초기화 및 재업로드"):
     st.session_state.clear()
+    # 세션이 완전히 비워졌으므로 즉시 앱을 새로고침하여 초기 상태로 돌아감
     st.rerun()
+
+# 2. 파일 업로드
+uploaded_file = st.file_uploader("엑셀/CSV 파일을 여기에 드래그하거나 선택하세요", type=['xlsx', 'xls', 'csv'])
 
 st.divider()
 
+# 3. 파일 처리 로직 (이전 파일과 이름이 같으면 건너뛰고, 다르면 로드)
 if uploaded_file is not None:
     if 'last_filename' not in st.session_state or st.session_state.last_filename != uploaded_file.name:
-        st.session_state.df_raw = pd.read_excel(uploaded_file).loc[:, ~pd.read_excel(uploaded_file).columns.duplicated()]
-        st.session_state.last_filename = uploaded_file.name
-        st.rerun()
+        try:
+            st.session_state.df_raw = pd.read_excel(uploaded_file).loc[:, ~pd.read_excel(uploaded_file).columns.duplicated()]
+            st.session_state.last_filename = uploaded_file.name
+            st.rerun()
+        except Exception as e:
+            st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
 
 # --- [4. 메인 로직] ---
 if st.session_state.get('df_raw') is not None:
@@ -124,5 +132,6 @@ if st.session_state.get('df_raw') is not None:
         st.download_button("📥 선택 기록 다운로드", csv_h, f"발주기록_{select_h.replace(':', '-')}.csv", "text/csv")
     else:
         st.info("💡 아직 저장된 기록이 없습니다.")
+
 
 
