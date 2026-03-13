@@ -76,40 +76,42 @@ if st.session_state.get('df_raw') is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-   # 4단계: 데이터 편집 (상세 정보 포함)
+  # 4단계: 데이터 편집
     st.subheader("📊 4단계: 데이터 편집")
+
+    target_cols = [sold_out, vendor, item, option, vendor_item, 
+                   "정상재고", "가용재고", "리오더 수량", "리오더입고수량", 
+                   "일판매량", "3일발주합계", "1주발주합계", "권장 발주량"]
+
+    if "3일발주합계" in st.session_state.df_raw.columns:
+        st.session_state.df_raw["일판매량"] = (pd.to_numeric(st.session_state.df_raw["3일발주합계"], errors='coerce').fillna(0) / 3).round(1)
+
+    for c in target_cols:
+        if c not in st.session_state.df_raw.columns: st.session_state.df_raw[c] = 0
+
+    f1, f2 = st.columns([3, 1])
+    search_query = f1.text_input("🔍 상품명 검색")
+    filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
+
+    df_working = st.session_state.df_raw.copy()
+    if filter_mode == "정상만":
+        df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
+    elif filter_mode == "품절만":
+        df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
+    if search_query:
+        df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
+
+    def update_reorder():
+        edited = st.session_state["main_editor"]
+        for row_idx, changes in edited['edited_rows'].items():
+            if '리오더입고수량' in changes:
+                received = float(changes['리오더입고수량'])
+                original_idx = df_working.index[row_idx]
+                st.session_state.df_raw.at[original_idx, '리오더 수량'] = max(0, float(st.session_state.df_raw.at[original_idx, '리오더 수량']) - received)
+                st.session_state.df_raw.at[original_idx, '리오더입고수량'] = 0
+
+    st.data_editor(df_working[target_cols], use_container_width=True, key="main_editor", on_change=update_reorder)
     
-    # 1. 계산 로직 재확인 (분석 후 데이터가 없을 경우 대비)
-    if '일판매량' not in st.session_state.df_raw.columns:
-        st.session_state.df_raw['일판매량'] = (pd.to_numeric(st.session_state.df_raw.get(t3day, 0), errors='coerce') / 3).round(1)
-
-    # 2. 품절 여부 필터 (사용자 요청 반영)
-    is_filter = st.checkbox("품절 상품 제외하고 보기")
-    df_to_edit = st.session_state.df_raw.copy()
-    if is_filter:
-        # 품절 여부 컬럼 값이 '품절'이 아닌 것만 필터링
-        df_to_edit = df_to_edit[df_to_edit[sold_out] != '품절']
-
-    # 3. 편집할 컬럼 순서 (사용자님이 말씀하신 항목들 모두 포함)
-    display_cols = [
-        sold_out, vendor, item, option, vendor_item, reg_date, 
-        stock, avail, "리오더 수량", "리오더입고수량", t3day, t1week, 
-        "일판매량", "권장 발주량"
-    ]
-    
-    # 일부 컬럼이 엑셀에 없을 경우를 대비해 존재하는 컬럼만 필터링
-    existing_cols = [c for c in display_cols if c in df_to_edit.columns]
-
-    # 4. 데이터 편집기 실행 및 결과 저장
-    edited_df = st.data_editor(
-        df_to_edit[existing_cols], 
-        use_container_width=True, 
-        key="main_editor"
-    )
-    
-    # 편집된 내용을 전체 데이터에 반영
-    st.session_state.df_raw.update(edited_df)
-
     # 5단계: 발주 리스트 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
     if '권장 발주량' in st.session_state.df_raw.columns:
@@ -146,4 +148,5 @@ if st.session_state.get('df_raw') is not None:
         st.dataframe(st.session_state.history[select_h], use_container_width=True)
         csv_h = st.session_state.history[select_h].to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 선택 기록 다운로드", csv_h, f"발주기록_{select_h.replace(':', '-')}.csv", "text/csv")
+
 
