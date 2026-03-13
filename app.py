@@ -79,11 +79,30 @@ if st.session_state.df_raw is not None:
     t1week = c2.selectbox("7일 발주합계", cols, index=get_auto_index(cols, ['7일', '1주']))
 
     # [2-3단계: 분석]
+    st.subheader("⏱️ 3단계: 리드타임 및 안전재고 설정")
+    col1, col2 = st.columns(2)
+    
+    if 'lead_time' not in st.session_state: st.session_state.lead_time = 3
+    if 'safety_stock' not in st.session_state: st.session_state.safety_stock = 0
+    
+    lt = col1.number_input("리드타임 (일)", min_value=1, value=st.session_state.lead_time)
+    ss = col2.number_input("안전재고 (수량)", min_value=0, value=st.session_state.safety_stock)
+    st.session_state.lead_time, st.session_state.safety_stock = lt, ss
+    
+    # [분석 실행]
     if st.button("🚀 분석 실행"):
         df = st.session_state.df_raw.copy()
-        df['일일 판매량'] = (pd.to_numeric(df[t3day], errors='coerce').fillna(0) / 3).round(0).astype(int)
-        df['권장 발주량'] = ((df['일일 판매량'] * 3) - (pd.to_numeric(df[avail], errors='coerce').fillna(0) + df['1차 리오더'] + df['2차 리오더'])).clip(lower=0).astype(int)
+        daily_avg = pd.to_numeric(df[t3day], errors='coerce').fillna(0) / 3
+        
+        # 권장 발주량 계산: (일일판매량 * 리드타임) + 안전재고 - 현재가용재고 - 리오더합계
+        needed = (daily_avg * lt) + ss
+        current_inv = pd.to_numeric(df[avail], errors='coerce').fillna(0) + \
+                      pd.to_numeric(df[re1], errors='coerce').fillna(0) + \
+                      pd.to_numeric(df[re2], errors='coerce').fillna(0)
+        
+        df['권장 발주량'] = (needed - current_inv).clip(lower=0).astype(int)
         st.session_state.df_raw = df
+        st.success("분석 완료!")
         st.rerun()
 
 # [4단계: 데이터 편집]
@@ -139,6 +158,7 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
