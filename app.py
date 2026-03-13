@@ -76,15 +76,17 @@ if st.session_state.get('df_raw') is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-  # 4단계: 데이터 편집
+# 4단계: 데이터 편집
     st.subheader("📊 4단계: 데이터 편집")
-
+    
     target_cols = [sold_out, vendor, item, option, vendor_item, 
                    "정상재고", "가용재고", "리오더 수량", "리오더입고수량", 
                    "일판매량", "3일발주합계", "1주발주합계", "권장 발주량"]
 
+    # [수정된 부분] 일판매량 계산 후 반올림하여 정수 처리
     if "3일발주합계" in st.session_state.df_raw.columns:
-        st.session_state.df_raw["일판매량"] = (pd.to_numeric(st.session_state.df_raw["3일발주합계"], errors='coerce').fillna(0) / 3).round(1)
+        # .round(0).astype(int)를 추가하여 소수점 없이 정수로 만듭니다.
+        st.session_state.df_raw["일판매량"] = (pd.to_numeric(st.session_state.df_raw["3일발주합계"], errors='coerce').fillna(0) / 3).round(0).astype(int)
 
     for c in target_cols:
         if c not in st.session_state.df_raw.columns: st.session_state.df_raw[c] = 0
@@ -103,6 +105,7 @@ if st.session_state.get('df_raw') is not None:
 
     def update_reorder():
         edited = st.session_state["main_editor"]
+        # 편집된 데이터 반영 로직
         for row_idx, changes in edited['edited_rows'].items():
             if '리오더입고수량' in changes:
                 received = float(changes['리오더입고수량'])
@@ -182,6 +185,7 @@ if st.session_state.get('df_raw') is not None:
             st.info(f"📅 {target_date_str} 날짜에 저장된 기록이 없습니다.")
     else:
         st.info("아직 저장된 발주 기록이 없습니다.")
+
 
 
 
