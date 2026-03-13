@@ -68,22 +68,56 @@ if st.session_state.get('df_raw') is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-    # 4단계: 데이터 편집 (요청하신 컬럼 구성)
+# 4단계: 데이터 편집
     st.subheader("📊 4단계: 데이터 편집")
-    target_cols = [sold_out, vendor, item, option, vendor_item, "정상재고", "가용재고", "3일발주합계", "일판매량", "리오더 수량", "리오더입고수량", "1주발주합계", "권장 발주량"]
+
+    # 1. 컬럼 매핑
+    target_cols = [sold_out, vendor, item, option, vendor_item, 
+                   "정상재고", "가용재고", "3일발주합계", "일판매량", 
+                   "리오더 수량", "리오더입고수량", "1주발주합계", "권장 발주량"]
+
+    # 데이터프레임에 컬럼이 없으면 생성
     for c in target_cols:
-        if c not in st.session_state.df_raw.columns: st.session_state.df_raw[c] = 0
+        if c not in st.session_state.df_raw.columns:
+            st.session_state.df_raw[c] = 0
+
+    # 2. 검색 및 필터 UI
+    f1, f2 = st.columns([3, 1])
+    search_query = f1.text_input("🔍 상품명 검색")
+    filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=0)
+
+    # 3. 데이터 필터링 로직
+    df_working = st.session_state.df_raw.copy()
     
+    # 품절 필터 적용 (sold_out 컬럼 사용)
+    if filter_mode == "정상만":
+        df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
+    elif filter_mode == "품절만":
+        df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
+    
+    # 상품명 검색 적용
+    if search_query:
+        df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
+
+    # 4. 실시간 리오더 차감 함수
     def update_reorder():
         edited = st.session_state["main_editor"]
         for row_idx, changes in edited['edited_rows'].items():
             if '리오더입고수량' in changes:
                 received = float(changes['리오더입고수량'])
-                st.session_state.df_raw.at[row_idx, '리오더 수량'] = max(0, float(st.session_state.df_raw.at[row_idx, '리오더 수량']) - received)
-                st.session_state.df_raw.at[row_idx, '리오더입고수량'] = 0
+                # 필터링된 인덱스 문제를 방지하기 위해 원본 df_raw의 인덱스를 직접 참조
+                original_idx = df_working.index[row_idx]
+                current_reorder = float(st.session_state.df_raw.at[original_idx, '리오더 수량'])
+                st.session_state.df_raw.at[original_idx, '리오더 수량'] = max(0, current_reorder - received)
+                st.session_state.df_raw.at[original_idx, '리오더입고수량'] = 0
 
-    st.data_editor(st.session_state.df_raw[target_cols], use_container_width=True, key="main_editor", on_change=update_reorder)
-
+    # 5. 데이터 편집기 실행
+    st.data_editor(
+        df_working[target_cols], 
+        use_container_width=True, 
+        key="main_editor", 
+        on_change=update_reorder
+    )
                 
     # 5단계: 발주 리스트 요약 (에러 방어 버전)
     st.subheader("📋 5단계: 발주 리스트 요약")
@@ -110,6 +144,7 @@ if st.session_state.get('df_raw') is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
