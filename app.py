@@ -68,49 +68,52 @@ if st.session_state.get('df_raw') is not None:
         st.session_state.df_raw = df
         st.rerun()
 
-# 4단계: 데이터 편집 및 리오더 관리
+# 4단계: 데이터 편집
     st.subheader("📊 4단계: 데이터 편집")
 
-    # 1. 컬럼 매핑 및 초기화
-    target_cols = [sold_out, vendor, item, option, vendor_item, 
-                   "정상재고", "가용재고", "3일발주합계", "일판매량", 
-                   "리오더 수량", "리오더입고수량", "1주발주합계", "권장 발주량"]
+    # 1. 컬럼 순서 및 구성 (요청하신 순서)
+    # sold_out, vendor, item, option, vendor_item 등은 1단계에서 지정한 변수명
+    target_cols = [
+        sold_out, vendor, item, option, vendor_item, 
+        "정상재고", "가용재고", "리오더 수량", "리오더입고수량", 
+        "일판매량", "3일발주합계", "1주발주합계", "권장 발주량"
+    ]
+
+    # 2. 일판매량 자동 계산 및 데이터 초기화
+    # 3일 발주합계를 3으로 나누어 일판매량 계산
+    if "3일발주합계" in st.session_state.df_raw.columns:
+        st.session_state.df_raw["일판매량"] = (pd.to_numeric(st.session_state.df_raw["3일발주합계"], errors='coerce').fillna(0) / 3).round(1)
 
     for c in target_cols:
         if c not in st.session_state.df_raw.columns:
             st.session_state.df_raw[c] = 0
 
-    # 2. 검색 및 필터 UI (기본값 '정상만' = index 1)
+    # 3. 검색 및 필터 UI
     f1, f2 = st.columns([3, 1])
     search_query = f1.text_input("🔍 상품명 검색")
     filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
 
-    # 3. 데이터 필터링 로직
+    # 4. 필터링 로직
     df_working = st.session_state.df_raw.copy()
-    
     if filter_mode == "정상만":
         df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
     elif filter_mode == "품절만":
         df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
-    
     if search_query:
         df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
 
-    # 4. 실시간 리오더 차감 함수
+    # 5. 실시간 리오더 차감 함수
     def update_reorder():
         edited = st.session_state["main_editor"]
         for row_idx, changes in edited['edited_rows'].items():
             if '리오더입고수량' in changes:
                 received = float(changes['리오더입고수량'])
-                # 필터링된 데이터에서 원본 행 인덱스 매칭
                 original_idx = df_working.index[row_idx]
-                
-                # 리오더 잔량 차감 및 입고수량 초기화
                 current_reorder = float(st.session_state.df_raw.at[original_idx, '리오더 수량'])
                 st.session_state.df_raw.at[original_idx, '리오더 수량'] = max(0, current_reorder - received)
                 st.session_state.df_raw.at[original_idx, '리오더입고수량'] = 0
 
-    # 5. 데이터 편집기 실행
+    # 6. 데이터 편집기 실행
     st.data_editor(
         df_working[target_cols], 
         use_container_width=True, 
@@ -169,6 +172,7 @@ if st.session_state.get('df_raw') is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
