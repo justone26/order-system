@@ -105,22 +105,16 @@ if st.session_state.df_raw is not None:
 # 4단계: 데이터 편집
     st.subheader("📊 4단계: 데이터 편집")
 
-    # 1. 실제 데이터프레임의 컬럼명을 확인하고 매핑 (중요!)
-    # 코드 내의 이름(target_cols)과 엑셀의 헤더명이 다를 경우를 대비해 예외 처리
-    all_cols = st.session_state.df_raw.columns.tolist()
-    
-    # 요청하신 컬럼 구성 (실제 엑셀 파일 헤더와 정확히 일치해야 함)
-    # 혹시 엑셀 헤더가 '리오더 수량'이 아니라 '리오더수량'이면 아래 이름을 엑셀에 맞게 수정하세요.
-    req_cols = [sold_out, vendor, item, option, vendor_item, 
-                "정상재고", "가용재고", "3일발주합계", "일판매량", 
-                "리오더 수량", "리오더입고수량", "1주발주합계", "권장발주량"]
+    # 1. 컬럼 매핑 (엑셀 헤더와 똑같은지 확인! 다르면 엑셀 이름을 여기에 쓰세요)
+    # 엑셀에 없는 컬럼은 0으로 자동 생성되도록 아래에서 처리합니다.
+    target_cols = [sold_out, vendor, item, option, vendor_item, 
+                   "정상재고", "가용재고", "3일발주합계", "일판매량", 
+                   "리오더 수량", "리오더입고수량", "1주발주합계", "권장 발주량"]
 
-    # 존재하는 컬럼만 골라내기 (NameError 방지)
-    display_cols = [c for c in req_cols if c in all_cols]
-    
-    # 만약 데이터가 없거나 컬럼이 안 보이면 디버깅용 메시지 출력
-    if not display_cols:
-        st.error(f"⚠️ 컬럼을 찾을 수 없습니다. 엑셀의 헤더 이름을 확인하세요. 현재 헤더: {all_cols}")
+    # 데이터프레임에 해당 컬럼이 없으면 0으로 채워넣기 (초기화 방지)
+    for col in target_cols:
+        if col not in st.session_state.df_raw.columns:
+            st.session_state.df_raw[col] = 0
 
     # 2. 검색 및 필터 UI
     f1, f2 = st.columns([3, 1])
@@ -136,11 +130,23 @@ if st.session_state.df_raw is not None:
     if search_query:
         df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
 
-    # 4. 데이터 편집기 (여기서 오류가 발생하면 1번 단계의 이름이 잘못된 것)
-    edited_df = st.data_editor(
-        df_working[display_cols], 
+    # 4. 실시간 리오더 차감 함수 (입고수량 -> 리오더수량 차감)
+    def update_reorder_logic():
+        edited = st.session_state["main_editor"]
+        for row_idx, changes in edited['edited_rows'].items():
+            if '리오더입고수량' in changes:
+                received = float(changes['리오더입고수량'])
+                if received > 0:
+                    current_reorder = float(st.session_state.df_raw.at[row_idx, '리오더 수량'])
+                    st.session_state.df_raw.at[row_idx, '리오더 수량'] = max(0, current_reorder - received)
+                    st.session_state.df_raw.at[row_idx, '리오더입고수량'] = 0 # 처리 후 0으로 초기화
+
+    # 5. 데이터 편집기 실행
+    st.data_editor(
+        df_working[target_cols], 
         use_container_width=True, 
-        key="main_editor"
+        key="main_editor",
+        on_change=update_reorder_logic
     )
 
     # 5. 수정 내용 업데이트
@@ -172,6 +178,7 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
