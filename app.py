@@ -57,20 +57,20 @@ if st.session_state.get('df_raw') is not None:
     st.subheader("⚙️ 1단계: 매핑 설정")
     c1, c2 = st.columns(2)
     
-    # c1 컬럼에 주요 정보 배치
+    # c1: 상품 정보 관련
     sold_out = c1.selectbox("품절 여부", cols, index=get_auto_index(cols, ['품절']))
     vendor = c1.selectbox("공급처", cols, index=get_auto_index(cols, ['공급처']))
     item = c1.selectbox("상품명", cols, index=get_auto_index(cols, ['상품명']))
     option = c1.selectbox("옵션", cols, index=get_auto_index(cols, ['옵션']))
     vendor_item = c1.selectbox("공급처 상품명", cols, index=get_auto_index(cols, ['공급처상품명']))
     
-    # c2 컬럼에 수치 및 날짜 정보 배치
-    reg_date = c2.selectbox("등록일", cols, index=get_auto_index(cols, ['등록일'])) # 여기에 등록일 추가!
+    # c2: 수치 및 날짜 데이터 관련 (등록일과 7일 발주합계 포함)
+    reg_date = c2.selectbox("등록일", cols, index=get_auto_index(cols, ['등록일'])) 
     stock = c2.selectbox("정상재고", cols, index=get_auto_index(cols, ['정상재고']))
     avail = c2.selectbox("가용재고", cols, index=get_auto_index(cols, ['가용재고']))
     t3day = c2.selectbox("3일 발주합계", cols, index=get_auto_index(cols, ['3일']))
-    t1week = c2.selectbox("7일 발주합계", cols, index=get_auto_index(cols, ['7일']))
-
+    t1week = c2.selectbox("7일 발주합계", cols, index=get_auto_index(cols, ['7일'])) # 7일 발주합계 매핑
+    
     # 2~3단계: 분석
     st.subheader("⚙️ 2~3단계: 분석 설정")
     lead_time = st.number_input("리드타임 (일)", value=10)
@@ -124,4 +124,5 @@ if st.session_state.get('df_raw') is not None:
         st.download_button("📥 선택 기록 다운로드", csv_h, f"발주기록_{select_h.replace(':', '-')}.csv", "text/csv")
     else:
         st.info("💡 아직 저장된 기록이 없습니다.")
+
 
