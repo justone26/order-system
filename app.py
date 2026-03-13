@@ -102,42 +102,57 @@ if st.session_state.df_raw is not None:
         st.success("분석 완료!")
         st.rerun()
 
-# 4단계: 데이터 편집 및 리오더 실시간 관리
+# 4단계: 데이터 편집
     st.subheader("📊 4단계: 데이터 편집")
 
-    # 1. 컬럼 구성
-    target_cols = [sold_out, vendor, item, option, vendor_item, stock, avail, t3day, t1week, "리오더", "리오더 입고", "권장 발주량"]
-    display_cols = [c for c in target_cols if c in st.session_state.df_raw.columns]
+    # 1. 표시할 컬럼 정의 (사용자 요청 순서)
+    # 엑셀의 실제 컬럼명과 일치해야 합니다.
+    target_cols = [
+        sold_out, vendor, item, option, vendor_item, 
+        "정상재고", "가용재고", "3일발주합계", "일판매량", 
+        "리오더 수량", "리오더입고수량", "1주발주합계", "권장발주량"
+    ]
 
-    # 2. 검색 및 필터 UI
+    # 2. 데이터가 없을 경우 0으로 생성 (에러 방지)
+    for col in target_cols:
+        if col not in st.session_state.df_raw.columns:
+            st.session_state.df_raw[col] = 0
+
+    # 3. 검색 및 필터 UI
     f1, f2 = st.columns([3, 1])
     search_query = f1.text_input("🔍 상품명 검색")
     filter_mode = f2.selectbox("품절 필터", ["정상만", "품절만", "전체보기"], index=0)
 
-    # 3. 데이터 필터링
+    # 4. 필터링 로직
     df_working = st.session_state.df_raw.copy()
     if filter_mode == "정상만":
-        df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절|판매중단', na=False)]
+        df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
     elif filter_mode == "품절만":
-        df_working = df_working[df_working[sold_out].astype(str).str.contains('품절|판매중단', na=False)]
+        df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
     if search_query:
-        df_working = df_working[df_working[item].astype(str).contains(search_query, case=False, na=False)]
+        df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
 
-    # 4. 실시간 차감 로직 (콜백 함수)
-    def update_reorder():
+    # 5. 리오더 입고 시 자동 차감 함수
+    def update_reorder_logic():
         edited = st.session_state["main_editor"]
-        # 'edited'에 변경된 값들이 들어옴 (added_rows, edited_rows, deleted_rows)
-        # 여기서는 간단하게 전체 df_raw를 업데이트하고 리오더 로직을 실행
+        # 수정된 행들을 순회하며 차감 처리
         for row_idx, changes in edited['edited_rows'].items():
-            if '리오더 입고' in changes:
-                # 입고 수량
-                received = changes['리오더 입고']
-                # 현재 리오더 수량 가져오기
-                current_reorder = st.session_state.df_raw.at[row_idx, '리오더']
-                # 차감 적용 (0보다 작아지지 않게)
-                st.session_state.df_raw.at[row_idx, '리오더'] = max(0, current_reorder - received)
-                # 입고 수량은 다시 0으로 초기화하거나, 그대로 둘지 선택 (여기선 0으로 초기화하여 중복 차감 방지)
-                st.session_state.df_raw.at[row_idx, '리오더 입고'] = 0
+            if '리오더입고수량' in changes:
+                received = float(changes['리오더입고수량'])
+                if received > 0:
+                    current_reorder = float(st.session_state.df_raw.at[row_idx, '리오더 수량'])
+                    # 리오더 수량에서 입고량 차감
+                    st.session_state.df_raw.at[row_idx, '리오더 수량'] = max(0, current_reorder - received)
+                    # 입고수량은 다음 입력을 위해 다시 0으로 초기화
+                    st.session_state.df_raw.at[row_idx, '리오더입고수량'] = 0
+
+    # 6. 데이터 편집기 실행 (실시간 업데이트 적용)
+    st.data_editor(
+        df_working[target_cols], 
+        use_container_width=True, 
+        key="main_editor",
+        on_change=update_reorder_logic
+    )
 
     # 5. 데이터 편집기 실행
     st.data_editor(
@@ -172,6 +187,7 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
