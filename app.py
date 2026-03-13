@@ -79,11 +79,13 @@ if st.session_state.df_raw is not None:
     t3day = c2.selectbox("3일 발주합계", cols, index=get_auto_index(cols, ['3일']))
     t1week = c2.selectbox("7일 발주합계", cols, index=get_auto_index(cols, ['7일', '1주']))
 
-    # 2~3단계: 분석 설정 및 실행
+# 2~3단계: 분석 설정
     st.subheader("⚙️ 2~3단계: 분석 설정")
     col1, col2 = st.columns(2)
-    lead_time = col1.number_input("리드타임 (일)", value=0)
-    safety_stock = col2.number_input("안전재고 (일 수)", value=3)
+    
+    # 초기값: 리드타임 10, 안전재고 7
+    lead_time = col1.number_input("리드타임 (일)", min_value=0, value=10)
+    safety_stock = col2.number_input("안전재고 (일 수)", min_value=0, value=7)
 
     if st.button("🚀 분석 실행"):
         df = st.session_state.df_raw.copy()
@@ -153,6 +155,7 @@ if st.session_state.df_raw is not None:
     if st.session_state.history:
         select_h = st.selectbox("⏰ 시간 선택", list(st.session_state.history.keys()))
         st.dataframe(st.session_state.history[select_h])
+
 
 
 
