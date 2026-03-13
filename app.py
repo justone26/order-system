@@ -4,7 +4,7 @@ from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- [1. 함수 정의 섹션] ---
+# --- [1. 함수 정의] ---
 def get_sheet():
     creds_dict = dict(st.secrets["gcp_service_account"])
     scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive"]
@@ -21,18 +21,19 @@ def save_reorder_data(df):
     except Exception as e:
         st.error(f"구글 시트 저장 실패: {e}")
 
-def get_auto_index(cols, keywords):
-    for key in keywords:
-        for i, c in enumerate(cols):
-            if key in str(c): return i
+# 정확한 매핑을 위한 개선된 함수
+def find_idx(cols, target_keywords):
+    for keyword in target_keywords:
+        for i, col in enumerate(cols):
+            if keyword in str(col): return i
     return 0
 
-# --- [2. 세션 초기화] ---
+# --- [2. 앱 설정 및 초기화] ---
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 st.title("📦 재고 관리 및 발주 시스템")
 if 'history' not in st.session_state: st.session_state.history = {}
 
-# --- [3. 데이터 업로드 및 초기화] ---
+# --- [3. 업로드 및 초기화] ---
 st.subheader("📁 데이터 업로드")
 if st.button("🔄 전체 데이터 초기화 및 재업로드"):
     st.session_state.clear()
@@ -51,20 +52,20 @@ if uploaded_file is not None:
 if st.session_state.get('df_raw') is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 1단계: 매핑 설정 (등록일, 7일 발주합계 포함)
+    # 1단계: 매핑 설정
     st.subheader("⚙️ 1단계: 매핑 설정")
     c1, c2 = st.columns(2)
-    sold_out = c1.selectbox("품절 여부", cols, index=get_auto_index(cols, ['품절']))
-    vendor = c1.selectbox("공급처", cols, index=get_auto_index(cols, ['공급처']))
-    item = c1.selectbox("상품명", cols, index=get_auto_index(cols, ['상품명']))
-    option = c1.selectbox("옵션", cols, index=get_auto_index(cols, ['옵션']))
-    vendor_item = c1.selectbox("공급처 상품명", cols, index=get_auto_index(cols, ['공급처상품명']))
+    sold_out = c1.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
+    vendor = c1.selectbox("공급처", cols, index=find_idx(cols, ['공급처']))
+    item = c1.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
+    option = c1.selectbox("옵션", cols, index=find_idx(cols, ['옵션']))
+    vendor_item = c1.selectbox("공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
     
-    reg_date = c2.selectbox("등록일", cols, index=get_auto_index(cols, ['등록일']))
-    stock = c2.selectbox("정상재고", cols, index=get_auto_index(cols, ['정상재고']))
-    avail = c2.selectbox("가용재고", cols, index=get_auto_index(cols, ['가용재고']))
-    t3day = c2.selectbox("3일 발주합계", cols, index=get_auto_index(cols, ['3일']))
-    t1week = c2.selectbox("7일 발주합계", cols, index=get_auto_index(cols, ['7일']))
+    reg_date = c2.selectbox("등록일", cols, index=find_idx(cols, ['등록일']))
+    stock = c2.selectbox("정상재고", cols, index=find_idx(cols, ['정상재고']))
+    avail = c2.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
+    t3day = c2.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
+    t1week = c2.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
     # 2~3단계: 분석 설정
     st.subheader("⚙️ 2~3단계: 분석 설정")
@@ -72,15 +73,14 @@ if st.session_state.get('df_raw') is not None:
     safety_stock = st.number_input("안전재고 (일 수)", value=7)
     if st.button("🚀 분석 실행"):
         df = st.session_state.df_raw.copy()
-        # 7일 발주합계 기준 일일 평균 계산
         daily_avg = pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7
         df['권장 발주량'] = ((daily_avg * lead_time) + (daily_avg * safety_stock) - pd.to_numeric(df[avail], errors='coerce').fillna(0)).clip(lower=0).astype(int)
         st.session_state.df_raw = df
         st.rerun()
 
-    # 4단계: 데이터 편집 (상세 확인용)
+    # 4단계: 데이터 편집 (편집 즉시 저장 반영)
     st.subheader("📊 4단계: 데이터 편집")
-    st.data_editor(st.session_state.df_raw, use_container_width=True, key="main_editor")
+    st.session_state.df_raw = st.data_editor(st.session_state.df_raw, use_container_width=True, key="main_editor")
 
     # 5단계: 발주 리스트 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
@@ -88,11 +88,9 @@ if st.session_state.get('df_raw') is not None:
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
         if not to_order.empty:
             to_order['추가 리오더'] = 0
-            # 사용자가 요청한 간결한 구성: 리오더 수량, 추가 리오더, 권장 발주량 위주
             display_cols = [vendor, item, option, "리오더 수량", "추가 리오더", "권장 발주량"]
             edited = st.data_editor(to_order[display_cols], use_container_width=True, key="order_editor")
             
-            # 긴급 발주 확인
             def highlight_urgent(row):
                 avail_val = float(row.get('가용재고', 0))
                 sale_3d = float(row.get(t3day, 0)) / 3
