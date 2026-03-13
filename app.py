@@ -30,8 +30,19 @@ st.title("📦 재고 관리 및 발주 시스템")
 
 if 'history' not in st.session_state: st.session_state.history = {}
 
-# [파일 업로드]
-uploaded_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'])
+# --- [파일 업로드 및 초기화 섹션] ---
+st.subheader("📁 데이터 업로드")
+col1, col2 = st.columns([4, 1])
+
+with col1:
+    uploaded_file = st.file_uploader("엑셀/CSV 파일 선택", type=['xlsx', 'xls', 'csv'])
+
+with col2:
+    # 초기화 버튼: 클릭하면 session_state를 비우고 앱을 새로고침
+    if st.button("🔄 초기화"):
+        st.session_state.clear()
+        st.rerun()
+
 if uploaded_file is not None:
     if 'last_filename' not in st.session_state or st.session_state.last_filename != uploaded_file.name:
         st.session_state.df_raw = pd.read_excel(uploaded_file).loc[:, ~pd.read_excel(uploaded_file).columns.duplicated()]
@@ -167,5 +178,6 @@ if st.session_state.get('df_raw') is not None:
         )
     else:
         st.info("💡 아직 저장된 기록이 없습니다.")
+
 
 
