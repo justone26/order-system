@@ -27,58 +27,47 @@ def get_auto_index(cols, keywords):
             if key in str(c): return i
     return 0
 
-# --- [2. 앱 설정 및 초기화] ---
+# --- [2. 앱 설정 및 세션 초기화] ---
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 st.title("📦 재고 관리 및 발주 시스템")
 
 if 'history' not in st.session_state: st.session_state.history = {}
 
-# --- [3. 데이터 업로드 및 초기화] ---
+# --- [3. 데이터 업로드 및 초기화 섹션] ---
 st.subheader("📁 데이터 업로드")
 
-# 1. 초기화 버튼을 최상단에 배치
 if st.button("🔄 전체 데이터 초기화 및 재업로드"):
     st.session_state.clear()
-    # 세션이 완전히 비워졌으므로 즉시 앱을 새로고침하여 초기 상태로 돌아감
     st.rerun()
 
-# 2. 파일 업로드
 uploaded_file = st.file_uploader("엑셀/CSV 파일을 여기에 드래그하거나 선택하세요", type=['xlsx', 'xls', 'csv'])
-
 st.divider()
 
-# 3. 파일 처리 로직 (이전 파일과 이름이 같으면 건너뛰고, 다르면 로드)
 if uploaded_file is not None:
     if 'last_filename' not in st.session_state or st.session_state.last_filename != uploaded_file.name:
-        try:
-            st.session_state.df_raw = pd.read_excel(uploaded_file).loc[:, ~pd.read_excel(uploaded_file).columns.duplicated()]
-            st.session_state.last_filename = uploaded_file.name
-            st.rerun()
-        except Exception as e:
-            st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
+        st.session_state.df_raw = pd.read_excel(uploaded_file).loc[:, ~pd.read_excel(uploaded_file).columns.duplicated()]
+        st.session_state.last_filename = uploaded_file.name
+        st.rerun()
 
 # --- [4. 메인 로직] ---
 if st.session_state.get('df_raw') is not None:
     cols = st.session_state.df_raw.columns.tolist()
 
-# 1단계: 매핑 설정
+    # 1단계: 매핑 설정
     st.subheader("⚙️ 1단계: 매핑 설정")
     c1, c2 = st.columns(2)
-    
-    # c1: 상품 정보 관련
     sold_out = c1.selectbox("품절 여부", cols, index=get_auto_index(cols, ['품절']))
     vendor = c1.selectbox("공급처", cols, index=get_auto_index(cols, ['공급처']))
     item = c1.selectbox("상품명", cols, index=get_auto_index(cols, ['상품명']))
     option = c1.selectbox("옵션", cols, index=get_auto_index(cols, ['옵션']))
     vendor_item = c1.selectbox("공급처 상품명", cols, index=get_auto_index(cols, ['공급처상품명']))
     
-    # c2: 수치 및 날짜 데이터 관련 (등록일과 7일 발주합계 포함)
-    reg_date = c2.selectbox("등록일", cols, index=get_auto_index(cols, ['등록일'])) 
+    reg_date = c2.selectbox("등록일", cols, index=get_auto_index(cols, ['등록일']))
     stock = c2.selectbox("정상재고", cols, index=get_auto_index(cols, ['정상재고']))
     avail = c2.selectbox("가용재고", cols, index=get_auto_index(cols, ['가용재고']))
     t3day = c2.selectbox("3일 발주합계", cols, index=get_auto_index(cols, ['3일']))
-    t1week = c2.selectbox("7일 발주합계", cols, index=get_auto_index(cols, ['7일'])) # 7일 발주합계 매핑
-    
+    t1week = c2.selectbox("7일 발주합계", cols, index=get_auto_index(cols, ['7일']))
+
     # 2~3단계: 분석
     st.subheader("⚙️ 2~3단계: 분석 설정")
     lead_time = st.number_input("리드타임 (일)", value=10)
@@ -86,14 +75,13 @@ if st.session_state.get('df_raw') is not None:
     if st.button("🚀 분석 실행"):
         df = st.session_state.df_raw.copy()
         daily_avg = pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7
-        df['권장 발주량'] = ((daily_avg * lead_time) + (daily_avg * safety_stock) - pd.to_numeric(df[avail], errors='coerce')).clip(lower=0).astype(int)
+        df['권장 발주량'] = ((daily_avg * lead_time) + (daily_avg * safety_stock) - pd.to_numeric(df[avail], errors='coerce').fillna(0)).clip(lower=0).astype(int)
         st.session_state.df_raw = df
         st.rerun()
 
     # 4단계: 데이터 편집
     st.subheader("📊 4단계: 데이터 편집")
-    df_working = st.session_state.df_raw.copy()
-    st.data_editor(df_working, use_container_width=True, key="main_editor")
+    st.data_editor(st.session_state.df_raw, use_container_width=True, key="main_editor")
 
     # 5단계: 발주 리스트 요약
     st.subheader("📋 5단계: 발주 리스트 요약")
@@ -132,6 +120,3 @@ if st.session_state.get('df_raw') is not None:
         st.download_button("📥 선택 기록 다운로드", csv_h, f"발주기록_{select_h.replace(':', '-')}.csv", "text/csv")
     else:
         st.info("💡 아직 저장된 기록이 없습니다.")
-
-
-
