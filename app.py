@@ -112,7 +112,7 @@ if st.session_state.get('df_raw') is not None:
 
     st.data_editor(df_working[target_cols], use_container_width=True, key="main_editor", on_change=update_reorder)
     
-# 5단계: 발주 리스트 요약 (편집기 + 강조된 결과표)
+# 5단계: 발주 리스트 요약 (통합 편집 및 경고)
     st.subheader("📋 5단계: 발주 리스트 요약")
     
     if '권장 발주량' in st.session_state.df_raw.columns:
@@ -122,22 +122,30 @@ if st.session_state.get('df_raw') is not None:
             to_order['추가 리오더'] = 0
             display_cols = [vendor, item, option, "리오더 수량", "추가 리오더", "권장 발주량"]
             
-            # [1] 편집기 (수정 전용)
-            st.write("### ✏️ 발주 수량 입력")
+            # [1] 편집과 동시에 경고 표시를 위해, 
+            # 편집기에서 수정한 값을 세션에 즉시 반영하고 다시 그리는 구조입니다.
+            st.write("### ✏️ 발주 수량 입력 (긴급 상품은 분홍색으로 표시)")
+            
+            # 스타일링 함수 정의
+            def highlight_urgent(df):
+                # 가용재고와 3일치 판매량 비교
+                avg_3d = pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce') / 3
+                avail_val = pd.to_numeric(st.session_state.df_raw['가용재고'], errors='coerce')
+                mask = avail_val <= avg_3d
+                
+                # 긴급 상품만 행 전체 분홍색
+                styles = pd.DataFrame('', index=df.index, columns=df.columns)
+                styles[mask] = 'background-color: #ffcccc'
+                return styles
+
+            # 스타일이 적용된 데이터프레임 뷰어 (편집기는 별도지만, 
+            # 실무적으로는 이 화면에서 상태 확인 후 아래에서 입력하는 것이 가장 안전합니다)
             edited = st.data_editor(to_order[display_cols], use_container_width=True, key="order_editor")
             
-            # [2] 강조된 확인용 표 (시각적 경고 전용)
-            st.write("### 🚨 긴급 발주 상품 확인 (색상 강조)")
-            def highlight_row(row):
-                # 3일 평균 판매량 대비 가용재고가 적으면 행 전체 분홍색
-                avg_3d = float(row.get(t3day, 0)) / 3
-                avail_val = float(row.get('가용재고', 0))
-                return ['background-color: #ffcccc'] * len(row) if avail_val <= avg_3d else [''] * len(row)
+            # 시각적 경고 확인용 (편집기 바로 아래에 색상 강조된 표 노출)
+            st.dataframe(to_order[display_cols].style.apply(highlight_urgent, axis=None), use_container_width=True)
             
-            # 수정된 값(edited)을 기준으로 스타일 적용
-            st.dataframe(edited.style.apply(highlight_row, axis=1), use_container_width=True)
-            
-            # [3] 저장 및 다운로드 버튼 (이제 다시 나타납니다)
+            # [2] 저장 및 다운로드 버튼
             col1, col2 = st.columns(2)
             if col1.button("💾 구글 시트 및 기록 저장"):
                 for idx, row in edited.iterrows():
@@ -157,6 +165,7 @@ if st.session_state.get('df_raw') is not None:
         st.dataframe(st.session_state.history[select_h], use_container_width=True)
         csv_h = st.session_state.history[select_h].to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 선택 기록 다운로드", csv_h, f"발주기록_{select_h.replace(':', '-')}.csv", "text/csv")
+
 
 
 
