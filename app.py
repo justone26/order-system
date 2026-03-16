@@ -182,61 +182,51 @@ with tab1:
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
-    st.subheader("📋 사입 확정 리스트")
+    st.subheader("🌙 동대문 사입 및 미납 관리")
     
-    # 1. 파일 업로드
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
     
     if dong_file:
         df_dong = pd.read_excel(dong_file)
         
-        # [컬럼 설정] 스크린샷에 있는 컬럼들
-        target_cols = ['공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율']
+        # 1. '선택'이라는 체크박스 컬럼을 맨 앞에 추가
+        if '선택' not in df_dong.columns:
+            df_dong.insert(0, '선택', False)
         
-        # 데이터 처리
-        for col in target_cols:
-            if col not in df_dong.columns: df_dong[col] = 0
-            
-        # [데이터 편집기] 
-        # 사용자가 여기서 체크박스를 누르거나 발주수량을 직접 수정할 수 있습니다.
-        st.write("💡 표의 '발주수량' 칸을 클릭하여 직접 수정하거나, 특정 상품을 편집하세요.")
-        
+        # 2. 데이터 편집기 설정 (체크박스 활성화)
+        st.write("### 📝 사입 확정 리스트")
         edited_dong = st.data_editor(
-            df_dong[target_cols], 
+            df_dong, 
             use_container_width=True, 
             key="dong_editor_final",
             column_config={
-                "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1),
-                "가중율": st.column_config.NumberColumn("가중율", min_value=0, format="%.2f")
+                "선택": st.column_config.CheckboxColumn("선택", default=False),
+                "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1)
             }
         )
         
-        # [수량 일괄 조정 옵션]
+        # 3. 선택된 상품 수량 더하기 로직
         st.divider()
         st.write("### ➕ 선택 상품 수량 일괄 조정")
-        col_adj1, col_adj2, col_adj3 = st.columns(3)
+        col_adj1, col_adj2 = st.columns([1, 2])
         
         add_amount = col_adj1.number_input("추가할 수량", value=1, min_value=1)
-        if col_adj2.button("🚀 선택한 상품 수량 더하기"):
-            # 여기서 선택된(편집된) 데이터를 기준으로 로직 처리
-            st.session_state.df_dong_edited = edited_dong.copy()
-            # 실제로 수량을 더하는 로직을 여기에 구현하면 됩니다.
-            st.success(f"{add_amount}만큼 일괄 추가되었습니다!")
-
-        # [입고 및 저장 버튼 영역]
-        st.divider()
-        col1, col2 = st.columns([1, 4])
         
-        with col1:
-            if st.button("📦 입고 완료 처리"):
-                # 실제 재고 반영 로직 연동 가능
-                st.success("✅ 입고 확인 완료!")
+        if col_adj2.button("🚀 선택한 상품 수량 더하기"):
+            # '선택'이 True인 행만 골라내기
+            selected_rows = edited_dong[edited_dong['선택'] == True]
+            
+            if not selected_rows.empty:
+                # 선택된 상품들의 인덱스를 가져와서 원본 데이터의 발주수량 업데이트
+                for idx in selected_rows.index:
+                    current_val = edited_dong.at[idx, '발주수량']
+                    edited_dong.at[idx, '발주수량'] = current_val + add_amount
                 
-        with col2:
-            csv_dong = edited_dong.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(
-                label="📤 사입장 다운로드 (CSV)", 
-                data=csv_dong, 
-                file_name=f"사입장_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
+                # 결과 반영 (st.rerun()을 통해 화면을 즉시 갱신)
+                st.session_state.df_dong_updated = edited_dong
+                st.rerun() 
+            else:
+                st.warning("먼저 수량을 조정할 상품을 체크해주세요!")
+
+        # 4. 입고 및 다운로드
+        # ... (이하 버튼 코드 동일)
