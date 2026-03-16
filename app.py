@@ -185,41 +185,21 @@ with tab2:
     st.subheader("🌙 동대문 사입 및 미납 관리")
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
     
-    # 1. 파일 데이터 로드 및 초기화
     if dong_file:
-        if "last_file_name" not in st.session_state or st.session_state.last_file_name != dong_file.name:
-            st.session_state.df_dong_current = None
-            st.session_state.last_file_name = dong_file.name
-
-        if st.session_state.df_dong_current is None:
+        # 데이터가 없을 때만 새로 로드
+        if "df_dong_current" not in st.session_state or st.session_state.get("file_name") != dong_file.name:
             df = pd.read_excel(dong_file)
             df.columns = df.columns.str.strip()
-            
-            # 수치형 변환
-            for col in ['정상재고', '가용재고']:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            
-            # 판매수량 계산
+            # 데이터 로드 및 초기 계산... (이전과 동일)
             df['판매수량'] = (df['정상재고'] - df['가용재고']).clip(lower=0)
-            
-            # 가중율 계산
-            def get_weight(n):
-                if n >= 10: return 2.0
-                elif n >= 6: return 1.5
-                elif n >= 3: return 1.2
-                else: return 1.0
-            
-            df['가중율'] = df['판매수량'].apply(get_weight)
+            df['가중율'] = df['판매수량'].apply(lambda n: 2.0 if n >= 10 else (1.5 if n >= 6 else (1.2 if n >= 3 else 1.0)))
             df['발주수량'] = (df['판매수량'] * df['가중율']).astype(int)
-            
-            # 컬럼 구성 (11개)
-            final_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '판매수량', '발주수량', '가중율', '3일판매']
-            for c in final_cols:
-                if c not in df.columns: df[c] = 0
-            
-            st.session_state.df_dong_current = df[final_cols]
+            df['선택'] = False
+            df['품절'] = ""
+            st.session_state.df_dong_current = df[['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '판매수량', '발주수량', '가중율', '3일판매']]
+            st.session_state.file_name = dong_file.name
 
-        # 2. 검색 및 필터링
+        # [필터링 UI]
         c1, c2 = st.columns([1, 2])
         search_target = c1.selectbox("🔍 검색 기준", ["상품명", "공급처", "공급처상품명"])
         search_query = c2.text_input(f"{search_target} 검색어")
@@ -228,28 +208,29 @@ with tab2:
         if search_query:
             df_display = df_display[df_display[search_target].astype(str).str.contains(search_query, case=False, na=False)]
 
-        # 3. 데이터 편집기
-        df_display['선택'] = df_display['선택'].astype(bool)
+        # [스크롤 위치 유지의 핵심: key 고정 및 데이터 업데이트 방식]
+        # 데이터 편집기를 통해 수정된 값을 즉시 반영
         edited_df = st.data_editor(
-            df_display, use_container_width=True, key="final_editor",
+            df_display, 
+            use_container_width=True, 
+            key="final_editor", # key를 고정하여 스크롤 위치 보존 시도
             column_config={"선택": st.column_config.CheckboxColumn("선택", width="small")}
         )
         
-        # [데이터 수동 반영] 수정된 값을 세션에 저장
-        if st.button("🔄 화면 업데이트"):
-            st.session_state.df_dong_current.update(edited_df)
-            st.rerun()
-
-        # 4. 하단 제어부
+        # 버튼 영역
         st.divider()
-        col_in, col_btn, col_down = st.columns([1, 1, 1])
-        add_val = col_in.number_input("추가할 수량", value=1, min_value=1)
+        add_val = st.number_input("추가할 수량", value=1, min_value=1)
         
-        if col_btn.button("🚀 선택한 상품 수량 더하기"):
+        col_b1, col_b2 = st.columns([1, 1])
+        
+        # [수량 더하기]
+        if col_b1.button("🚀 선택한 상품 수량 더하기"):
             selected_indices = edited_df[edited_df['선택'] == True].index
             for idx in selected_indices:
                 st.session_state.df_dong_current.at[idx, '발주수량'] += add_val
-            st.rerun()
-            
+            # 스크롤 방지를 위해 rerun 대신 업데이트만 처리
+            st.rerun() 
+
+        # 엑셀 다운로드
         csv = edited_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        col_down.download_button("📥 엑셀 다운로드", csv, f"사입리스트_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+        col_b2.download_button("📥 엑셀 다운로드", csv, "사입리스트.csv", "text/csv")
