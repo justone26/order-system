@@ -188,54 +188,66 @@ with tab2:
     if dong_file:
         df_dong = pd.read_excel(dong_file)
         
-        # 1. '선택' 체크박스 컬럼 추가
-        if '선택' not in df_dong.columns:
-            df_dong.insert(0, '선택', False)
-            
-        # 2. 보여줄 컬럼만 정의 (요청하신 6개 + '선택' 체크박스)
-        target_cols = ['선택', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율']
-        
-        # 엑셀에 해당 컬럼이 없을 경우를 대비해 0으로 생성
-        for col in target_cols:
-            if col not in df_dong.columns:
-                df_dong[col] = 0
-                
-        # 3. 공급처(업체명) 필터링 (전체 또는 특정 업체 선택)
-        vendor_list = ["전체"] + sorted(df_dong['공급처'].astype(str).unique().tolist())
-        selected_vendor = st.selectbox("🔍 업체 선택 필터", vendor_list)
-        
-        # 필터 적용
-        if selected_vendor != "전체":
-            df_display = df_dong[df_dong['공급처'] == selected_vendor].copy()
+        # 1. 자동 계산 로직 (가중율 적용)
+        df_dong['발주수량'] = (df_dong['정상재고'] - df_dong['가용재고']).clip(lower=0)
+        # '일판매량' 컬럼이 있는 경우 가중율 1.5 적용
+        if '일판매량' in df_dong.columns:
+            df_dong['가중율'] = df_dong['일판매량'].apply(lambda x: 1.5 if x >= 5 else 1.0)
+            df_dong['발주수량'] = (df_dong['발주수량'] * df_dong['가중율']).astype(int)
         else:
-            df_display = df_dong.copy()
-            
-        # 4. 데이터 편집기 (지정된 컬럼만 표시)
-        st.write(f"### 📝 {selected_vendor} 사입 리스트")
+            df_dong['가중율'] = 1.0
+
+        # 2. 필수 컬럼 세팅
+        if '선택' not in df_dong.columns: df_dong.insert(0, '선택', False)
+        
+        # 요청하신 순서대로 컬럼 재배치
+        target_cols = ['선택', '품절항목', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율']
+        for col in target_cols:
+            if col not in df_dong.columns: df_dong[col] = 0
+        df_dong = df_dong[target_cols]
+
+        # 3. 검색 및 필터 영역
+        st.divider()
+        col_f1, col_f2 = st.columns(2)
+        
+        # [검색창] 상품명 검색
+        search_query = col_f1.text_input("🔍 상품명으로 검색하기")
+        
+        # [필터] 업체 필터
+        vendor_list = ["전체"] + sorted(df_dong['공급처'].astype(str).unique().tolist())
+        selected_vendor = col_f2.selectbox("🔍 업체 선택 필터", vendor_list)
+        
+        # 검색 및 필터 적용
+        df_display = df_dong.copy()
+        if search_query:
+            df_display = df_display[df_display['상품명'].astype(str).str.contains(search_query, case=False, na=False)]
+        if selected_vendor != "전체":
+            df_display = df_display[df_display['공급처'] == selected_vendor]
+
+        # 4. 데이터 편집기
+        st.write(f"### 📝 {selected_vendor} 사입 리스트 (검색 결과: {len(df_display)}건)")
         edited_dong = st.data_editor(
-            df_display[target_cols], 
+            df_display, 
             use_container_width=True, 
             key="dong_editor_final",
             column_config={
                 "선택": st.column_config.CheckboxColumn("선택", default=False),
-                "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1),
-                "가중율": st.column_config.NumberColumn("가중율", format="%.2f")
+                "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1)
             }
         )
         
-        # 5. 수량 일괄 조정
+        # 5. 수량 일괄 조정 및 버튼 (하단)
         st.divider()
-        col1, col2 = st.columns([1, 2])
-        add_amount = col1.number_input("추가할 발주 수량", value=1, min_value=1)
-        
-        if col2.button("🚀 선택한 상품 수량 더하기"):
-            # 체크된 상품들만 수정
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
+        add_amount = col_btn1.number_input("추가 발주 수량", value=1, min_value=1)
+        if col_btn2.button("🚀 선택 상품 수량 더하기"):
             selected_indices = edited_dong[edited_dong['선택'] == True].index
             if not selected_indices.empty:
-                # 여기서 체크된 행의 '발주수량'에 add_amount를 더함
                 for idx in selected_indices:
                     edited_dong.at[idx, '발주수량'] += add_amount
-                st.session_state.df_dong_updated = edited_dong # 세션에 저장
-                st.rerun() # 화면 새로고침
+                st.rerun()
             else:
-                st.warning("선택된 상품이 없습니다.")
+                st.warning("먼저 수량을 조정할 상품을 체크해주세요!")
+        
+        csv_dong = edited_dong.to_csv(index=False).encode('utf-8-sig')
+        col_btn3.download_button("📤 사입장 다운로드 (CSV)", csv_dong, f"사입장_{datetime.now().strftime('%Y%m%d')}.csv")
