@@ -187,7 +187,6 @@ with tab2:
     
     # 1. 파일 데이터 로드 및 초기화
     if dong_file:
-        # 파일이 변경되면 이전 세션 데이터를 삭제하고 새로 고침
         if "last_file_name" not in st.session_state or st.session_state.last_file_name != dong_file.name:
             st.session_state.df_dong_current = None
             st.session_state.last_file_name = dong_file.name
@@ -200,10 +199,10 @@ with tab2:
             for col in ['정상재고', '가용재고']:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-            # 판매수량 계산 (정상재고 - 가용재고)
+            # [1] 판매수량 계산
             df['판매수량'] = (df['정상재고'] - df['가용재고']).clip(lower=0)
             
-            # 가중율 계산 (판매수량 기준)
+            # [2] 가중율 계산 (판매수량 기준)
             def get_weight(n):
                 if n >= 10: return 2.0
                 elif n >= 6: return 1.5
@@ -212,22 +211,21 @@ with tab2:
             
             df['가중율'] = df['판매수량'].apply(get_weight)
             
-            # 발주수량 계산
+            # [3] 발주수량 계산
             df['발주수량'] = (df['판매수량'] * df['가중율']).astype(int)
             
-            # 필요한 컬럼 보정
+            # 필수 컬럼 정리 및 생성
             if '선택' not in df.columns: df['선택'] = False
             if '품절' not in df.columns: df['품절'] = ""
-            if '주문수량' not in df.columns: df['주문수량'] = 0
             
-            # 요청하신 컬럼 순서 고정
-            final_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '주문수량', '판매수량', '발주수량', '가중율', '3일판매']
+            # 요청하신 11개 컬럼 순서 (주문수량 제외)
+            final_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '판매수량', '발주수량', '가중율', '3일판매']
             for c in final_cols:
                 if c not in df.columns: df[c] = 0
             
             st.session_state.df_dong_current = df[final_cols]
 
-        # 2. 검색 필터링
+        # 2. 검색 및 필터링
         c1, c2 = st.columns([1, 2])
         search_target = c1.selectbox("🔍 검색 기준", ["상품명", "공급처", "공급처상품명"])
         search_query = c2.text_input(f"{search_target} 검색어")
@@ -243,10 +241,7 @@ with tab2:
             column_config={"선택": st.column_config.CheckboxColumn("선택", width="small")}
         )
         
-        # 세션 업데이트
-        if st.button("🔄 화면 업데이트"):
-            st.session_state.df_dong_current.update(edited_df)
-            st.rerun()
+        
 
         # 4. 하단 버튼 및 다운로드
         st.divider()
@@ -260,4 +255,4 @@ with tab2:
             st.rerun()
             
         csv = edited_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        col_down.download_button("📥 엑셀 다운로드", csv, "사입리스트.csv", "text/csv")
+        col_down.download_button("📥 엑셀 다운로드", csv, f"사입리스트_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
