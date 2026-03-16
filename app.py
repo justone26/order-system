@@ -188,66 +188,68 @@ with tab2:
     if dong_file:
         df_dong = pd.read_excel(dong_file)
         
-        # 1. 자동 계산 로직 (가중율 적용)
+        # [1] 데이터 자동 계산 로직
+        # 발주수량 = 정상재고 - 가용재고
         df_dong['발주수량'] = (df_dong['정상재고'] - df_dong['가용재고']).clip(lower=0)
-        # '일판매량' 컬럼이 있는 경우 가중율 1.5 적용
-        if '일판매량' in df_dong.columns:
-            df_dong['가중율'] = df_dong['일판매량'].apply(lambda x: 1.5 if x >= 5 else 1.0)
+        
+        # 3일판매 기준 가중율 (5개 이상 시 1.5배)
+        if '3일판매' in df_dong.columns:
+            df_dong['가중율'] = df_dong['3일판매'].apply(lambda x: 1.5 if x >= 5 else 1.0)
             df_dong['발주수량'] = (df_dong['발주수량'] * df_dong['가중율']).astype(int)
         else:
             df_dong['가중율'] = 1.0
 
-        # 2. 필수 컬럼 세팅
+        # [2] 필수 컬럼 배치 및 순서 정의
         if '선택' not in df_dong.columns: df_dong.insert(0, '선택', False)
+        target_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '3일판매', '가용재고', '발주수량', '가중율']
         
-        # 요청하신 순서대로 컬럼 재배치
-        target_cols = ['선택', '품절항목', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율']
         for col in target_cols:
             if col not in df_dong.columns: df_dong[col] = 0
-        df_dong = df_dong[target_cols]
+        df_display_base = df_dong[target_cols]
 
-        # 3. 검색 및 필터 영역
+        # [3] 검색 및 필터 영역
         st.divider()
         col_f1, col_f2 = st.columns(2)
-        
-        # [검색창] 상품명 검색
-        search_query = col_f1.text_input("🔍 상품명으로 검색하기")
-        
-        # [필터] 업체 필터
+        search_query = col_f1.text_input("🔍 상품명 검색")
         vendor_list = ["전체"] + sorted(df_dong['공급처'].astype(str).unique().tolist())
         selected_vendor = col_f2.selectbox("🔍 업체 선택 필터", vendor_list)
         
-        # 검색 및 필터 적용
-        df_display = df_dong.copy()
+        df_display = df_display_base.copy()
         if search_query:
             df_display = df_display[df_display['상품명'].astype(str).str.contains(search_query, case=False, na=False)]
         if selected_vendor != "전체":
             df_display = df_display[df_display['공급처'] == selected_vendor]
 
-        # 4. 데이터 편집기
+        # [4] 데이터 편집기 (셀 너비 최적화)
         st.write(f"### 📝 {selected_vendor} 사입 리스트 (검색 결과: {len(df_display)}건)")
+        
         edited_dong = st.data_editor(
             df_display, 
             use_container_width=True, 
             key="dong_editor_final",
             column_config={
-                "선택": st.column_config.CheckboxColumn("선택", default=False),
-                "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1)
+                "선택": st.column_config.CheckboxColumn("선택", default=False, width="small"),
+                "품절": st.column_config.TextColumn("품절", width="small"),
+                "상품명": st.column_config.TextColumn("상품명", width="medium"),
+                "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1),
+                "가중율": st.column_config.NumberColumn("가중율", format="%.1f")
             }
         )
         
-        # 5. 수량 일괄 조정 및 버튼 (하단)
+        # [5] 하단 버튼 영역
         st.divider()
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
-        add_amount = col_btn1.number_input("추가 발주 수량", value=1, min_value=1)
-        if col_btn2.button("🚀 선택 상품 수량 더하기"):
-            selected_indices = edited_dong[edited_dong['선택'] == True].index
-            if not selected_indices.empty:
-                for idx in selected_indices:
+        add_amount = col_btn1.number_input("추가할 수량", value=1, min_value=1)
+        
+        if col_btn2.button("🚀 선택한 상품 수량 더하기"):
+            selected_idx = edited_dong[edited_dong['선택'] == True].index
+            if not selected_idx.empty:
+                for idx in selected_idx:
                     edited_dong.at[idx, '발주수량'] += add_amount
+                st.session_state.df_dong_updated = edited_dong
                 st.rerun()
             else:
-                st.warning("먼저 수량을 조정할 상품을 체크해주세요!")
+                st.warning("먼저 체크박스를 선택해주세요!")
         
         csv_dong = edited_dong.to_csv(index=False).encode('utf-8-sig')
         col_btn3.download_button("📤 사입장 다운로드 (CSV)", csv_dong, f"사입장_{datetime.now().strftime('%Y%m%d')}.csv")
