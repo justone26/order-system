@@ -185,16 +185,25 @@ with tab2:
     st.subheader("🌙 동대문 사입 및 미납 관리")
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
     
+    # 1. 파일 데이터 로드 및 초기화
     if dong_file:
-        # 데이터가 없을 때만 새로 계산 (수량 수정 시에도 유지되도록)
-        if "df_dong_current" not in st.session_state:
+        # 파일이 변경되면 이전 세션 데이터를 삭제하고 새로 고침
+        if "last_file_name" not in st.session_state or st.session_state.last_file_name != dong_file.name:
+            st.session_state.df_dong_current = None
+            st.session_state.last_file_name = dong_file.name
+
+        if st.session_state.df_dong_current is None:
             df = pd.read_excel(dong_file)
             df.columns = df.columns.str.strip()
             
-            # [1] 판매수량 계산 (정상재고 - 가용재고)
+            # 수치형 데이터 변환
+            for col in ['정상재고', '가용재고']:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+            # 판매수량 계산 (정상재고 - 가용재고)
             df['판매수량'] = (df['정상재고'] - df['가용재고']).clip(lower=0)
             
-            # [2] 가중율 계산 (판매수량 기준)
+            # 가중율 계산 (판매수량 기준)
             def get_weight(n):
                 if n >= 10: return 2.0
                 elif n >= 6: return 1.5
@@ -203,18 +212,22 @@ with tab2:
             
             df['가중율'] = df['판매수량'].apply(get_weight)
             
-            # [3] 발주수량 계산 (판매수량 * 가중율)
+            # 발주수량 계산
             df['발주수량'] = (df['판매수량'] * df['가중율']).astype(int)
             
-            # 필수 컬럼 정리 및 삽입
+            # 필요한 컬럼 보정
             if '선택' not in df.columns: df['선택'] = False
             if '품절' not in df.columns: df['품절'] = ""
+            if '주문수량' not in df.columns: df['주문수량'] = 0
             
-            # 지정된 순서대로 컬럼 재배치
-            target_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '판매수량', '가중율', '발주수량', '3일판매']
-            st.session_state.df_dong_current = df[target_cols]
+            # 요청하신 컬럼 순서 고정
+            final_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '주문수량', '판매수량', '발주수량', '가중율', '3일판매']
+            for c in final_cols:
+                if c not in df.columns: df[c] = 0
+            
+            st.session_state.df_dong_current = df[final_cols]
 
-        # [UI] 검색 필터
+        # 2. 검색 필터링
         c1, c2 = st.columns([1, 2])
         search_target = c1.selectbox("🔍 검색 기준", ["상품명", "공급처", "공급처상품명"])
         search_query = c2.text_input(f"{search_target} 검색어")
@@ -223,26 +236,28 @@ with tab2:
         if search_query:
             df_display = df_display[df_display[search_target].astype(str).str.contains(search_query, case=False, na=False)]
 
-        # [UI] 데이터 편집기
+        # 3. 데이터 편집기
         df_display['선택'] = df_display['선택'].astype(bool)
         edited_df = st.data_editor(
             df_display, use_container_width=True, key="final_editor",
             column_config={"선택": st.column_config.CheckboxColumn("선택", width="small")}
         )
+        
+        # 세션 업데이트
+        if st.button("🔄 화면 업데이트"):
+            st.session_state.df_dong_current.update(edited_df)
+            st.rerun()
 
-        # [UI] 하단 제어부 (복구 완료)
+        # 4. 하단 버튼 및 다운로드
         st.divider()
         col_in, col_btn, col_down = st.columns([1, 1, 1])
-        
         add_val = col_in.number_input("추가할 수량", value=1, min_value=1)
         
         if col_btn.button("🚀 선택한 상품 수량 더하기"):
             selected_indices = edited_df[edited_df['선택'] == True].index
             for idx in selected_indices:
-                # 발주수량 업데이트
                 st.session_state.df_dong_current.at[idx, '발주수량'] += add_val
             st.rerun()
             
-        # 엑셀 다운로드
         csv = edited_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         col_down.download_button("📥 엑셀 다운로드", csv, "사입리스트.csv", "text/csv")
