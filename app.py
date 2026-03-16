@@ -185,67 +185,64 @@ with tab2:
     st.subheader("🌙 동대문 사입 및 미납 관리")
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
     
-    # 1. 파일 업로드 처리 및 데이터 초기 세팅
     if dong_file:
-        # 이미 세션에 데이터가 없거나 새로 파일을 올렸을 때만 로드
+        # 1. 초기 데이터 로드
         if "df_dong_current" not in st.session_state:
             df = pd.read_excel(dong_file)
-            df.columns = df.columns.str.strip() # 컬럼명 공백 제거
+            df.columns = df.columns.str.strip()
             
-            # 필수 10개 컬럼 정의 (요청하신 순서)
+            # 필수 10개 컬럼 생성
             target_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율', '3일판매']
-            
-            # 데이터프레임에 부족한 컬럼 강제 생성 및 기본값 채우기
             for col in target_cols:
                 if col not in df.columns:
                     df[col] = 0 if col not in ['선택', '품절', '상품명', '공급처', '공급처상품명'] else ""
             
-            # 수치형 데이터 보정 (글자가 섞여있어도 0으로 처리)
+            # 타입 강제 변환
+            df['선택'] = False  # 무조건 False(체크박스)로 시작
             for col in ['정상재고', '가용재고', '3일판매']:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-            # 발주수량 및 가중율 자동 계산
+            # 계산 로직
             df['발주수량'] = (df['정상재고'] - df['가용재고']).clip(lower=0)
             df['가중율'] = df['3일판매'].apply(lambda x: 1.5 if x >= 5 else 1.0)
             df['발주수량'] = (df['발주수량'] * df['가중율']).astype(int)
             
-            # 최종 데이터 저장
             st.session_state.df_dong_current = df[target_cols]
 
-        # 2. 검색 및 필터 UI
+        # 2. 검색 필터
         st.divider()
         c1, c2 = st.columns([1, 2])
         search_target = c1.selectbox("🔍 검색 기준 선택", ["상품명", "공급처", "공급처상품명"])
-        search_query = c2.text_input(f"{search_target} 검색어 입력")
+        search_query = c2.text_input(f"{search_target} 검색어")
         
-        # 필터링 적용
         df_display = st.session_state.df_dong_current.copy()
         if search_query:
             df_display = df_display[df_display[search_target].astype(str).str.contains(search_query, case=False, na=False)]
 
-        # 3. 데이터 편집기 출력
-        st.write(f"### 📝 리스트 (검색 결과: {len(df_display)}건)")
-        if len(df_display) > 0:
-            edited_df = st.data_editor(
-                df_display, 
-                use_container_width=True, 
-                key="dong_editor_final",
-                column_config={
-                    "선택": st.column_config.CheckboxColumn("선택", width="small"),
-                    "품절": st.column_config.TextColumn("품절", width="small"),
-                    "상품명": st.column_config.TextColumn("상품명", width="medium"),
-                    "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1),
-                    "가중율": st.column_config.NumberColumn("가중율", format="%.1f")
-                }
-            )
-            
-            # 4. 수량 더하기 버튼
-            st.divider()
-            add_amount = st.number_input("추가할 수량", value=1, min_value=1)
-            if st.button("🚀 선택한 상품 수량 더하기"):
-                selected_indices = edited_df[edited_df['선택'] == True].index
-                for idx in selected_indices:
-                    st.session_state.df_dong_current.at[idx, '발주수량'] += add_amount
-                st.rerun() # 변경사항 즉시 적용
-        else:
-            st.warning("⚠️ 검색 결과가 없습니다. 검색어를 확인해주세요.")
+        # 3. 데이터 편집기 (여기서 ㅁ 체크박스가 나타납니다)
+        st.write(f"### 📝 리스트 (총 {len(df_display)}건)")
+        
+        edited_df = st.data_editor(
+            df_display, 
+            use_container_width=True, 
+            key="dong_editor_final",
+            column_config={
+                "선택": st.column_config.CheckboxColumn("선택", default=False, width="small"),
+                "품절": st.column_config.TextColumn("품절", width="small"),
+                "상품명": st.column_config.TextColumn("상품명", width="medium"),
+                "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1),
+                "가중율": st.column_config.NumberColumn("가중율", format="%.1f")
+            }
+        )
+        
+        # 4. 버튼 로직
+        st.divider()
+        add_amount = st.number_input("추가할 수량", value=1, min_value=1)
+        if st.button("🚀 선택한 상품 수량 더하기"):
+            # 체크된 행만 추출
+            selected_indices = edited_df[edited_df['선택'] == True].index
+            for idx in selected_indices:
+                st.session_state.df_dong_current.at[idx, '발주수량'] += add_amount
+            st.rerun()
+
+        #
