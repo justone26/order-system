@@ -182,24 +182,26 @@ with tab1:
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
-    st.subheader("🌙 동대문 사입 관리")
+    st.subheader("🌙 동대문 사입 및 미납 관리")
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
     
     if dong_file:
         df_dong = pd.read_excel(dong_file)
         
-        # 1. 컬럼 정리 및 '선택' 체크박스 추가
+        # 1. '선택' 체크박스 컬럼 추가
         if '선택' not in df_dong.columns:
             df_dong.insert(0, '선택', False)
-        
-        # 스크린샷에 필요한 주요 컬럼만 명시 (필요 없는 컬럼은 여기서 제외됩니다)
-        target_cols = ['선택', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율']
-        # 엑셀에 없는 컬럼이 있으면 0으로 생성
-        for col in target_cols:
-            if col not in df_dong.columns: df_dong[col] = 0
             
-        # 2. [필터 영역] 공급처(업체명) 필터링
-        vendor_list = ["전체"] + sorted(df_dong['공급처'].unique().tolist())
+        # 2. 보여줄 컬럼만 정의 (요청하신 6개 + '선택' 체크박스)
+        target_cols = ['선택', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율']
+        
+        # 엑셀에 해당 컬럼이 없을 경우를 대비해 0으로 생성
+        for col in target_cols:
+            if col not in df_dong.columns:
+                df_dong[col] = 0
+                
+        # 3. 공급처(업체명) 필터링 (전체 또는 특정 업체 선택)
+        vendor_list = ["전체"] + sorted(df_dong['공급처'].astype(str).unique().tolist())
         selected_vendor = st.selectbox("🔍 업체 선택 필터", vendor_list)
         
         # 필터 적용
@@ -208,7 +210,7 @@ with tab2:
         else:
             df_display = df_dong.copy()
             
-        # 3. [데이터 편집기] 틀 고정 및 가시성 향상
+        # 4. 데이터 편집기 (지정된 컬럼만 표시)
         st.write(f"### 📝 {selected_vendor} 사입 리스트")
         edited_dong = st.data_editor(
             df_display[target_cols], 
@@ -216,13 +218,24 @@ with tab2:
             key="dong_editor_final",
             column_config={
                 "선택": st.column_config.CheckboxColumn("선택", default=False),
-                "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1)
+                "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1),
+                "가중율": st.column_config.NumberColumn("가중율", format="%.2f")
             }
         )
         
-        # 4. [수량 일괄 조정]
+        # 5. 수량 일괄 조정
         st.divider()
-        col_adj1, col_adj2 = st.columns([1, 2])
-        add_amount = col_adj1.number_input("추가할 수량", value=1, min_value=1)
-        if col_adj2.button("🚀 선택한 상품 수량 더하기"):
-            # ... (이전 수량 더하기 로직 동일)
+        col1, col2 = st.columns([1, 2])
+        add_amount = col1.number_input("추가할 발주 수량", value=1, min_value=1)
+        
+        if col2.button("🚀 선택한 상품 수량 더하기"):
+            # 체크된 상품들만 수정
+            selected_indices = edited_dong[edited_dong['선택'] == True].index
+            if not selected_indices.empty:
+                # 여기서 체크된 행의 '발주수량'에 add_amount를 더함
+                for idx in selected_indices:
+                    edited_dong.at[idx, '발주수량'] += add_amount
+                st.session_state.df_dong_updated = edited_dong # 세션에 저장
+                st.rerun() # 화면 새로고침
+            else:
+                st.warning("선택된 상품이 없습니다.")
