@@ -185,52 +185,57 @@ with tab2:
     st.subheader("🌙 동대문 사입 및 미납 관리")
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
     
+    # 1. 파일 업로드 및 데이터 처리
     if dong_file:
-        # 데이터가 없을 때만 새로 로드
-        if "df_dong_current" not in st.session_state or st.session_state.get("file_name") != dong_file.name:
+        if "last_file_name" not in st.session_state or st.session_state.last_file_name != dong_file.name:
             df = pd.read_excel(dong_file)
             df.columns = df.columns.str.strip()
-            # 데이터 로드 및 초기 계산... (이전과 동일)
+            
+            # [에러 방지] 엑셀에 컬럼이 없어도 강제로 생성
+            required_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '판매수량', '발주수량', '가중율', '3일판매']
+            for col in required_cols:
+                if col not in df.columns:
+                    df[col] = 0 if col not in ['선택', '품절', '상품명', '공급처', '공급처상품명'] else ""
+            
+            # 수치형 변환
+            for col in ['정상재고', '가용재고', '3일판매']:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+            # 계산 로직
             df['판매수량'] = (df['정상재고'] - df['가용재고']).clip(lower=0)
             df['가중율'] = df['판매수량'].apply(lambda n: 2.0 if n >= 10 else (1.5 if n >= 6 else (1.2 if n >= 3 else 1.0)))
             df['발주수량'] = (df['판매수량'] * df['가중율']).astype(int)
-            df['선택'] = False
-            df['품절'] = ""
-            st.session_state.df_dong_current = df[['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '판매수량', '발주수량', '가중율', '3일판매']]
-            st.session_state.file_name = dong_file.name
+            
+            st.session_state.df_dong_current = df[required_cols]
+            st.session_state.last_file_name = dong_file.name
 
-        # [필터링 UI]
-        c1, c2 = st.columns([1, 2])
-        search_target = c1.selectbox("🔍 검색 기준", ["상품명", "공급처", "공급처상품명"])
-        search_query = c2.text_input(f"{search_target} 검색어")
-        
+        # 2. 화면 출력
         df_display = st.session_state.df_dong_current.copy()
+        
+        # [검색창]
+        c1, c2 = st.columns([1, 2])
+        search_query = c2.text_input("상품명 검색")
         if search_query:
-            df_display = df_display[df_display[search_target].astype(str).str.contains(search_query, case=False, na=False)]
+            df_display = df_display[df_display['상품명'].astype(str).str.contains(search_query, case=False, na=False)]
 
-        # [스크롤 위치 유지의 핵심: key 고정 및 데이터 업데이트 방식]
-        # 데이터 편집기를 통해 수정된 값을 즉시 반영
+        # [데이터 편집기]
+        df_display['선택'] = df_display['선택'].astype(bool)
         edited_df = st.data_editor(
-            df_display, 
-            use_container_width=True, 
-            key="final_editor", # key를 고정하여 스크롤 위치 보존 시도
+            df_display, use_container_width=True, key="final_editor",
             column_config={"선택": st.column_config.CheckboxColumn("선택", width="small")}
         )
-        
-        # 버튼 영역
-        st.divider()
-        add_val = st.number_input("추가할 수량", value=1, min_value=1)
-        
-        col_b1, col_b2 = st.columns([1, 1])
-        
-        # [수량 더하기]
-        if col_b1.button("🚀 선택한 상품 수량 더하기"):
-            selected_indices = edited_df[edited_df['선택'] == True].index
-            for idx in selected_indices:
-                st.session_state.df_dong_current.at[idx, '발주수량'] += add_val
-            # 스크롤 방지를 위해 rerun 대신 업데이트만 처리
-            st.rerun() 
 
-        # 엑셀 다운로드
+        # [버튼]
+        st.divider()
+        col1, col2, col3 = st.columns(3)
+        add_val = col1.number_input("추가 수량", value=1, min_value=1)
+        
+        if col2.button("🚀 선택한 상품 수량 더하기"):
+            # 선택된 인덱스만 발주수량 업데이트
+            selected = edited_df[edited_df['선택'] == True].index
+            for idx in selected:
+                st.session_state.df_dong_current.at[idx, '발주수량'] += add_val
+            st.rerun()
+            
         csv = edited_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        col_b2.download_button("📥 엑셀 다운로드", csv, "사입리스트.csv", "text/csv")
+        col3.download_button("📥 엑셀 다운로드", csv, "사입리스트.csv", "text/csv")
