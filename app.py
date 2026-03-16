@@ -181,7 +181,6 @@ with tab1:
                 else: st.info("📅 해당 날짜 기록 없음")
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
-# --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
     st.subheader("🌙 동대문 사입 및 미납 관리")
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
@@ -189,7 +188,7 @@ with tab2:
     if dong_file:
         df_dong = pd.read_excel(dong_file)
         
-        # 1. 자동 계산 로직
+        # [1] 자동 계산 로직
         df_dong['발주수량'] = (df_dong['정상재고'] - df_dong['가용재고']).clip(lower=0)
         if '3일판매' in df_dong.columns:
             df_dong['가중율'] = df_dong['3일판매'].apply(lambda x: 1.5 if x >= 5 else 1.0)
@@ -197,14 +196,14 @@ with tab2:
         else:
             df_dong['가중율'] = 1.0
 
-        # 2. 필수 컬럼 및 순서 배치
+        # [2] 컬럼 순서 설정
         if '선택' not in df_dong.columns: df_dong.insert(0, '선택', False)
         target_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율', '3일판매']
         for col in target_cols:
             if col not in df_dong.columns: df_dong[col] = 0
         df_display_base = df_dong[target_cols]
 
-        # 3. [업그레이드된 검색/필터 영역]
+        # [3] 검색 및 필터링
         st.divider()
         c1, c2 = st.columns([1, 2])
         search_target = c1.selectbox("🔍 검색 기준 선택", ["상품명", "공급처", "공급처상품명"])
@@ -214,31 +213,42 @@ with tab2:
         if search_query:
             df_display = df_display[df_display[search_target].astype(str).str.contains(search_query, case=False, na=False)]
 
-        # 4. 데이터 편집기
-        st.write(f"### 📝 {search_target} 기준 필터링 리스트 (검색 결과: {len(df_display)}건)")
-        edited_dong = st.data_editor(
-            df_display, 
-            use_container_width=True, 
-            key="dong_editor_final",
-            column_config={
-                "선택": st.column_config.CheckboxColumn("선택", default=False, width="small"),
-                "품절": st.column_config.TextColumn("품절", width="small"),
-                "상품명": st.column_config.TextColumn("상품명", width="medium"),
-                "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1),
-                "가중율": st.column_config.NumberColumn("가중율", format="%.1f")
-            }
-        )
+        # [4] 데이터 편집기 및 검색 결과 안내 (여기에 넣었습니다!)
+        st.write(f"### 📝 {search_target} 기준 필터링 리스트")
         
-        # 5. 하단 버튼
-        st.divider()
-        col_b1, col_b2, col_b3 = st.columns([1, 1, 2])
-        add_amount = col_b1.number_input("추가할 수량", value=1, min_value=1)
-        if col_b2.button("🚀 선택한 상품 수량 더하기"):
-            selected_idx = edited_dong[edited_dong['선택'] == True].index
-            for idx in selected_idx:
-                edited_dong.at[idx, '발주수량'] += add_amount
-            st.session_state.df_dong_updated = edited_dong
-            st.rerun()
+        if len(df_display) > 0:
+            st.write(f"검색 결과: {len(df_display)}건")
+            edited_dong = st.data_editor(
+                df_display, 
+                use_container_width=True, 
+                key="dong_editor_final",
+                column_config={
+                    "선택": st.column_config.CheckboxColumn("선택", default=False, width="small"),
+                    "품절": st.column_config.TextColumn("품절", width="small"),
+                    "상품명": st.column_config.TextColumn("상품명", width="medium"),
+                    "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1),
+                    "가중율": st.column_config.NumberColumn("가중율", format="%.1f")
+                }
+            )
             
-        csv_dong = edited_dong.to_csv(index=False).encode('utf-8-sig')
-        col_b3.download_button("📤 사입장 다운로드 (CSV)", csv_dong, f"사입장_{datetime.now().strftime('%Y%m%d')}.csv")
+            # [5] 하단 버튼 및 저장 기능 (결과가 있을 때만 활성화)
+            st.divider()
+            col_b1, col_b2, col_b3 = st.columns([1, 1, 2])
+            add_amount = col_b1.number_input("추가할 수량", value=1, min_value=1)
+            if col_b2.button("🚀 선택한 상품 수량 더하기"):
+                selected_idx = edited_dong[edited_dong['선택'] == True].index
+                if not selected_idx.empty:
+                    for idx in selected_idx:
+                        edited_dong.at[idx, '발주수량'] += add_amount
+                    st.session_state.df_dong_updated = edited_dong
+                    st.rerun()
+                else:
+                    st.warning("먼저 체크박스를 선택해주세요!")
+            
+            csv_dong = edited_dong.to_csv(index=False).encode('utf-8-sig')
+            col_b3.download_button("📤 사입장 다운로드 (CSV)", csv_dong, f"사입장_{datetime.now().strftime('%Y%m%d')}.csv")
+
+        else:
+            # 검색 결과가 없을 때
+            st.warning("⚠️ 검색하신 상품이 없습니다. 검색어를 확인하거나 다시 입력해주세요.")
+            st.info("💡 전체 리스트를 보려면 검색창을 비워주세요.")
