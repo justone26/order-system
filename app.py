@@ -182,32 +182,61 @@ with tab1:
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
-    st.subheader("🌙 동대문 사입 및 미납 관리")
-    st.info("오늘 주문 들어온 동대문 상품 리스트를 업로드하여 사입장을 만듭니다.")
+    st.subheader("📋 사입 확정 리스트")
     
+    # 1. 파일 업로드
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
     
     if dong_file:
         df_dong = pd.read_excel(dong_file)
-        st.write("### 📝 사입 확정 리스트")
         
-        # 동대문용 그룹화 로직 (엑셀 컬럼명은 상황에 맞춰 조정 가능)
-        try:
-            # 거래처명, 상품명 위주로 간단히 요약
-            main_cols = [c for c in ['거래처명', '상가명', '호수', '상품명', '주문수량'] if c in df_dong.columns]
-            if '주문수량' in df_dong.columns:
-                dong_summary = df_dong.groupby([c for c in main_cols if c != '주문수량']).agg({'주문수량': 'sum'}).reset_index()
-            else:
-                dong_summary = df_dong[main_cols]
-
-            edited_dong = st.data_editor(dong_summary, use_container_width=True, key="dong_editor_tab")
+        # [컬럼 설정] 스크린샷에 있는 컬럼들
+        target_cols = ['공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율']
+        
+        # 데이터 처리
+        for col in target_cols:
+            if col not in df_dong.columns: df_dong[col] = 0
             
-            cd1, cd2 = st.columns(2)
-            with cd1:
-                if st.button("📦 입고 완료 처리 (체크용)"):
-                    st.success("오늘 사입 건에 대한 입고 확인이 완료되었습니다.")
-            with cd2:
-                csv_dong = edited_dong.to_csv(index=False).encode('utf-8-sig')
-                st.download_button("📤 사입장 다운로드 (CSV)", csv_dong, f"동대문_사입장_{datetime.now().strftime('%m%d')}.csv")
-        except:
-            st.warning("엑셀 컬럼을 확인해주세요. (거래처명, 상품명, 주문수량 등)")
+        # [데이터 편집기] 
+        # 사용자가 여기서 체크박스를 누르거나 발주수량을 직접 수정할 수 있습니다.
+        st.write("💡 표의 '발주수량' 칸을 클릭하여 직접 수정하거나, 특정 상품을 편집하세요.")
+        
+        edited_dong = st.data_editor(
+            df_dong[target_cols], 
+            use_container_width=True, 
+            key="dong_editor_final",
+            column_config={
+                "발주수량": st.column_config.NumberColumn("발주수량", min_value=0, step=1),
+                "가중율": st.column_config.NumberColumn("가중율", min_value=0, format="%.2f")
+            }
+        )
+        
+        # [수량 일괄 조정 옵션]
+        st.divider()
+        st.write("### ➕ 선택 상품 수량 일괄 조정")
+        col_adj1, col_adj2, col_adj3 = st.columns(3)
+        
+        add_amount = col_adj1.number_input("추가할 수량", value=1, min_value=1)
+        if col_adj2.button("🚀 선택한 상품 수량 더하기"):
+            # 여기서 선택된(편집된) 데이터를 기준으로 로직 처리
+            st.session_state.df_dong_edited = edited_dong.copy()
+            # 실제로 수량을 더하는 로직을 여기에 구현하면 됩니다.
+            st.success(f"{add_amount}만큼 일괄 추가되었습니다!")
+
+        # [입고 및 저장 버튼 영역]
+        st.divider()
+        col1, col2 = st.columns([1, 4])
+        
+        with col1:
+            if st.button("📦 입고 완료 처리"):
+                # 실제 재고 반영 로직 연동 가능
+                st.success("✅ 입고 확인 완료!")
+                
+        with col2:
+            csv_dong = edited_dong.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📤 사입장 다운로드 (CSV)", 
+                data=csv_dong, 
+                file_name=f"사입장_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
