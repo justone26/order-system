@@ -185,40 +185,40 @@ with tab2:
     st.subheader("🌙 동대문 사입 및 미납 관리")
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
     
+    # 1. 파일 업로드 시 데이터 초기화 및 세션 저장
     if dong_file:
-        df_dong = pd.read_excel(dong_file)
-        
-        # [1] 자동 계산 로직
-        df_dong['발주수량'] = (df_dong['정상재고'] - df_dong['가용재고']).clip(lower=0)
-        if '3일판매' in df_dong.columns:
-            df_dong['가중율'] = df_dong['3일판매'].apply(lambda x: 1.5 if x >= 5 else 1.0)
-            df_dong['발주수량'] = (df_dong['발주수량'] * df_dong['가중율']).astype(int)
-        else:
-            df_dong['가중율'] = 1.0
+        if "df_dong_current" not in st.session_state:
+            df = pd.read_excel(dong_file)
+            # 필수 컬럼 계산 및 생성
+            df['발주수량'] = (df['정상재고'] - df['가용재고']).clip(lower=0)
+            if '3일판매' in df.columns:
+                df['가중율'] = df['3일판매'].apply(lambda x: 1.5 if x >= 5 else 1.0)
+                df['발주수량'] = (df['발주수량'] * df['가중율']).astype(int)
+            else:
+                df['가중율'] = 1.0
+            
+            if '선택' not in df.columns: df.insert(0, '선택', False)
+            if '품절' not in df.columns: df.insert(1, '품절', "")
+            
+            st.session_state.df_dong_current = df
 
-        # [2] 컬럼 순서 설정
-        if '선택' not in df_dong.columns: df_dong.insert(0, '선택', False)
+        # 2. 컬럼 순서 고정 (요청하신 10개)
         target_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율', '3일판매']
-        for col in target_cols:
-            if col not in df_dong.columns: df_dong[col] = 0
-        df_display_base = df_dong[target_cols]
-
-        # [3] 검색 및 필터링
+        
+        # 3. 검색 및 필터 영역
         st.divider()
         c1, c2 = st.columns([1, 2])
         search_target = c1.selectbox("🔍 검색 기준 선택", ["상품명", "공급처", "공급처상품명"])
-        search_query = c2.text_input(f"{search_target} 입력")
+        search_query = c2.text_input(f"{search_target} 검색어 입력")
         
-        df_display = df_display_base.copy()
+        df_display = st.session_state.df_dong_current[target_cols].copy()
         if search_query:
             df_display = df_display[df_display[search_target].astype(str).str.contains(search_query, case=False, na=False)]
 
-        # [4] 데이터 편집기 및 검색 결과 안내 (여기에 넣었습니다!)
-        st.write(f"### 📝 {search_target} 기준 필터링 리스트")
-        
+        # 4. 데이터 편집기
+        st.write(f"### 📝 {search_target} 필터링 리스트")
         if len(df_display) > 0:
-            st.write(f"검색 결과: {len(df_display)}건")
-            edited_dong = st.data_editor(
+            edited_df = st.data_editor(
                 df_display, 
                 use_container_width=True, 
                 key="dong_editor_final",
@@ -231,24 +231,19 @@ with tab2:
                 }
             )
             
-            # [5] 하단 버튼 및 저장 기능 (결과가 있을 때만 활성화)
-            st.divider()
-            col_b1, col_b2, col_b3 = st.columns([1, 1, 2])
-            add_amount = col_b1.number_input("추가할 수량", value=1, min_value=1)
-            if col_b2.button("🚀 선택한 상품 수량 더하기"):
-                selected_idx = edited_dong[edited_dong['선택'] == True].index
-                if not selected_idx.empty:
-                    for idx in selected_idx:
-                        edited_dong.at[idx, '발주수량'] += add_amount
-                    st.session_state.df_dong_updated = edited_dong
-                    st.rerun()
-                else:
-                    st.warning("먼저 체크박스를 선택해주세요!")
+            # 
             
-            csv_dong = edited_dong.to_csv(index=False).encode('utf-8-sig')
-            col_b3.download_button("📤 사입장 다운로드 (CSV)", csv_dong, f"사입장_{datetime.now().strftime('%Y%m%d')}.csv")
-
+            # 5. 수량 업데이트 로직
+            st.divider()
+            col_b1, col_b2 = st.columns([1, 2])
+            add_amount = col_b1.number_input("추가할 수량", value=1, min_value=1)
+            
+            if col_b2.button("🚀 선택한 상품 수량 더하기"):
+                # 체크된 상품들만 골라내서 session_state 업데이트
+                selected_indices = edited_df[edited_df['선택'] == True].index
+                for idx in selected_indices:
+                    # 원본 session_state의 값을 변경
+                    st.session_state.df_dong_current.at[idx, '발주수량'] += add_amount
+                st.rerun() # 즉시 화면 반영
         else:
-            # 검색 결과가 없을 때
-            st.warning("⚠️ 검색하신 상품이 없습니다. 검색어를 확인하거나 다시 입력해주세요.")
-            st.info("💡 전체 리스트를 보려면 검색창을 비워주세요.")
+            st.warning("⚠️ 검색하신 상품이 없습니다.")
