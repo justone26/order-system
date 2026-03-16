@@ -185,11 +185,17 @@ with tab2:
     st.subheader("🌙 동대문 사입 및 미납 관리")
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
     
-    # 1. 파일 업로드 시 데이터 초기화 및 세션 저장
-    if dong_file:
+    # 1. 파일 업로드 및 데이터 저장
         if "df_dong_current" not in st.session_state:
             df = pd.read_excel(dong_file)
-            # 필수 컬럼 계산 및 생성
+            
+            # [핵심] 엑셀에 없는 컬럼을 강제로 채워넣는 로직
+            target_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율', '3일판매']
+            for col in target_cols:
+                if col not in df.columns:
+                    df[col] = 0 if col not in ['선택', '품절', '상품명', '공급처', '공급처상품명'] else ""
+            
+            # 계산 로직
             df['발주수량'] = (df['정상재고'] - df['가용재고']).clip(lower=0)
             if '3일판매' in df.columns:
                 df['가중율'] = df['3일판매'].apply(lambda x: 1.5 if x >= 5 else 1.0)
@@ -197,11 +203,7 @@ with tab2:
             else:
                 df['가중율'] = 1.0
             
-            if '선택' not in df.columns: df.insert(0, '선택', False)
-            if '품절' not in df.columns: df.insert(1, '품절', "")
-            
             st.session_state.df_dong_current = df
-
         # 2. 컬럼 순서 고정 (요청하신 10개)
         target_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율', '3일판매']
         
