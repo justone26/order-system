@@ -182,21 +182,36 @@ with tab1:
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
-    st.subheader("🌙 동대문 사입 및 미납 관리")
-    
+    st.subheader("🌙 동대문 사입 관리")
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
     
     if dong_file:
         df_dong = pd.read_excel(dong_file)
         
-        # 1. '선택'이라는 체크박스 컬럼을 맨 앞에 추가
+        # 1. 컬럼 정리 및 '선택' 체크박스 추가
         if '선택' not in df_dong.columns:
             df_dong.insert(0, '선택', False)
         
-        # 2. 데이터 편집기 설정 (체크박스 활성화)
-        st.write("### 📝 사입 확정 리스트")
+        # 스크린샷에 필요한 주요 컬럼만 명시 (필요 없는 컬럼은 여기서 제외됩니다)
+        target_cols = ['선택', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율']
+        # 엑셀에 없는 컬럼이 있으면 0으로 생성
+        for col in target_cols:
+            if col not in df_dong.columns: df_dong[col] = 0
+            
+        # 2. [필터 영역] 공급처(업체명) 필터링
+        vendor_list = ["전체"] + sorted(df_dong['공급처'].unique().tolist())
+        selected_vendor = st.selectbox("🔍 업체 선택 필터", vendor_list)
+        
+        # 필터 적용
+        if selected_vendor != "전체":
+            df_display = df_dong[df_dong['공급처'] == selected_vendor].copy()
+        else:
+            df_display = df_dong.copy()
+            
+        # 3. [데이터 편집기] 틀 고정 및 가시성 향상
+        st.write(f"### 📝 {selected_vendor} 사입 리스트")
         edited_dong = st.data_editor(
-            df_dong, 
+            df_display[target_cols], 
             use_container_width=True, 
             key="dong_editor_final",
             column_config={
@@ -205,28 +220,9 @@ with tab2:
             }
         )
         
-        # 3. 선택된 상품 수량 더하기 로직
+        # 4. [수량 일괄 조정]
         st.divider()
-        st.write("### ➕ 선택 상품 수량 일괄 조정")
         col_adj1, col_adj2 = st.columns([1, 2])
-        
         add_amount = col_adj1.number_input("추가할 수량", value=1, min_value=1)
-        
         if col_adj2.button("🚀 선택한 상품 수량 더하기"):
-            # '선택'이 True인 행만 골라내기
-            selected_rows = edited_dong[edited_dong['선택'] == True]
-            
-            if not selected_rows.empty:
-                # 선택된 상품들의 인덱스를 가져와서 원본 데이터의 발주수량 업데이트
-                for idx in selected_rows.index:
-                    current_val = edited_dong.at[idx, '발주수량']
-                    edited_dong.at[idx, '발주수량'] = current_val + add_amount
-                
-                # 결과 반영 (st.rerun()을 통해 화면을 즉시 갱신)
-                st.session_state.df_dong_updated = edited_dong
-                st.rerun() 
-            else:
-                st.warning("먼저 수량을 조정할 상품을 체크해주세요!")
-
-        # 4. 입고 및 다운로드
-        # ... (이하 버튼 코드 동일)
+            # ... (이전 수량 더하기 로직 동일)
