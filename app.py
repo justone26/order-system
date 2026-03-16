@@ -195,14 +195,14 @@ with tab2:
             df = pd.read_excel(dong_file)
             df.columns = df.columns.str.strip()
             
-            # 수치형 데이터 변환
+            # 수치형 변환
             for col in ['정상재고', '가용재고']:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-            # [1] 판매수량 계산
+            # 판매수량 계산
             df['판매수량'] = (df['정상재고'] - df['가용재고']).clip(lower=0)
             
-            # [2] 가중율 계산 (판매수량 기준)
+            # 가중율 계산
             def get_weight(n):
                 if n >= 10: return 2.0
                 elif n >= 6: return 1.5
@@ -210,15 +210,9 @@ with tab2:
                 else: return 1.0
             
             df['가중율'] = df['판매수량'].apply(get_weight)
-            
-            # [3] 발주수량 계산
             df['발주수량'] = (df['판매수량'] * df['가중율']).astype(int)
             
-            # 필수 컬럼 정리 및 생성
-            if '선택' not in df.columns: df['선택'] = False
-            if '품절' not in df.columns: df['품절'] = ""
-            
-            # 요청하신 11개 컬럼 순서 (주문수량 제외)
+            # 컬럼 구성 (11개)
             final_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '판매수량', '발주수량', '가중율', '3일판매']
             for c in final_cols:
                 if c not in df.columns: df[c] = 0
@@ -241,9 +235,12 @@ with tab2:
             column_config={"선택": st.column_config.CheckboxColumn("선택", width="small")}
         )
         
-        
+        # [데이터 수동 반영] 수정된 값을 세션에 저장
+        if st.button("🔄 화면 업데이트"):
+            st.session_state.df_dong_current.update(edited_df)
+            st.rerun()
 
-        # 4. 하단 버튼 및 다운로드
+        # 4. 하단 제어부
         st.divider()
         col_in, col_btn, col_down = st.columns([1, 1, 1])
         add_val = col_in.number_input("추가할 수량", value=1, min_value=1)
