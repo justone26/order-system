@@ -188,31 +188,29 @@ with tab2:
     if dong_file:
         df_dong = pd.read_excel(dong_file)
         
-        # [1] 데이터 자동 계산 로직
-        # 발주수량 = 정상재고 - 가용재고
+        # [1] 데이터 자동 계산 (발주수량 및 가중율)
         df_dong['발주수량'] = (df_dong['정상재고'] - df_dong['가용재고']).clip(lower=0)
         
-        # 3일판매 기준 가중율 (5개 이상 시 1.5배)
         if '3일판매' in df_dong.columns:
             df_dong['가중율'] = df_dong['3일판매'].apply(lambda x: 1.5 if x >= 5 else 1.0)
             df_dong['발주수량'] = (df_dong['발주수량'] * df_dong['가중율']).astype(int)
         else:
             df_dong['가중율'] = 1.0
 
-        # [2] 필수 컬럼 배치 및 순서 정의
+        # [2] 컬럼 순서 재배치 (요청하신 순서대로)
         if '선택' not in df_dong.columns: df_dong.insert(0, '선택', False)
-        target_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '3일판매', '가용재고', '발주수량', '가중율']
+        target_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '발주수량', '가중율', '3일판매']
         
         for col in target_cols:
             if col not in df_dong.columns: df_dong[col] = 0
         df_display_base = df_dong[target_cols]
 
-        # [3] 검색 및 필터 영역
+        # [3] 검색 및 필터링
         st.divider()
-        col_f1, col_f2 = st.columns(2)
-        search_query = col_f1.text_input("🔍 상품명 검색")
+        c1, c2 = st.columns(2)
+        search_query = c1.text_input("🔍 상품명 검색")
         vendor_list = ["전체"] + sorted(df_dong['공급처'].astype(str).unique().tolist())
-        selected_vendor = col_f2.selectbox("🔍 업체 선택 필터", vendor_list)
+        selected_vendor = c2.selectbox("🔍 업체 선택 필터", vendor_list)
         
         df_display = df_display_base.copy()
         if search_query:
@@ -220,7 +218,7 @@ with tab2:
         if selected_vendor != "전체":
             df_display = df_display[df_display['공급처'] == selected_vendor]
 
-        # [4] 데이터 편집기 (셀 너비 최적화)
+        # [4] 데이터 편집기 (셀 너비 고정)
         st.write(f"### 📝 {selected_vendor} 사입 리스트 (검색 결과: {len(df_display)}건)")
         
         edited_dong = st.data_editor(
@@ -236,20 +234,20 @@ with tab2:
             }
         )
         
-        # [5] 하단 버튼 영역
+        # [5] 하단 버튼 및 저장 기능
         st.divider()
-        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
-        add_amount = col_btn1.number_input("추가할 수량", value=1, min_value=1)
+        col1, col2, col3 = st.columns([1, 1, 2])
+        add_amount = col1.number_input("추가할 수량", value=1, min_value=1)
         
-        if col_btn2.button("🚀 선택한 상품 수량 더하기"):
+        if col2.button("🚀 선택한 상품 수량 더하기"):
             selected_idx = edited_dong[edited_dong['선택'] == True].index
             if not selected_idx.empty:
                 for idx in selected_idx:
                     edited_dong.at[idx, '발주수량'] += add_amount
                 st.session_state.df_dong_updated = edited_dong
-                st.rerun()
+                st.rerun() # 화면 갱신
             else:
-                st.warning("먼저 체크박스를 선택해주세요!")
+                st.warning("먼저 수량을 수정할 상품을 체크해주세요!")
         
         csv_dong = edited_dong.to_csv(index=False).encode('utf-8-sig')
-        col_btn3.download_button("📤 사입장 다운로드 (CSV)", csv_dong, f"사입장_{datetime.now().strftime('%Y%m%d')}.csv")
+        col3.download_button("📤 사입장 다운로드 (CSV)", csv_dong, f"사입장_{datetime.now().strftime('%Y%m%d')}.csv")
