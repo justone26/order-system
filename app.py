@@ -140,35 +140,63 @@ if st.session_state.get('df_raw') is not None:
 
         st.data_editor(df_working[target_cols], use_container_width=True, key="main_editor", on_change=update_reorder)
 
-        # --- 5단계: 발주 리스트 요약 ---
+# --- 5단계: 발주 리스트 요약 ---
         st.subheader("📋 5단계: 발주 리스트 요약")
+        
+        # 권장 발주량이 0보다 큰 항목만 추출
         to_order = st.session_state.df_raw[st.session_state.df_raw['권장 발주량'] > 0].copy()
+        
         if not to_order.empty:
-            to_order['추가 리오더'] = 0
+            # 초기값 설정
+            if '추가 리오더' not in to_order.columns:
+                to_order['추가 리오더'] = 0
+            
+            # 출력 컬럼 설정 (옵션 다음 공급처 상품명 배치)
             display_cols = [vendor, item, option, vendor_item, "리오더 수량", "추가 리오더", "권장 발주량"]
+            
+            # [1] 편집기 부분
+            st.write("### ✏️ 발주 수량 입력") 
             edited = st.data_editor(to_order[display_cols], use_container_width=True, key="order_editor")
             
+            # [2] 긴급 발주 확인 부분 (색상 강조)
+            st.write("### 🚨 긴급 발주 상품 확인")
             def highlight_urgent(row):
+                # 3일 평균 판매량 대비 가용재고가 적으면 행 전체 분홍색 (#ffcccc)
                 avg_3d = float(row.get(t3day, 0)) / 3
                 avail_val = float(row.get(avail, 0))
                 return ['background-color: #ffcccc'] * len(row) if avail_val <= avg_3d else [''] * len(row)
             
+            # 편집기(edited) 데이터를 실시간으로 스타일링하여 표시
             st.dataframe(edited.style.apply(highlight_urgent, axis=1), use_container_width=True)
             
+            # [3] 저장 및 다운로드 버튼 영역
             col1, col2 = st.columns(2)
-            if col1.button("💾 구글 시트 및 기록 저장"):
-                for idx, row in edited.iterrows():
-                    st.session_state.df_raw.at[idx, '리오더 수량'] = float(row['리오더 수량']) + float(row['추가 리오더'])
-                # 발주 현황 덮어쓰기
-                save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']])
-                # 히스토리 누적 저장
-                if save_history_to_gsheet(edited):
-                    st.success("✅ 히스토리가 영구 저장되었습니다!")
+            
+            with col1:
+                if st.button("💾 구글 시트 및 기록 저장"):
+                    # 1. 원본 데이터프레임에 수정된 수량 반영 (리오더 수량 + 추가 리오더)
+                    for idx, row in edited.iterrows():
+                        st.session_state.df_raw.at[idx, '리오더 수량'] = float(row['리오더 수량']) + float(row['추가 리오더'])
+                    
+                    # 2. 메인 발주 현황 시트 업데이트 (덮어쓰기)
+                    save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']])
+                    
+                    # 3. 'history' 탭에 누적 저장 (영구 기록용)
+                    if save_history_to_gsheet(edited):
+                        st.success("✅ 구글 시트 및 히스토리가 영구 저장되었습니다!")
             
             with col2:
+                # 엑셀 다운로드 버튼
                 csv_data = edited.to_csv(index=False).encode('utf-8-sig')
-                st.download_button("📥 발주 리스트 엑셀 다운로드", csv_data, f"발주_{datetime.now().strftime('%Y%m%d')}.csv")
-
+                st.download_button(
+                    label="📥 발주 리스트 엑셀 다운로드",
+                    data=csv_data,
+                    file_name=f"발주_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv"
+                )
+        else:
+            st.info("💡 권장 발주량이 있는 상품이 없습니다. 분석 단계를 먼저 확인해주세요.")
+            
         # --- 6단계: 과거 데이터 확인 ---
         st.subheader("📜 6단계: 과거 데이터 확인")
         if st.button("🔄 구글 시트에서 기록 불러오기"):
