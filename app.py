@@ -144,7 +144,7 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
 
-# 4단계: 편집 (품절부터 권장발주량까지 요청하신 순서 완벽 고정)
+# 4단계: 편집 (숫자 정렬 꼼수 및 표 크기 최적화 적용)
         if st.session_state.analyzed:
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
             
@@ -156,15 +156,12 @@ with tab1:
             df_working = st.session_state.df_raw.copy()
 
             # --- [데이터 전처리 및 계산] ---
-            # 숫자 변환 및 결측치 0 처리
             v_avail = pd.to_numeric(df_working[avail], errors='coerce').fillna(0)
             v_reorder = pd.to_numeric(df_working['리오더 수량'], errors='coerce').fillna(0)
             v_3day = pd.to_numeric(df_working[t3day], errors='coerce').fillna(0)
             
-            # 1. 일판매량 계산 (3일 합계 / 3 -> 반올림 후 정수)
             df_working["일판매량"] = (v_3day / 3).round(0).astype(int)
             
-            # 2. 권장발주량 계산 공식
             needed_qty = (df_working["일판매량"] * (lead_time + safety_stock))
             current_assets = (v_avail + v_reorder)
             df_working["권장발주량"] = (needed_qty - current_assets).clip(lower=0).round(0).astype(int)
@@ -177,7 +174,11 @@ with tab1:
             if search_query: 
                 df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
 
-            # --- [자동 저장 및 입고 차감 함수] ---
+            # 리오더입고수량 칸 생성
+            if "리오더입고수량" not in df_working.columns:
+                df_working["리오더입고수량"] = 0
+
+            # --- [자동 저장 함수 유지] ---
             def auto_save_and_update():
                 if "main_editor" in st.session_state and st.session_state["main_editor"]["edited_rows"]:
                     changes = st.session_state["main_editor"]["edited_rows"]
@@ -185,11 +186,12 @@ with tab1:
                         row_idx = int(row_idx_str)
                         orig_idx = df_working.index[row_idx]
                         
+                        # 수정 시 다시 숫자로 변환하여 저장 (중요!)
                         if "리오더 수량" in change:
-                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(round(float(change["리오더 수량"])))
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(round(float(str(change["리오더 수량"]).strip())))
                         
                         if "리오더입고수량" in change:
-                            in_qty = int(round(float(change["리오더입고수량"])))
+                            in_qty = int(round(float(str(change["리오더입고수량"]).strip())))
                             current_reorder = st.session_state.df_raw.at[orig_idx, "리오더 수량"]
                             st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_reorder - in_qty)
                     
@@ -201,47 +203,44 @@ with tab1:
                     except Exception as e:
                         st.error(f"저장 오류: {e}")
 
-            # --- [화면 출력 설정: 요청하신 11개 컬럼 순서 고정] ---
-            display_cols = [
-                sold_out,    # 품절
-                item,        # 상품명
-                option,      # 옵션
-                vendor_item, # 공급처상품명
-                stock,       # 정상재고
-                avail,       # 가용재고
-                "리오더 수량",
-                "리오더입고수량",
-                "일판매량",
-                t3day,       # 3일발주합계
-                "권장발주량"
-            ]
+            # --- [표시용 데이터 가공: 숫자 왼쪽 정렬 꼼수] ---
+            display_df = df_working.copy()
             
-            # 리오더입고수량 칸 생성
-            if "리오더입고수량" not in df_working.columns:
-                df_working["리오더입고수량"] = 0
+            # 공백을 추가하여 왼쪽으로 밀어낼 숫자 컬럼 리스트
+            num_cols_to_fix = [stock, avail, "리오더 수량", "리오더입고수량", "일판매량", t3day, "권장발주량"]
+            
+            for col in num_cols_to_fix:
+                if col in display_df.columns:
+                    # 숫자를 문자로 바꾸고 앞뒤에 공백을 넣어 왼쪽 정렬 느낌 유도
+                    display_df[col] = display_df[col].fillna(0).astype(int).apply(lambda x: f"  {x}")
 
-            # 실제 존재하는 컬럼만 필터링 (에러 방지)
-            final_target = [c for c in display_cols if c in df_working.columns or c in ["일판매량", "권장발주량", "리오더입고수량"]]
+            # 컬럼 순서 고정
+            display_cols = [sold_out, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "일판매량", t3day, "권장발주량"]
+            final_target = [c for c in display_cols if c in display_df.columns]
 
+            # --- [최종 화면 출력] ---
             st.data_editor(
-                df_working[final_target],
+                display_df[final_target],
                 use_container_width=True,
+                height=600,  # 👈 높이를 600으로 시원하게 키웠습니다.
                 key="main_editor",
                 on_change=auto_save_and_update,
                 column_config={
                     sold_out: st.column_config.Column("❌ 품절여부", disabled=True),
-                    item: st.column_config.Column("📦 상품명", disabled=True),
-                    option: st.column_config.Column("🎨 옵션", disabled=True),
-                    vendor_item: st.column_config.Column("🏢 공급처상품명", disabled=True),
-                    stock: st.column_config.NumberColumn("🔢 정상재고", disabled=True),
-                    avail: st.column_config.NumberColumn("✅ 가용재고", disabled=True),
-                    "리오더 수량": st.column_config.NumberColumn("📝 리오더 수량"),
-                    "리오더입고수량": st.column_config.NumberColumn("➕ 입고수량 입력"),
-                    "일판매량": st.column_config.NumberColumn("📈 일판매량", disabled=True),
-                    t3day: st.column_config.NumberColumn("📊 3일발주합계", disabled=True),
-                    "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
+                    item: st.column_config.Column("📦 상품명", disabled=True, width="medium"),
+                    option: st.column_config.Column("🎨 옵션", disabled=True, width="small"),
+                    vendor_item: st.column_config.Column("🏢 공급처상품명", disabled=True, width=280),
+                    # [주의] Column으로 설정해야 왼쪽 정렬(꼼수)이 유지됩니다.
+                    stock: st.column_config.Column("🔢 정상재고", disabled=True),
+                    avail: st.column_config.Column("✅ 가용재고", disabled=True),
+                    "리오더 수량": st.column_config.Column("📝 리오더 수량"),
+                    "리오더입고수량": st.column_config.Column("➕ 입고수량 입력"),
+                    "일판매량": st.column_config.Column("📈 일판매량", disabled=True),
+                    t3day: st.column_config.Column("📊 3일발주합계", disabled=True),
+                    "권장발주량": st.column_config.Column("🚀 권장발주량", disabled=True)
                 }
             )
+            
 # 5단계: 요약 및 저장 (KeyError 해결 및 안전한 컬럼 매칭)
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
