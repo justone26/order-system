@@ -230,8 +230,7 @@ with tab1:
                 }
             )
 
-    # ... (위의 final_order_df = st.data_editor 부분 바로 아래에 추가) ...
-                    
+   # 5단계 편집기 바로 아래에 위치해야 함
                     st.divider()
                     col_btn1, col_btn2 = st.columns(2)
 
@@ -250,7 +249,6 @@ with tab1:
                             st.error("❌ 저장 실패. 설정을 확인하세요.")
 
                     # 2. 엑셀 파일로 다운로드
-                    # 공백 제거한 깨끗한 데이터로 다운로드 생성
                     download_df = final_order_df.copy()
                     for c in download_df.columns:
                         if download_df[c].dtype == object:
