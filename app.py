@@ -230,7 +230,7 @@ with tab1:
                 }
             )
 
-   # 5단계 편집기 바로 아래에 위치해야 함
+   # 5단계 편집기 바로 아래에 위치해야 함     
                     st.divider()
                     col_btn1, col_btn2 = st.columns(2)
 
@@ -261,6 +261,7 @@ with tab1:
                         file_name=f"발주리스트_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                         mime="text/csv"
                     )
+                # 이 else는 if not to_order.empty: 와 짝궁입니다.
                 else:
                     st.info("💡 발주할 상품이 없습니다. (권장발주량 > 0 또는 긴급/주의 상품 없음)")
                     
