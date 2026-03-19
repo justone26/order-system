@@ -242,21 +242,23 @@ with tab1:
                     "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                 }
             )
-# 5단계: 요약 및 저장 (거래처상품명 너비 고정 & 가로 스크롤 방지)
+# 5단계: 요약 및 저장 (항목 수정: 공급처 상품명 반영)
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
             if 'df_raw' in st.session_state:
                 to_order = st.session_state.df_raw.copy()
                 
-                # 기초 데이터 전처리 및 계산
+                # 기초 데이터 계산 (일판매량 등)
                 v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
                 to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
                 
+                # 권장발주량 이름 통일
                 if '권장 발주량' in to_order.columns:
                     to_order['권장발주량'] = to_order['권장 발주량']
                 elif '권장발주량' not in to_order.columns:
                     to_order['권장발주량'] = 0
 
+                # 긴급도 계산 함수
                 def check_urgency(row):
                     v_av = pd.to_numeric(row.get(avail, 0), errors='coerce') or 0
                     v_sl = pd.to_numeric(row.get('일판매량', 0), errors='coerce') or 0
@@ -269,7 +271,7 @@ with tab1:
 
                 # 상태 필터 UI
                 f_col1, f_col2 = st.columns([2, 2])
-                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_filter_fixed_width")
+                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_filter_correct_col")
 
                 # 필터링 적용
                 mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
@@ -280,22 +282,24 @@ with tab1:
                 if not to_order.empty:
                     if '추가발주분' not in to_order.columns: to_order['추가발주분'] = 0
                     
+                    # [수정포인트] vendor_item 변수가 '공급처 상품명' 컬럼을 가리키도록 확인해줘!
+                    # 만약 vendor_item 변수 자체가 잘못 설정되어 있다면 여기서 직접 컬럼명을 써줘도 돼.
+                    # 예: "공급처 상품명"
                     final_display_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "추가발주분", "권장발주량"]
                     
                     st.write(f"### ✏️ 발주 수량 확인 ({status_filter})")
                     
-                    # --- [너비 고정 및 가로 스크롤 방지 설정] ---
+                    # 데이터 편집기 (너비 최적화)
                     final_order_df = st.data_editor(
                         to_order[final_display_cols], 
-                        use_container_width=True, # 화면 너비에 무조건 맞춤 (가로 스크롤 방지)
-                        key="final_order_editor_fixed",
+                        use_container_width=True, 
+                        key="final_order_editor_correct",
                         column_config={
                             "상태": st.column_config.Column("📢 상태", width="small"),
                             item: st.column_config.Column("📦 상품명", width="medium"), 
                             option: st.column_config.Column("🎨 옵션", width="small"),
-                            # [핵심] 거래처상품명만 특정 픽셀로 고정해서 다른 셀들을 보호해!
-                            vendor_item: st.column_config.Column("🏢 거래처상품명", width=300), 
-                            # 나머지 숫자 데이터는 최소한의 공간만 차지하게 함
+                            # [핵심] 컬럼 헤더 이름을 '공급처상품명'으로 명시하고 너비 고정
+                            vendor_item: st.column_config.Column("🏢 공급처상품명", width=300), 
                             avail: st.column_config.NumberColumn("✅ 가용재고", format="%d", width="small"),
                             "리오더 수량": st.column_config.NumberColumn("📦 현재리오더", format="%d", width="small"),
                             "추가발주분": st.column_config.NumberColumn("➕ 추가발주", format="%d", min_value=0, width="small"),
@@ -317,7 +321,7 @@ with tab1:
                                 save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
                                 save_df.columns = ['상품명', '옵션', '리오더 수량']
                                 save_reorder_data(save_df)
-                                st.success("✅ 저장 완료!"); st.rerun()
+                                st.success("✅ 공급처 상품 기준 저장 완료!"); st.rerun()
                             except Exception as e: st.error(f"오류: {e}")
                     with b2:
                         csv_data = final_order_df.to_csv(index=False).encode('utf-8-sig')
