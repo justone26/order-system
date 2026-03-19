@@ -242,13 +242,13 @@ with tab1:
                     "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                 }
             )
-# 5단계: 요약 및 저장 (엑셀 스타일 최적화: 너비 자동 맞춤 & 중앙 정렬)
+# 5단계: 요약 및 저장 (TypeError 해결 및 간격 최적화)
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
             if 'df_raw' in st.session_state:
                 to_order = st.session_state.df_raw.copy()
                 
-                # 데이터 전처리 및 계산
+                # 데이터 전처리
                 v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
                 to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
                 
@@ -268,8 +268,7 @@ with tab1:
                 to_order['상태'] = to_order.apply(check_urgency, axis=1)
 
                 # 필터 UI
-                f_col1, f_col2 = st.columns([2, 2])
-                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_filter_excel_style")
+                status_filter = st.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_filter_safe")
 
                 # 필터링 적용
                 mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
@@ -284,25 +283,22 @@ with tab1:
                     
                     st.write(f"### ✏️ 발주 수량 확인 ({status_filter})")
                     
-                    # --- [엑셀 스타일 너비 및 정렬 최적화] ---
+                    # --- [에러 해결: alignment 옵션 제거 및 너비 미세조정] ---
                     final_order_df = st.data_editor(
                         to_order[final_display_cols], 
                         use_container_width=True, 
-                        key="final_order_editor_excel_style",
+                        key="final_order_editor_fixed_v4",
                         column_config={
-                            # 상태/옵션 등 짧은 텍스트는 최소 너비로 자동 맞춤
-                            "상태": st.column_config.Column("📢 상태", width=None),
+                            "상태": st.column_config.Column("📢 상태", width=80),
                             item: st.column_config.Column("📦 상품명", width="medium"), 
-                            option: st.column_config.Column("🎨 옵션", width=None),
-                            
-                            # 공급처 상품명은 4단계 수준(약 250~300px)으로 고정
-                            vendor_item: st.column_config.Column("🏢 공급처상품명", width=280), 
-                            
-                            # 숫자 데이터: 중앙 정렬(alignment="center") + 불필요한 여백 제거
-                            avail: st.column_config.NumberColumn("가용재고", format="%d", width=80, alignment="center"),
-                            "리오더 수량": st.column_config.NumberColumn("현 리오더", format="%d", width=80, alignment="center"),
-                            "추가발주분": st.column_config.NumberColumn("추가발주", format="%d", min_value=0, width=80, alignment="center"),
-                            "권장발주량": st.column_config.NumberColumn("권장발주", format="%d", width=80, alignment="center")
+                            option: st.column_config.Column("🎨 옵션", width=100),
+                            # 공급처 상품명은 4단계 정도의 적당한 너비
+                            vendor_item: st.column_config.Column("🏢 공급처상품명", width=250), 
+                            # 숫자 칸들은 width를 작게 잡아 여백 최소화 (정렬 에러 방지)
+                            avail: st.column_config.NumberColumn("가용재고", format="%d", width=70),
+                            "리오더 수량": st.column_config.NumberColumn("현 리오더", format="%d", width=70),
+                            "추가발주분": st.column_config.NumberColumn("추가발주", format="%d", min_value=0, width=70),
+                            "권장발주량": st.column_config.NumberColumn("권장발주", format="%d", width=70)
                         }
                     )
                     
