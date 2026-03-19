@@ -71,15 +71,39 @@ with tab1:
     uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="prod_upload")
     st.divider()
 
+    # [수정된 부분] 파일 업로드 시 구글 시트 데이터를 병합함
     if uploaded_file is not None:
         if 'df_raw' not in st.session_state or st.session_state.get('last_filename') != uploaded_file.name:
-            st.session_state.df_raw = pd.read_excel(uploaded_file).loc[:, ~pd.read_excel(uploaded_file).columns.duplicated()]
+            # 1. 업로드한 엑셀 읽기
+            df_new = pd.read_excel(uploaded_file)
+            df_new.columns = df_new.columns.str.strip()
+            df_new = df_new.loc[:, ~df_new.columns.duplicated()] 
+            
+            # 2. 구글 시트에서 기존 리오더 수량 가져오기
+            try:
+                sheet = get_sheet().sheet1
+                gs_data = pd.DataFrame(sheet.get_all_records())
+                
+                if not gs_data.empty and '상품명' in gs_data.columns and '리오더 수량' in gs_data.columns:
+                    # 필요한 컬럼만 추출 (상품명, 옵션을 기준으로 매칭)
+                    gs_data = gs_data[['상품명', '옵션', '리오더 수량']].copy()
+                    # 엑셀 데이터와 구글 시트 데이터 합치기 (왼쪽 조인)
+                    df_new = pd.merge(df_new, gs_data, on=['상품명', '옵션'], how='left', suffixes=('', '_gs'))
+                    
+                    # 구글 시트에 값이 있으면 그 값을 쓰고, 없으면 0 처리
+                    if '리오더 수량_gs' in df_new.columns:
+                        df_new['리오더 수량'] = df_new['리오더 수량_gs'].fillna(0)
+                        df_new = df_new.drop(columns=['리오더 수량_gs'])
+                else:
+                    df_new['리오더 수량'] = 0
+            except Exception as e:
+                st.warning(f"구글 시트 연동 실패(새 데이터로 시작): {e}")
+                df_new['리오더 수량'] = 0
+
+            st.session_state.df_raw = df_new
             st.session_state.last_filename = uploaded_file.name
             st.session_state.analyzed = False
             st.rerun()
-
-    if st.session_state.get('df_raw') is not None:
-        cols = st.session_state.df_raw.columns.tolist()
 
         # 1단계: 매핑
         st.subheader("⚙️ 1단계: 매핑 설정")
