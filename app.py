@@ -144,37 +144,61 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
 
-        # 4단계: 편집 (분석이 완료된 후 표시)
+       # 4단계: 편집 (입력 즉시 자동 저장 로직 포함)
         if st.session_state.analyzed:
-            st.subheader("📊 4단계: 데이터 편집")
+            st.subheader("📊 4단계: 데이터 편집 (입력 시 자동 저장)")
             
-            # 일판매량 계산
-            st.session_state.df_raw["일판매량"] = (pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce').fillna(0) / 3).round(1)
-            
-            target_cols = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "일판매량", "권장 발주량"]
-            
-            # 검색 및 필터
+            # [기존 필터 로직 그대로 유지]
             f1, f2 = st.columns([3, 1])
             search_query = f1.text_input("🔍 상품명 검색")
             filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
             
             df_working = st.session_state.df_raw.copy()
-            if filter_mode == "정상만": df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
-            elif filter_mode == "품절만": df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
-            if search_query: df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
+            if filter_mode == "정상만": 
+                df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
+            elif filter_mode == "품절만": 
+                df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
+            if search_query: 
+                df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
 
-            # [수정] 데이터 편집기 업데이트 로직
-            def on_edit():
-                # 리오더입고수량 입력 시 리오더 수량에서 차감
-                for row_idx, changes in st.session_state["main_editor"]["edited_rows"].items():
-                    if "리오더입고수량" in changes:
-                        received = float(changes["리오더입고수량"])
+            # --- [핵심: 자동 저장 함수 시작] ---
+            def auto_save_to_gsheet():
+                if "main_editor" in st.session_state and st.session_state["main_editor"]["edited_rows"]:
+                    changes = st.session_state["main_editor"]["edited_rows"]
+                    
+                    for row_idx_str, change in changes.items():
+                        row_idx = int(row_idx_str)
                         orig_idx = df_working.index[row_idx]
-                        current_reorder = float(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
-                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_reorder - received)
-                        st.session_state.df_raw.at[orig_idx, "리오더입고수량"] = 0 # 초기화
+                        
+                        # 리오더 수량 직접 수정
+                        if "리오더 수량" in change:
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = float(change["리오더 수량"])
+                        
+                        # 리오더입고수량 입력 시 자동 차감
+                        if "리오더입고수량" in change:
+                            received = float(change["리오더입고수량"])
+                            current_val = float(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
+                            # 차감 후 저장 (최소 0)
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_val - received)
+                    
+                    # 구글 시트에 즉시 업데이트
+                    try:
+                        save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
+                        save_df.columns = ['상품명', '옵션', '리오더 수량']
+                        save_reorder_data(save_df)
+                        st.toast("✅ 구글 시트에 자동 저장되었습니다!")
+                    except Exception as e:
+                        st.error(f"자동 저장 실패: {e}")
 
-            st.data_editor(df_working[target_cols], use_container_width=True, key="main_editor", on_change=on_edit)
+            # 데이터 편집기 실행 (on_change 연결)
+            target_cols = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "일판매량", "권장 발주량"]
+            st.data_editor(
+                df_working[target_cols], 
+                use_container_width=True, 
+                key="main_editor", 
+                on_change=auto_save_to_gsheet 
+            )
+            # --- [핵심: 자동 저장 함수 끝] ---
 
           # 5단계: 요약 및 저장
             st.subheader("📋 5단계: 발주 리스트 요약 및 저장")
