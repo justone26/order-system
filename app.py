@@ -242,7 +242,7 @@ with tab1:
                     "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                 }
             )
-# 5단계: 요약 및 저장 (숫자 정중앙 정렬 완벽 적용)
+# 5단계: 요약 및 저장 (TypeError 해결 최종 버전)
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
             if 'df_raw' in st.session_state:
@@ -266,36 +266,69 @@ with tab1:
                     return "✅ 정상"
 
                 to_order['상태'] = to_order.apply(check_urgency, axis=1)
-                
-                # 필터링 적용 로직 (생략 - 기존과 동일)
-                # ... 
+
+                # 필터 UI
+                status_filter = st.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_filter_safe_v10")
+
+                # 필터링 적용
+                mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
+                to_order = to_order[mask].copy()
+                if "🚨" in status_filter: to_order = to_order[to_order['상태'] == "🚨 긴급"]
+                elif "⚠️" in status_filter: to_order = to_order[to_order['상태'].str.contains("🚨|⚠️")]
 
                 if not to_order.empty:
-                    if '추가발주분' not in to_order.columns: to_order['추가발주분'] = 0
+                    # 숫자 데이터를 정수로 변환하여 소수점 제거 (중앙 정렬 느낌을 위해)
+                    for c in [avail, "리오더 수량", "권장발주량"]:
+                        to_order[c] = pd.to_numeric(to_order[c], errors='coerce').fillna(0).astype(int)
+                    
+                    if '추가발주분' not in to_order.columns:
+                        to_order['추가발주분'] = 0
+                    
                     final_display_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "추가발주분", "권장발주량"]
                     
-                    st.write(f"### ✏️ 발주 수량 확인")
-
-                    # --- [이 부분이 핵심: 정중앙 정렬 옵션] ---
+                    st.write(f"### ✏️ 발주 수량 확인 ({status_filter})")
+                    
+                    # --- [에러 해결 포인트: alignment 제거 및 너비 강제 조정] ---
                     final_order_df = st.data_editor(
                         to_order[final_display_cols], 
                         use_container_width=True, 
-                        key="final_order_editor_perfect_center",
+                        key="final_order_editor_no_error",
                         column_config={
-                            "상태": st.column_config.Column("📢 상태", width="small"),
+                            "상태": st.column_config.Column("📢 상태", width=70),
                             item: st.column_config.Column("📦 상품명", width="medium"), 
-                            option: st.column_config.Column("🎨 옵션", width="small"),
+                            option: st.column_config.Column("🎨 옵션", width=80),
                             vendor_item: st.column_config.Column("🏢 공급처상품명", width=250), 
                             
-                            # alignment="center"가 바로 숫자를 가운데로 보내는 마법의 명령어임!
-                            avail: st.column_config.NumberColumn("가용재고", format="%d", width=90, alignment="center"),
-                            "리오더 수량": st.column_config.NumberColumn("현 리오더", format="%d", width=90, alignment="center"),
-                            "추가발주분": st.column_config.NumberColumn("추가발주", format="%d", min_value=0, width=90, alignment="center"),
-                            "권장발주량": st.column_config.NumberColumn("권장발주", format="%d", width=90, alignment="center")
+                            # NumberColumn 대신 일반 Column을 써서 우측 정렬 강제를 피하거나
+                            # alignment 옵션을 아예 삭제해서 TypeError를 방지함
+                            avail: st.column_config.Column("가용재고", width=80),
+                            "리오더 수량": st.column_config.Column("현 리오더", width=80),
+                            "추가발주분": st.column_config.NumberColumn("추가발주", format="%d", min_value=0, width=80),
+                            "권장발주량": st.column_config.Column("권장발주", width=80)
                         }
                     )
                     
-                    # (저장 버튼 로직 생략...)
+                    st.divider()
+                    b1, b2 = st.columns(2)
+                    with b1:
+                        if st.button("💾 구글 시트 최종 저장", use_container_width=True, type="primary"):
+                            try:
+                                for idx, row in final_order_df.iterrows():
+                                    curr = pd.to_numeric(row.get('리오더 수량', 0), errors='coerce')
+                                    curr = int(0 if pd.isna(curr) else curr)
+                                    add = pd.to_numeric(row.get('추가발주분', 0), errors='coerce')
+                                    add = int(0 if pd.isna(add) else add)
+                                    st.session_state.df_raw.at[idx, '리오더 수량'] = curr + add
+                                save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
+                                save_df.columns = ['상품명', '옵션', '리오더 수량']
+                                save_reorder_data(save_df)
+                                st.success("✅ 저장 완료!"); st.rerun()
+                            except Exception as e: st.error(f"오류: {e}")
+                    with b2:
+                        csv_data = final_order_df.to_csv(index=False).encode('utf-8-sig')
+                        st.download_button("📥 엑셀(CSV) 다운로드", csv_data, f"order_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+                else:
+                    st.info("해당 상품이 없습니다.")
               
             # 6단계: 과거 확인
             st.subheader("📜 6단계: 과거 데이터 확인")
