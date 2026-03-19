@@ -144,18 +144,32 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
 
-# 4단계: 편집 (3일 발주합계 컬럼 추가 및 자동 저장)
+# 4단계: 편집 (요청하신 순서로 컬럼 고정 및 자동 저장)
         if st.session_state.analyzed:
-            st.subheader("📊 4단계: 데이터 편집 (3일 발주합계 확인)")
+            st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
             
-            # --- [필터 로직] ---
+            # --- [필터 및 검색] ---
             f1, f2 = st.columns([3, 1])
             search_query = f1.text_input("🔍 상품명 검색", key="prod_search_input")
             filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
             
             df_working = st.session_state.df_raw.copy()
 
-            # 품절/검색 필터 적용 (기존 동일)
+            # --- [데이터 전처리 및 계산] ---
+            # 숫자 변환 (에러 방지용)
+            v_avail = pd.to_numeric(df_working[avail], errors='coerce').fillna(0)
+            v_reorder = pd.to_numeric(df_working['리오더 수량'], errors='coerce').fillna(0)
+            v_3day = pd.to_numeric(df_working[t3day], errors='coerce').fillna(0)
+            
+            # 1. 일판매량 계산 (3일 합계 / 3 후 반올림하여 정수)
+            df_working["일판매량"] = (v_3day / 3).round(0).astype(int)
+            
+            # 2. 권장발주량 계산: {(일판매량 * (리드타임 + 안전재고))} - (가용재고 + 리오더 수량)
+            needed_qty = (df_working["일판매량"] * (lead_time + safety_stock))
+            current_assets = (v_avail + v_reorder)
+            df_working["권장발주량"] = (needed_qty - current_assets).clip(lower=0).round(0).astype(int)
+
+            # 필터 적용
             if filter_mode == "정상만": 
                 df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
             elif filter_mode == "품절만": 
@@ -163,52 +177,60 @@ with tab1:
             if search_query: 
                 df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
 
-            # --- [자동 저장 함수] ---
-            def auto_save_to_gsheet():
+            # --- [자동 저장 및 입고 차감 함수] ---
+            def auto_save_and_update():
                 if "main_editor" in st.session_state and st.session_state["main_editor"]["edited_rows"]:
                     changes = st.session_state["main_editor"]["edited_rows"]
                     for row_idx_str, change in changes.items():
                         row_idx = int(row_idx_str)
                         orig_idx = df_working.index[row_idx]
                         
+                        # 리오더 수량 직접 수정
                         if "리오더 수량" in change:
-                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = float(change["리오더 수량"])
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(round(float(change["리오더 수량"])))
+                        
+                        # 리오더입고수량 입력 시 -> 리오더 수량에서 차감 후 저장
                         if "리오더입고수량" in change:
-                            received = float(change["리오더입고수량"])
-                            current_val = float(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
-                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_val - received)
+                            in_qty = int(round(float(change["리오더입고수량"])))
+                            current_reorder = st.session_state.df_raw.at[orig_idx, "리오더 수량"]
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_reorder - in_qty)
                     
+                    # 구글 시트 즉시 전송
                     try:
                         save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
                         save_df.columns = ['상품명', '옵션', '리오더 수량']
                         save_reorder_data(save_df)
                         st.toast("✅ 구글 시트에 자동 저장되었습니다!")
                     except Exception as e:
-                        st.error(f"저장 실패: {e}")
+                        st.error(f"저장 오류: {e}")
 
-            # --- [데이터 편집기 출력] ---
-            # t3day(3일 발주합계)를 리스트에 추가했습니다.
-            display_list = [
-                sold_out, vendor, item, option, vendor_item, 
-                stock, avail, t3day, "일판매량", "리오더 수량", "리오더입고수량", "권장 발주량"
+            # --- [화면 출력 설정: 순서 고정] ---
+            # 요청하신 순서: 정상재고 -> 가용재고 -> 리오더수량 -> 리오더입고수량 -> 일판매량 -> 3일발주합계 -> 권장발주량
+            display_cols = [
+                stock, avail, "리오더 수량", "리오더입고수량", 
+                "일판매량", t3day, "권장발주량"
             ]
             
-            # 실제 존재하는 컬럼만 필터링 (KeyError 방지)
-            final_cols = [c for c in display_list if c in df_working.columns]
-            
-            # 입고수량 칸 생성
+            # 리오더입고수량 칸이 데이터에 없으면 생성 (입력용)
             if "리오더입고수량" not in df_working.columns:
                 df_working["리오더입고수량"] = 0
 
+            # 실제 존재하는 컬럼만 필터링하여 에러 방지
+            final_target = [c for c in display_cols if c in df_working.columns or c in ["일판매량", "권장발주량", "리오더입고수량"]]
+
             st.data_editor(
-                df_working[final_cols], 
-                use_container_width=True, 
-                key="main_editor", 
-                on_change=auto_save_to_gsheet,
-                # 3일 발주합계와 일판매량은 수정 불가능하도록 설정 (보기 전용)
+                df_working[final_target],
+                use_container_width=True,
+                key="main_editor",
+                on_change=auto_save_and_update,
                 column_config={
-                    t3day: st.column_config.NumberColumn(f"📅 {t3day}", help="최근 3일간의 총 발주량입니다.", disabled=True),
-                    "일판매량": st.column_config.NumberColumn("📈 일판매량", format="%.1f", disabled=True)
+                    stock: st.column_config.NumberColumn("📦 정상재고", disabled=True),
+                    avail: st.column_config.NumberColumn("✅ 가용재고", disabled=True),
+                    t3day: st.column_config.NumberColumn("📊 3일발주합계", disabled=True),
+                    "일판매량": st.column_config.NumberColumn("📈 일판매량", disabled=True),
+                    "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True),
+                    "리오더 수량": st.column_config.NumberColumn("📝 리오더 수량"),
+                    "리오더입고수량": st.column_config.NumberColumn("➕ 입고수량 입력", help="입력하면 리오더 수량에서 차감됩니다.")
                 }
             )
 
