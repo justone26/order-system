@@ -242,12 +242,13 @@ with tab1:
                     "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                 }
             )
-# 5단계: 요약 및 저장 (🚨 상태 필터 기능 추가)
+# 5단계: 요약 및 저장 (🚨 필터링 & 엑셀 다운로드 복구)
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
             if 'df_raw' in st.session_state:
-                # 데이터 복사 및 기초 계산
                 to_order = st.session_state.df_raw.copy()
+                
+                # 기초 계산 (일판매량 및 권장발주량 이름 통일)
                 v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
                 to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
                 
@@ -261,7 +262,6 @@ with tab1:
                     v_av = pd.to_numeric(row.get(avail, 0), errors='coerce') or 0
                     v_sl = pd.to_numeric(row.get('일판매량', 0), errors='coerce') or 0
                     v_re = pd.to_numeric(row.get('리오더 수량', 0), errors='coerce') or 0
-                    
                     if v_sl > 0 and (v_av + v_re) < (v_sl * 3):
                         return "🚨 긴급(품절위험)"
                     elif v_sl > 0 and (v_av + v_re) < (v_sl * 5):
@@ -270,20 +270,19 @@ with tab1:
 
                 to_order['상태'] = to_order.apply(check_urgency, axis=1)
 
-                # --- [상태 필터 UI 추가] ---
+                # --- [상태 필터 UI] ---
                 f_col1, f_col2 = st.columns([2, 2])
                 status_filter = f_col1.selectbox(
                     "🎯 상태 필터 선택", 
                     ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"],
-                    index=0,
-                    key="status_filter_select"
+                    key="final_status_filter"
                 )
 
-                # 1차 필터링 (발주 필요건 + 정상 아닌 건)
+                # 1차 필터 (발주 필요건 + 정상 아닌 건)
                 mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
                 to_order = to_order[mask].copy()
 
-                # 2차 필터링 (사용자 선택 필터 적용)
+                # 2차 필터 (사용자 선택 적용)
                 if status_filter == "🚨 긴급만 보기":
                     to_order = to_order[to_order['상태'] == "🚨 긴급(품절위험)"]
                 elif status_filter == "⚠️ 주의이상 보기":
@@ -293,35 +292,36 @@ with tab1:
                     if '추가발주분' not in to_order.columns:
                         to_order['추가발주분'] = 0
                     
-                    # 요청하신 8개 컬럼 순서 고정
+                    # 요청하신 8개 컬럼 순서
                     final_display_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "추가발주분", "권장발주량"]
                     final_display_cols = [c for c in final_display_cols if c in to_order.columns or c in ["상태", "추가발주분"]]
 
                     st.write(f"### ✏️ 발주 수량 확인 ({status_filter})")
+                    
+                    # 데이터 편집기
                     final_order_df = st.data_editor(
                         to_order[final_display_cols], 
                         use_container_width=True, 
-                        key="order_editor",
+                        key="final_order_editor",
                         column_config={
                             "상태": st.column_config.Column("📢 상태", width="medium"),
-                            item: "상품명",
-                            option: "옵션",
-                            vendor_item: "거래처상품명",
+                            "추가발주분": st.column_config.NumberColumn("➕ 추가발주분", help="새로 주문할 수량 입력"),
                             avail: st.column_config.NumberColumn("✅ 가용재고", disabled=True),
                             "리오더 수량": st.column_config.NumberColumn("📦 현재리오더수량", disabled=True),
-                            "추가발주분": st.column_config.NumberColumn("➕ 추가발주분"),
                             "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                         }
                     )
                     
-                    c_s1, c_s2 = st.columns(2)
-                    if c_s1.button("💾 구글 시트 최종 저장"):
-                        for idx, row in final_order_df.iterrows():
-                            current_re = int(row.get('리오더 수량', 0))
-                            added_re = int(row.get('추가발주분', 0))
-                            st.session_state.df_raw.at[idx, '리오더 수량'] = current_re + added_re
-                        
-                        save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy
+                    # --- [하단 버튼 영역: 저장 & 다운로드] ---
+                    st.divider()
+                    btn_col1, btn_col2 = st.columns(2)
+                    
+                    with btn_col1:
+                        if st.button("💾 구글 시트 최종 저장", use_container_width=True):
+                            for idx, row in final_order_df.iterrows():
+                                current_re = int(row.get('리오더 수량', 0))
+                                added_re = int(row.get('추가발주분', 0))
+                                st.session_state.df_raw.at[idx, '리오더 수량'] = current_re + added_
                         
             # 6단계: 과거 확인
             st.subheader("📜 6단계: 과거 데이터 확인")
