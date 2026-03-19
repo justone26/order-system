@@ -338,11 +338,7 @@ with tab1:
                         )
                 else:
                     st.info(f"필터 조건({status_filter})에 맞는 상품이 없습니다.")
-
-            # --- [여기서부터 6단계 시작] ---
-            st.divider()
-            st.subheader("📜 6단계: 과거 데이터 확인")
-                        
+              
             # 6단계: 과거 확인
             st.subheader("📜 6단계: 과거 데이터 확인")
             if st.button("🔄 기록 불러오기"):
