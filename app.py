@@ -230,62 +230,41 @@ with tab1:
                 }
             )
 
-            # 5단계: 요약 및 저장
-            st.subheader("📋 5단계: 최종 발주 리스트 요약")
-            if 'df_raw' in st.session_state:
-                to_order = st.session_state.df_raw.copy()
-                
-                v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
-                to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
-                if '권장발주량' not in to_order.columns:
-                    to_order['권장발주량'] = to_order.get('권장 발주량', 0)
-
-                def check_urgency(row):
-                    v_av = pd.to_numeric(row.get(avail, 0), errors='coerce') or 0
-                    v_sl = pd.to_numeric(row.get('일판매량', 0), errors='coerce') or 0
-                    v_re = pd.to_numeric(row.get('리오더 수량', 0), errors='coerce') or 0
-                    if v_sl > 0 and (v_av + v_re) < (v_sl * 3): return "🚨 긴급"
-                    elif v_sl > 0 and (v_av + v_re) < (v_sl * 5): return "⚠️ 주의"
-                    return "✅ 정상"
-
-                to_order['상태'] = to_order.apply(check_urgency, axis=1)
-
-                f_col1, f_col2 = st.columns([2, 2])
-                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_status_filter")
-
-                mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
-                to_order = to_order[mask].copy()
-                if "🚨" in status_filter: to_order = to_order[to_order['상태'] == "🚨 긴급"]
-                elif "⚠️" in status_filter: to_order = to_order[to_order['상태'].str.contains("🚨|⚠️")]
-
-                if not to_order.empty:
-                    display_5step = to_order.copy()
-                    if '추가발주분' not in display_5step.columns: display_5step['추가발주분'] = 0
+    # ... (위의 final_order_df = st.data_editor 부분 바로 아래에 추가) ...
                     
-                    num_targets_5 = [avail, "리오더 수량", "추가발주분", "권장발주량"]
-                    for col in num_targets_5:
-                        if col in display_5step.columns:
-                            display_5step[col] = display_5step[col].fillna(0).astype(int).apply(lambda x: f"  {x}")
+                    st.divider()
+                    col_btn1, col_btn2 = st.columns(2)
 
-                    final_display_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "추가발주분", "권장발주량"]
-                    existing_cols_5 = [c for c in final_display_cols if c in display_5step.columns]
-                    
-                    st.data_editor(
-                        display_5step[existing_cols_5], 
-                        use_container_width=True, 
-                        height=500, 
-                        key="final_order_editor",
-                        column_config={
-                            "상태": st.column_config.Column("📢 상태", width=80),
-                            item: st.column_config.Column("📦 상품명", width="medium"), 
-                            option: st.column_config.Column("🎨 옵션", width=100),
-                            vendor_item: st.column_config.Column("🏢 공급처상품명", width=280), 
-                            avail: st.column_config.Column("가용재고", width=80),
-                            "리오더 수량": st.column_config.Column("현 리오더", width=80),
-                            "추가발주분": st.column_config.Column("추가발주", width=80),
-                            "권장발주량": st.column_config.Column("권장발주", width=80)
-                        }
-                    )                    
+                    # 1. 구글 시트 'history' 탭에 저장 (과거 기록용)
+                    if col_btn1.button("💾 구글 시트에 최종 기록 저장"):
+                        # 표시용 공백 제거 후 순수 데이터만 추출
+                        save_data = final_order_df.copy()
+                        for c in save_data.columns:
+                            if save_data[c].dtype == object:
+                                save_data[c] = save_data[c].astype(str).str.strip()
+                        
+                        success = save_history_to_gsheet(save_data)
+                        if success:
+                            st.success("✅ 'history' 탭에 오늘 기록이 추가되었습니다!")
+                        else:
+                            st.error("❌ 저장 실패. 설정을 확인하세요.")
+
+                    # 2. 엑셀 파일로 다운로드
+                    # 공백 제거한 깨끗한 데이터로 다운로드 생성
+                    download_df = final_order_df.copy()
+                    for c in download_df.columns:
+                        if download_df[c].dtype == object:
+                            download_df[c] = download_df[c].astype(str).str.strip()
+
+                    csv = download_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                    col_btn2.download_button(
+                        label="📥 발주 리스트 엑셀 다운로드",
+                        data=csv,
+                        file_name=f"발주리스트_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.info("💡 발주할 상품이 없습니다. (권장발주량 > 0 또는 긴급/주의 상품 없음)")
                     
             # 6단계: 과거 확인
             st.subheader("📜 6단계: 과거 데이터 확인")
