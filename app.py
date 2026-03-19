@@ -242,69 +242,68 @@ with tab1:
                     "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                 }
             )
-# 5단계: 요약 및 저장 (TypeError 해결 최종 버전)
+# 5단계: 요약 및 저장 (항목 수정: 공급처 상품명 반영)
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
             if 'df_raw' in st.session_state:
                 to_order = st.session_state.df_raw.copy()
                 
-                # 데이터 전처리 및 계산
+                # 기초 데이터 계산 (일판매량 등)
                 v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
                 to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
                 
+                # 권장발주량 이름 통일
                 if '권장 발주량' in to_order.columns:
                     to_order['권장발주량'] = to_order['권장 발주량']
                 elif '권장발주량' not in to_order.columns:
                     to_order['권장발주량'] = 0
 
+                # 긴급도 계산 함수
                 def check_urgency(row):
                     v_av = pd.to_numeric(row.get(avail, 0), errors='coerce') or 0
                     v_sl = pd.to_numeric(row.get('일판매량', 0), errors='coerce') or 0
                     v_re = pd.to_numeric(row.get('리오더 수량', 0), errors='coerce') or 0
-                    if v_sl > 0 and (v_av + v_re) < (v_sl * 3): return "🚨 긴급"
+                    if v_sl > 0 and (v_av + v_re) < (v_sl * 3): return "🚨 긴급(품절위험)"
                     elif v_sl > 0 and (v_av + v_re) < (v_sl * 5): return "⚠️ 주의"
                     return "✅ 정상"
 
                 to_order['상태'] = to_order.apply(check_urgency, axis=1)
 
-                # 필터 UI
-                status_filter = st.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_filter_safe_v10")
+                # 상태 필터 UI
+                f_col1, f_col2 = st.columns([2, 2])
+                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_filter_correct_col")
 
                 # 필터링 적용
                 mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
                 to_order = to_order[mask].copy()
-                if "🚨" in status_filter: to_order = to_order[to_order['상태'] == "🚨 긴급"]
+                if "🚨" in status_filter: to_order = to_order[to_order['상태'] == "🚨 긴급(품절위험)"]
                 elif "⚠️" in status_filter: to_order = to_order[to_order['상태'].str.contains("🚨|⚠️")]
 
                 if not to_order.empty:
-                    # 숫자 데이터를 정수로 변환하여 소수점 제거 (중앙 정렬 느낌을 위해)
-                    for c in [avail, "리오더 수량", "권장발주량"]:
-                        to_order[c] = pd.to_numeric(to_order[c], errors='coerce').fillna(0).astype(int)
+                    if '추가발주분' not in to_order.columns: to_order['추가발주분'] = 0
                     
-                    if '추가발주분' not in to_order.columns:
-                        to_order['추가발주분'] = 0
-                    
+                    # [수정포인트] vendor_item 변수가 '공급처 상품명' 컬럼을 가리키도록 확인해줘!
+                    # 만약 vendor_item 변수 자체가 잘못 설정되어 있다면 여기서 직접 컬럼명을 써줘도 돼.
+                    # 예: "공급처 상품명"
                     final_display_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "추가발주분", "권장발주량"]
                     
                     st.write(f"### ✏️ 발주 수량 확인 ({status_filter})")
                     
-                    # --- [에러 해결 포인트: alignment 제거 및 너비 강제 조정] ---
+                    # 데이터 편집기 (너비 최적화)
                     final_order_df = st.data_editor(
                         to_order[final_display_cols], 
                         use_container_width=True, 
-                        key="final_order_editor_no_error",
+                        key="final_order_editor_correct",
                         column_config={
-                            "상태": st.column_config.Column("📢 상태", width=70),
+                            "상태": st.column_config.Column("📢 상태", width="small"),
                             item: st.column_config.Column("📦 상품명", width="medium"), 
-                            option: st.column_config.Column("🎨 옵션", width=80),
-                            vendor_item: st.column_config.Column("🏢 공급처상품명", width=250), 
-                            
-                            # NumberColumn 대신 일반 Column을 써서 우측 정렬 강제를 피하거나
-                            # alignment 옵션을 아예 삭제해서 TypeError를 방지함
-                            avail: st.column_config.Column("가용재고", width=80),
-                            "리오더 수량": st.column_config.Column("현 리오더", width=80),
-                            "추가발주분": st.column_config.NumberColumn("추가발주", format="%d", min_value=0, width=80),
-                            "권장발주량": st.column_config.Column("권장발주", width=80)
+                            option: st.column_config.Column("🎨 옵션", width="small"),
+                            # [핵심] 컬럼 헤더 이름을 '공급처상품명'으로 명시하고 너비 고정
+                            vendor_item: st.column_config.Column("🏢 공급처상품명", width=300), 
+                            avail: st.column_config.NumberColumn("✅ 가용재고", format="%d", width="small"),
+                            "리오더 수량": st.column_config.NumberColumn("📦 현재리오더", format="%d", width="small"),
+                            "추가발주분": st.column_config.NumberColumn("➕ 추가발주", format="%d", min_value=0, width="small"),
+                            "권장발주량": st.column_config.NumberColumn("🚀 권장발주", format="%d", width="small")
                         }
                     )
                     
@@ -322,7 +321,7 @@ with tab1:
                                 save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
                                 save_df.columns = ['상품명', '옵션', '리오더 수량']
                                 save_reorder_data(save_df)
-                                st.success("✅ 저장 완료!"); st.rerun()
+                                st.success("✅ 공급처 상품 기준 저장 완료!"); st.rerun()
                             except Exception as e: st.error(f"오류: {e}")
                     with b2:
                         csv_data = final_order_df.to_csv(index=False).encode('utf-8-sig')
