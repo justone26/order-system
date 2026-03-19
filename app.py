@@ -242,51 +242,72 @@ with tab1:
                     "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                 }
             )
-          # 5단계: 요약 및 저장
+# 5단계: 요약 및 저장 (🚨 긴급 표시 추가)
             st.subheader("📋 5단계: 발주 리스트 요약 및 저장")
             
-            # 권장 발주량이 있거나 리오더 수량이 있는 항목 추출
-            to_order = st.session_state.df_raw[
-                (st.session_state.df_raw['권장 발주량'] > 0) | (st.session_state.df_raw['리오더 수량'] > 0)
-            ].copy()
+            # 원본 데이터 복사
+            to_order = st.session_state.df_raw.copy()
+            
+            # --- [긴급도 계산 로직] ---
+            # 가용재고가 일판매량의 3일치 미만으로 남았는데, 리오더 수량도 0인 경우 '긴급'
+            def check_urgency(row):
+                v_avail = pd.to_numeric(row[avail], errors='coerce') or 0
+                v_daily = pd.to_numeric(row['일판매량'], errors='coerce') or 0
+                v_reorder = pd.to_numeric(row['리오더 수량'], errors='coerce') or 0
+                
+                # 판매는 되는데 재고가 3일치 미만이고 주문해둔 것도 없을 때
+                if v_daily > 0 and v_avail < (v_daily * 3) and v_reorder == 0:
+                    return "🚨 긴급(품절위험)"
+                elif v_daily > 0 and v_avail < (v_daily * 5):
+                    return "⚠️ 주의"
+                return "✅ 정상"
+
+            to_order['상태확인'] = to_order.apply(check_urgency, axis=1)
+
+            # 권장발주량이 있거나 리오더가 필요한 항목만 추출
+            to_order = to_order[(to_order['권장발주량'] > 0) | (to_order['상태확인'].str.contains('긴급'))].copy()
             
             if not to_order.empty:
-                # 추가 입력용 컬럼 초기화
                 if '추가 리오더' not in to_order.columns:
                     to_order['추가 리오더'] = 0
                 
-                display_cols = [vendor, item, option, vendor_item, "리오더 수량", "추가 리오더", "권장 발주량"]
+                # 표시 순서: 긴급도(상태확인)를 맨 앞으로!
+                display_cols = ["상태확인", item, option, "리오더 수량", "추가 리오더", "권장발주량"]
                 
-                st.write("### ✏️ 최종 수량 확인")
-                # 편집기에서 수정한 내용을 받기 위한 key 설정
-                final_order_df = st.data_editor(to_order[display_cols], use_container_width=True, key="order_editor")
+                st.write("### ✏️ 최종 발주 수량 및 긴급 항목 확인")
+                # 최종 편집기
+                final_order_df = st.data_editor(
+                    to_order[display_cols], 
+                    use_container_width=True, 
+                    key="order_editor",
+                    column_config={
+                        "상태확인": st.column_config.Column("📢 상태", help="재고 부족 위험도를 표시합니다."),
+                        "리오더 수량": st.column_config.NumberColumn("현재 리오더", disabled=True),
+                        "추가 리오더": st.column_config.NumberColumn("➕ 추가 발주분", help="이번에 새로 주문할 수량을 입력하세요.")
+                    }
+                )
                 
                 c_s1, c_s2 = st.columns(2)
                 
                 if c_s1.button("💾 구글 시트 및 기록 저장"):
-                    # 1. 편집기에서 수정한 내용을 원본(df_raw)에 반영
+                    # 편집기 수정 내용 반영
                     for idx, row in final_order_df.iterrows():
-                        # 기존 리오더 수량 + 새로 입력한 추가 리오더 수량
                         new_total = float(row['리오더 수량']) + float(row['추가 리오더'])
-                        st.session_state.df_raw.at[idx, '리오더 수량'] = new_total
+                        st.session_state.df_raw.at[idx, '리오더 수량'] = int(new_total)
                     
-                    # 2. 구글 시트로 전송 (상품명, 옵션, 리오더 수량만 추출)
+                    # 구글 시트 저장
                     save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
-                    save_df.columns = ['상품명', '옵션', '리오더 수량'] # 시트 헤더 강제 지정
-                    
-                    # 실제 저장 함수 호출
+                    save_df.columns = ['상품명', '옵션', '리오더 수량']
                     save_reorder_data(save_df)
                     
-                    # 3. 히스토리 저장
-                    if save_history_to_gsheet(final_order_df):
-                        st.success("✅ 구글 시트에 리오더 수량이 성공적으로 저장되었습니다!")
-                        st.rerun() # 저장 후 화면 갱신
+                    st.success("✅ 긴급 항목을 포함한 모든 데이터가 저장되었습니다!")
+                    st.rerun()
                 
                 with c_s2:
                     csv_data = final_order_df.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button("📥 엑셀 다운로드", csv_data, f"발주_{datetime.now().strftime('%Y%m%d')}.csv")
+                    st.download_button("📥 발주서 다운로드", csv_data, f"발주서_{datetime.now().strftime('%m%d_%H%M')}.csv")
             else:
-                st.info("발주할 상품이 없습니다.")
+                st.info("현재 긴급하게 발주가 필요한 상품이 없습니다.")
 
             # 6단계: 과거 확인
             st.subheader("📜 6단계: 과거 데이터 확인")
