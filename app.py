@@ -242,25 +242,29 @@ with tab1:
                     "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                 }
             )
-# 5단계: 요약 및 저장 (KeyError 방지 및 🚨 긴급 표시)
+# 5단계: 요약 및 저장 (띄어쓰기 에러 방지 및 🚨 긴급 표시)
             st.subheader("📋 5단계: 발주 리스트 요약 및 저장")
             
-            # 1. 원본 데이터에서 안전하게 복사
             if 'df_raw' in st.session_state:
                 to_order = st.session_state.df_raw.copy()
                 
-                # [에러 방지] 계산에 필요한 '일판매량'이 없는 경우를 대비해 여기서 다시 계산
-                v_3day_all = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
-                to_order['일판매량'] = (v_3day_all / 3).round(0).astype(int)
+                # [에러 방지 1] 계산에 필요한 컬럼들 안전하게 확보/생성
+                v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
+                to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
                 
+                # 권장발주량 컬럼 이름 통일 (띄어쓰기 있든 없든 하나로 합침)
+                if '권장 발주량' in to_order.columns and '권장발주량' not in to_order.columns:
+                    to_order['권장발주량'] = to_order['권장 발주량']
+                elif '권장발주량' not in to_order.columns:
+                    to_order['권장발주량'] = 0 # 아예 없으면 0으로 생성
+
                 # --- [긴급도 계산 함수] ---
                 def check_urgency(row):
-                    # 가용재고와 리오더 수량 파악
-                    v_av = pd.to_numeric(row[avail], errors='coerce') if avail in row else 0
-                    v_sl = pd.to_numeric(row['일판매량'], errors='coerce') if '일판매량' in row else 0
-                    v_re = pd.to_numeric(row['리오더 수량'], errors='coerce') if '리오더 수량' in row else 0
+                    v_av = pd.to_numeric(row.get(avail, 0), errors='coerce') or 0
+                    v_sl = pd.to_numeric(row.get('일판매량', 0), errors='coerce') or 0
+                    v_re = pd.to_numeric(row.get('리오더 수량', 0), errors='coerce') or 0
                     
-                    # 기준: 재고가 일판매량의 3일치 미만이고, 현재 주문 중인(리오더) 물량도 없을 때
+                    # 재고 + 리오더가 일판매량의 3일치 미만이면 긴급
                     if v_sl > 0 and (v_av + v_re) < (v_sl * 3):
                         return "🚨 긴급(품절위험)"
                     elif v_sl > 0 and (v_av + v_re) < (v_sl * 5):
@@ -270,16 +274,16 @@ with tab1:
                 # 긴급도 적용
                 to_order['상태확인'] = to_order.apply(check_urgency, axis=1)
 
-                # 권장발주량이 있거나 상태가 정상이 아닌 것들만 추리기
-                to_order = to_order[(to_order['권장발주량'] > 0) | (to_order['상태확인'] != "✅ 정상")].copy()
+                # [에러 방지 2] 필터링 시 컬럼 존재 확인
+                mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태확인'] != "✅ 정상")
+                to_order = to_order[mask].copy()
                 
                 if not to_order.empty:
                     if '추가 리오더' not in to_order.columns:
                         to_order['추가 리오더'] = 0
                     
-                    # 화면에 보여줄 순서 (긴급 상태를 맨 앞으로)
+                    # 화면 표시 컬럼 설정 (안전하게 get 사용)
                     final_display_cols = ["상태확인", item, option, "리오더 수량", "추가 리오더", "권장발주량"]
-                    
                     # 실제 존재하는 컬럼만 필터링
                     final_display_cols = [c for c in final_display_cols if c in to_order.columns]
 
@@ -291,32 +295,32 @@ with tab1:
                         column_config={
                             "상태확인": st.column_config.Column("📢 상태", width="medium"),
                             "리오더 수량": st.column_config.NumberColumn("현재 리오더", disabled=True),
-                            "추가 리오더": st.column_config.NumberColumn("➕ 추가 발주분", help="이번에 새로 주문할 수량을 입력하세요.")
+                            "추가 리오더": st.column_config.NumberColumn("➕ 추가 발주분", help="새로 주문할 수량")
                         }
                     )
                     
                     c_s1, c_s2 = st.columns(2)
                     
                     if c_s1.button("💾 구글 시트 및 기록 저장"):
-                        # 수정된 내용을 원본 session_state에 반영
                         for idx, row in final_order_df.iterrows():
-                            # 기존 리오더 수량 + 새로 입력한 추가 리오더
-                            updated_val = int(row['리오더 수량']) + int(row['추가 리오더'])
-                            st.session_state.df_raw.at[idx, '리오더 수량'] = updated_val
+                            # 현재 리오더 + 추가 리오더 합산
+                            current_re = int(row.get('리오더 수량', 0))
+                            added_re = int(row.get('추가 리오더', 0))
+                            st.session_state.df_raw.at[idx, '리오더 수량'] = current_re + added_re
                         
-                        # 구글 시트 업데이트 전용 데이터 생성
+                        # 시트 저장용 데이터 준비
                         save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
                         save_df.columns = ['상품명', '옵션', '리오더 수량']
                         save_reorder_data(save_df)
                         
-                        st.success("✅ 모든 데이터가 구글 시트에 안전하게 저장되었습니다!")
+                        st.success("✅ 저장이 완료되었습니다!")
                         st.rerun()
                     
                     with c_s2:
                         csv_data = final_order_df.to_csv(index=False).encode('utf-8-sig')
-                        st.download_button("📥 발주서 다운로드", csv_data, f"order_{datetime.now().strftime('%m%d')}.csv")
+                        st.download_button("📥 발주서 다운로드", csv_data, f"order_{datetime.now().strftime('%m%d_%H%M')}.csv")
                 else:
-                    st.info("현재 발주나 긴급 확인이 필요한 상품이 없습니다.")
+                    st.info("현재 발주가 필요한 긴급 상품이 없습니다.")
 
             # 6단계: 과거 확인
             st.subheader("📜 6단계: 과거 데이터 확인")
