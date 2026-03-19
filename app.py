@@ -144,9 +144,9 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
 
-      # 4단계: 편집 (에러 방어 + 자동 저장 통합)
+# 4단계: 편집 (3일 발주합계 컬럼 추가 및 자동 저장)
         if st.session_state.analyzed:
-            st.subheader("📊 4단계: 데이터 편집 (입력 시 자동 저장)")
+            st.subheader("📊 4단계: 데이터 편집 (3일 발주합계 확인)")
             
             # --- [필터 로직] ---
             f1, f2 = st.columns([3, 1])
@@ -155,19 +155,11 @@ with tab1:
             
             df_working = st.session_state.df_raw.copy()
 
-            # [중요] 일판매량 계산 (없으면 생성)
-            if t3day in df_working.columns:
-                df_working["일판매량"] = (pd.to_numeric(df_working[t3day], errors='coerce').fillna(0) / 3).round(1)
-            else:
-                df_working["일판매량"] = 0
-
-            # 품절 필터 적용
+            # 품절/검색 필터 적용 (기존 동일)
             if filter_mode == "정상만": 
                 df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
             elif filter_mode == "품절만": 
                 df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
-            
-            # 검색 적용
             if search_query: 
                 df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
 
@@ -175,47 +167,49 @@ with tab1:
             def auto_save_to_gsheet():
                 if "main_editor" in st.session_state and st.session_state["main_editor"]["edited_rows"]:
                     changes = st.session_state["main_editor"]["edited_rows"]
-                    
                     for row_idx_str, change in changes.items():
                         row_idx = int(row_idx_str)
-                        # 현재 필터링된 화면의 인덱스를 원본 인덱스로 변환
                         orig_idx = df_working.index[row_idx]
                         
-                        # 1. 리오더 수량 직접 수정
                         if "리오더 수량" in change:
                             st.session_state.df_raw.at[orig_idx, "리오더 수량"] = float(change["리오더 수량"])
-                        
-                        # 2. 리오더입고수량 입력 시 차감
                         if "리오더입고수량" in change:
                             received = float(change["리오더입고수량"])
-                            current_reorder = float(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
-                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_reorder - received)
+                            current_val = float(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_val - received)
                     
-                    # 구글 시트에 즉시 업데이트
                     try:
                         save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
                         save_df.columns = ['상품명', '옵션', '리오더 수량']
                         save_reorder_data(save_df)
                         st.toast("✅ 구글 시트에 자동 저장되었습니다!")
                     except Exception as e:
-                        st.error(f"저장 중 오류 발생: {e}")
+                        st.error(f"저장 실패: {e}")
 
             # --- [데이터 편집기 출력] ---
-            # 보여줄 컬럼 리스트 (실제 존재하는지 체크하며 구성)
-            display_list = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "일판매량", "권장 발주량"]
+            # t3day(3일 발주합계)를 리스트에 추가했습니다.
+            display_list = [
+                sold_out, vendor, item, option, vendor_item, 
+                stock, avail, t3day, "일판매량", "리오더 수량", "리오더입고수량", "권장 발주량"
+            ]
             
-            # [에러 방지 핵심] 실제 df_working에 존재하는 컬럼만 필터링
-            final_target_cols = [c for c in display_list if c in df_working.columns]
+            # 실제 존재하는 컬럼만 필터링 (KeyError 방지)
+            final_cols = [c for c in display_list if c in df_working.columns]
             
-            # 입고수량 칸이 없으면 0으로 생성 (입력 가능하게)
+            # 입고수량 칸 생성
             if "리오더입고수량" not in df_working.columns:
                 df_working["리오더입고수량"] = 0
 
             st.data_editor(
-                df_working[final_target_cols], 
+                df_working[final_cols], 
                 use_container_width=True, 
                 key="main_editor", 
-                on_change=auto_save_to_gsheet 
+                on_change=auto_save_to_gsheet,
+                # 3일 발주합계와 일판매량은 수정 불가능하도록 설정 (보기 전용)
+                column_config={
+                    t3day: st.column_config.NumberColumn(f"📅 {t3day}", help="최근 3일간의 총 발주량입니다.", disabled=True),
+                    "일판매량": st.column_config.NumberColumn("📈 일판매량", format="%.1f", disabled=True)
+                }
             )
 
           # 5단계: 요약 및 저장
