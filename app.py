@@ -242,13 +242,13 @@ with tab1:
                     "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                 }
             )
-# 5단계: 요약 및 저장 (화면 간격 최적화 버전)
+# 5단계: 요약 및 저장 (글자 길이에 맞춘 반응형 최적화)
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
             if 'df_raw' in st.session_state:
                 to_order = st.session_state.df_raw.copy()
                 
-                # 기초 데이터 정리 및 계산
+                # 데이터 기초 계산
                 v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
                 to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
                 
@@ -257,24 +257,21 @@ with tab1:
                 elif '권장발주량' not in to_order.columns:
                     to_order['권장발주량'] = 0
 
-                # 긴급도 계산
                 def check_urgency(row):
                     v_av = pd.to_numeric(row.get(avail, 0), errors='coerce') or 0
                     v_sl = pd.to_numeric(row.get('일판매량', 0), errors='coerce') or 0
                     v_re = pd.to_numeric(row.get('리오더 수량', 0), errors='coerce') or 0
-                    if v_sl > 0 and (v_av + v_re) < (v_sl * 3):
-                        return "🚨 긴급(품절위험)"
-                    elif v_sl > 0 and (v_av + v_re) < (v_sl * 5):
-                        return "⚠️ 주의"
+                    if v_sl > 0 and (v_av + v_re) < (v_sl * 3): return "🚨 긴급(품절위험)"
+                    elif v_sl > 0 and (v_av + v_re) < (v_sl * 5): return "⚠️ 주의"
                     return "✅ 정상"
 
                 to_order['상태'] = to_order.apply(check_urgency, axis=1)
 
                 # 필터 UI
                 f_col1, f_col2 = st.columns([2, 2])
-                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
+                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_filter_auto_res")
 
-                # 데이터 필터링
+                # 필터 적용
                 mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
                 to_order = to_order[mask].copy()
                 if "🚨" in status_filter: to_order = to_order[to_order['상태'] == "🚨 긴급(품절위험)"]
@@ -283,47 +280,53 @@ with tab1:
                 if not to_order.empty:
                     if '추가발주분' not in to_order.columns: to_order['추가발주분'] = 0
                     
-                    # 출력 컬럼 정의
                     final_display_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "추가발주분", "권장발주량"]
                     
                     st.write(f"### ✏️ 발주 수량 확인 ({status_filter})")
                     
-                    # --- [간격 최적화 설정 시작] ---
-                    st.data_editor(
+                    # --- [반응형 최적화 설정] ---
+                    # 1. 특정 너비를 지정하지 않으면 브라우저가 내용물 길이에 맞춰 자동 배분해.
+                    # 2. 대신 숫자 칸들만 최소 너비를 잡아줘서 글자 칸(거래처명)이 공간을 더 쓰게 유도해.
+                    final_order_df = st.data_editor(
                         to_order[final_display_cols], 
-                        use_container_width=True, 
-                        key="final_order_editor_optimized",
+                        use_container_width=True, # 화면을 꽉 채우면서 내부 칸들이 반응형으로 작동
+                        key="final_order_editor_auto_res",
                         column_config={
-                            "상태": st.column_config.Column("📢 상태", width="small", help="재고 위험도"),
-                            item: st.column_config.Column("📦 상품명", width="large"), # 상품명은 길게
-                            option: st.column_config.Column("🎨 옵션", width="medium"), # 옵션은 중간
-                            vendor_item: st.column_config.Column("🏢 거래처상품명", width="medium"),
-                            avail: st.column_config.NumberColumn("✅ 가용재고", width="small", format="%d"),
-                            "리오더 수량": st.column_config.NumberColumn("📦 현재리오더", width="small", format="%d"),
-                            "추가발주분": st.column_config.NumberColumn("➕ 추가발주", width="small", format="%d", min_value=0),
-                            "권장발주량": st.column_config.NumberColumn("🚀 권장발주", width="small", format="%d")
+                            "상태": st.column_config.Column("📢 상태", width=None), 
+                            item: st.column_config.Column("📦 상품명", width=None), 
+                            option: st.column_config.Column("🎨 옵션", width=None),
+                            # [핵심] 너비를 None으로 두면 내용물에 따라 최대한 유연하게 늘어나.
+                            vendor_item: st.column_config.Column("🏢 거래처상품명", width=None), 
+                            # 숫자 칸들은 좁게 유지되도록 최소 설정만 적용
+                            avail: st.column_config.NumberColumn("✅ 가용재고", format="%d"),
+                            "리오더 수량": st.column_config.NumberColumn("📦 현재리오더", format="%d"),
+                            "추가발주분": st.column_config.NumberColumn("➕ 추가발주", format="%d", min_value=0),
+                            "권장발주량": st.column_config.NumberColumn("🚀 권장발주", format="%d")
                         }
                     )
-                    # --- [간격 최적화 설정 끝] ---
                     
                     st.divider()
-                    b_col1, b_col2 = st.columns(2)
-                    with b_col1:
+                    b1, b2 = st.columns(2)
+                    with b1:
                         if st.button("💾 구글 시트 최종 저장", use_container_width=True, type="primary"):
-                            # 저장 로직 (이전과 동일)
                             try:
-                                for idx, row in to_order.iterrows(): # 편집기 상태 반영 필요시 세션스테이트 참조
-                                    # (여기에 기존 저장 로직 유지...)
-                                    pass
-                                st.success("✅ 저장 완료!")
-                                st.rerun()
+                                # 저장 로직 (데이터 정수화 포함)
+                                for idx, row in final_order_df.iterrows():
+                                    curr = pd.to_numeric(row.get('리오더 수량', 0), errors='coerce')
+                                    curr = int(0 if pd.isna(curr) else curr)
+                                    add = pd.to_numeric(row.get('추가발주분', 0), errors='coerce')
+                                    add = int(0 if pd.isna(add) else add)
+                                    st.session_state.df_raw.at[idx, '리오더 수량'] = curr + add
+                                save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
+                                save_df.columns = ['상품명', '옵션', '리오더 수량']
+                                save_reorder_data(save_df)
+                                st.success("✅ 저장 완료!"); st.rerun()
                             except Exception as e: st.error(f"오류: {e}")
-                    
-                    with b_col2:
-                        csv_data = to_order.to_csv(index=False).encode('utf-8-sig')
+                    with b2:
+                        csv_data = final_order_df.to_csv(index=False).encode('utf-8-sig')
                         st.download_button("📥 엑셀(CSV) 다운로드", csv_data, f"order_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
                 else:
-                    st.info("해당하는 상품이 없습니다.")
+                    st.info("해당 상품이 없습니다.")
               
             # 6단계: 과거 확인
             st.subheader("📜 6단계: 과거 데이터 확인")
