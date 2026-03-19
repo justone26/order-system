@@ -71,33 +71,31 @@ with tab1:
     uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="prod_upload")
     st.divider()
 
-    # [수정된 부분] 파일 업로드 시 구글 시트 데이터를 병합함
+    # [수정] 파일 업로드 시 구글 시트에서 기존 리오더 수량을 찾아 합칩니다.
     if uploaded_file is not None:
         if 'df_raw' not in st.session_state or st.session_state.get('last_filename') != uploaded_file.name:
-            # 1. 업로드한 엑셀 읽기
             df_new = pd.read_excel(uploaded_file)
             df_new.columns = df_new.columns.str.strip()
             df_new = df_new.loc[:, ~df_new.columns.duplicated()] 
             
-            # 2. 구글 시트에서 기존 리오더 수량 가져오기
+            # 구글 시트 연동 로직
             try:
                 sheet = get_sheet().sheet1
                 gs_data = pd.DataFrame(sheet.get_all_records())
                 
-                if not gs_data.empty and '상품명' in gs_data.columns and '리오더 수량' in gs_data.columns:
-                    # 필요한 컬럼만 추출 (상품명, 옵션을 기준으로 매칭)
-                    gs_data = gs_data[['상품명', '옵션', '리오더 수량']].copy()
-                    # 엑셀 데이터와 구글 시트 데이터 합치기 (왼쪽 조인)
-                    df_new = pd.merge(df_new, gs_data, on=['상품명', '옵션'], how='left', suffixes=('', '_gs'))
+                if not gs_data.empty and '상품명' in gs_data.columns:
+                    # 매칭을 위해 상품명, 옵션, 리오더 수량만 가져옴
+                    gs_subset = gs_data[['상품명', '옵션', '리오더 수량']].copy()
+                    # 기존 데이터와 합치기 (상품명+옵션 기준)
+                    df_new = pd.merge(df_new, gs_subset, on=['상품명', '옵션'], how='left', suffixes=('', '_gs'))
                     
-                    # 구글 시트에 값이 있으면 그 값을 쓰고, 없으면 0 처리
                     if '리오더 수량_gs' in df_new.columns:
                         df_new['리오더 수량'] = df_new['리오더 수량_gs'].fillna(0)
                         df_new = df_new.drop(columns=['리오더 수량_gs'])
                 else:
                     df_new['리오더 수량'] = 0
             except Exception as e:
-                st.warning(f"구글 시트 연동 실패(새 데이터로 시작): {e}")
+                st.warning(f"기존 리오더 수량 불러오기 실패: {e}")
                 df_new['리오더 수량'] = 0
 
             st.session_state.df_raw = df_new
@@ -105,9 +103,16 @@ with tab1:
             st.session_state.analyzed = False
             st.rerun()
 
-        # 1단계: 매핑
+    # 데이터가 로드된 경우에만 매핑 및 분석 진행
+    if st.session_state.get('df_raw') is not None:
+        df_current = st.session_state.df_raw
+        cols = df_current.columns.tolist()
+
+        # 1단계: 매핑 설정 (여기서 NameError 방지를 위해 find_idx가 코드 상단에 있어야 함)
         st.subheader("⚙️ 1단계: 매핑 설정")
         c1, c2 = st.columns(2)
+        
+        # find_idx 함수는 코드 맨 위에 정의되어 있어야 에러가 안 납니다.
         sold_out = c1.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
         vendor = c1.selectbox("공급처", cols, index=find_idx(cols, ['공급처']))
         item = c1.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
@@ -119,7 +124,7 @@ with tab1:
         t3day = c2.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
         t1week = c2.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
-        # 2~3단계: 분석
+        # 2~3단계: 분석 설정
         st.subheader("⚙️ 2~3단계: 분석 설정")
         col_lt, col_ss = st.columns(2)
         lead_time = col_lt.number_input("리드타임 (일)", value=10)
@@ -127,23 +132,28 @@ with tab1:
         
         if st.button("🚀 분석 실행"):
             df = st.session_state.df_raw.copy()
+            # 판매량 계산 및 발주량 계산
             daily_avg = pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7
             df['권장 발주량'] = ((daily_avg * lead_time) + (daily_avg * safety_stock) - pd.to_numeric(df[avail], errors='coerce').fillna(0)).clip(lower=0).astype(int)
+            
+            # 리오더 수량 컬럼이 없으면 생성
+            if '리오더 수량' not in df.columns: df['리오더 수량'] = 0
+            if '리오더입고수량' not in df.columns: df['리오더입고수량'] = 0
+            
             st.session_state.df_raw = df
             st.session_state.analyzed = True
             st.rerun()
 
+        # 4단계: 편집 (분석이 완료된 후 표시)
         if st.session_state.analyzed:
-            # 4단계: 편집
             st.subheader("📊 4단계: 데이터 편집")
-            target_cols = [sold_out, vendor, item, option, vendor_item, "정상재고", "가용재고", "리오더 수량", "리오더입고수량", "일판매량", "3일발주합계", "1주발주합계", "권장 발주량"]
             
-            if "3일발주합계" in st.session_state.df_raw.columns:
-                st.session_state.df_raw["일판매량"] = (pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce').fillna(0) / 3).round(0).astype(int)
-
-            for c in target_cols:
-                if c not in st.session_state.df_raw.columns: st.session_state.df_raw[c] = 0
-
+            # 일판매량 계산
+            st.session_state.df_raw["일판매량"] = (pd.to_numeric(st.session_state.df_raw[t3day], errors='coerce').fillna(0) / 3).round(1)
+            
+            target_cols = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "일판매량", "권장 발주량"]
+            
+            # 검색 및 필터
             f1, f2 = st.columns([3, 1])
             search_query = f1.text_input("🔍 상품명 검색")
             filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
@@ -153,16 +163,18 @@ with tab1:
             elif filter_mode == "품절만": df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
             if search_query: df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
 
-            def update_reorder():
-                edited = st.session_state["main_editor"]
-                for row_idx, changes in edited['edited_rows'].items():
-                    if '리오더입고수량' in changes:
-                        received = float(changes['리오더입고수량'])
-                        original_idx = df_working.index[row_idx]
-                        st.session_state.df_raw.at[original_idx, '리오더 수량'] = max(0, float(st.session_state.df_raw.at[original_idx, '리오더 수량']) - received)
-                        st.session_state.df_raw.at[original_idx, '리오더입고수량'] = 0
+            # [수정] 데이터 편집기 업데이트 로직
+            def on_edit():
+                # 리오더입고수량 입력 시 리오더 수량에서 차감
+                for row_idx, changes in st.session_state["main_editor"]["edited_rows"].items():
+                    if "리오더입고수량" in changes:
+                        received = float(changes["리오더입고수량"])
+                        orig_idx = df_working.index[row_idx]
+                        current_reorder = float(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
+                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_reorder - received)
+                        st.session_state.df_raw.at[orig_idx, "리오더입고수량"] = 0 # 초기화
 
-            st.data_editor(df_working[target_cols], use_container_width=True, key="main_editor", on_change=update_reorder)
+            st.data_editor(df_working[target_cols], use_container_width=True, key="main_editor", on_change=on_edit)
 
             # 5단계: 요약
             st.subheader("📋 5단계: 발주 리스트 요약")
