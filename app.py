@@ -242,13 +242,13 @@ with tab1:
                     "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                 }
             )
-# 5단계: 요약 및 저장 (글자 길이에 맞춘 반응형 최적화)
+# 5단계: 요약 및 저장 (거래처상품명 너비 고정 & 가로 스크롤 방지)
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
             if 'df_raw' in st.session_state:
                 to_order = st.session_state.df_raw.copy()
                 
-                # 데이터 기초 계산
+                # 기초 데이터 전처리 및 계산
                 v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
                 to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
                 
@@ -267,11 +267,11 @@ with tab1:
 
                 to_order['상태'] = to_order.apply(check_urgency, axis=1)
 
-                # 필터 UI
+                # 상태 필터 UI
                 f_col1, f_col2 = st.columns([2, 2])
-                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_filter_auto_res")
+                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_filter_fixed_width")
 
-                # 필터 적용
+                # 필터링 적용
                 mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
                 to_order = to_order[mask].copy()
                 if "🚨" in status_filter: to_order = to_order[to_order['상태'] == "🚨 긴급(품절위험)"]
@@ -284,24 +284,22 @@ with tab1:
                     
                     st.write(f"### ✏️ 발주 수량 확인 ({status_filter})")
                     
-                    # --- [반응형 최적화 설정] ---
-                    # 1. 특정 너비를 지정하지 않으면 브라우저가 내용물 길이에 맞춰 자동 배분해.
-                    # 2. 대신 숫자 칸들만 최소 너비를 잡아줘서 글자 칸(거래처명)이 공간을 더 쓰게 유도해.
+                    # --- [너비 고정 및 가로 스크롤 방지 설정] ---
                     final_order_df = st.data_editor(
                         to_order[final_display_cols], 
-                        use_container_width=True, # 화면을 꽉 채우면서 내부 칸들이 반응형으로 작동
-                        key="final_order_editor_auto_res",
+                        use_container_width=True, # 화면 너비에 무조건 맞춤 (가로 스크롤 방지)
+                        key="final_order_editor_fixed",
                         column_config={
-                            "상태": st.column_config.Column("📢 상태", width=None), 
-                            item: st.column_config.Column("📦 상품명", width=None), 
-                            option: st.column_config.Column("🎨 옵션", width=None),
-                            # [핵심] 너비를 None으로 두면 내용물에 따라 최대한 유연하게 늘어나.
-                            vendor_item: st.column_config.Column("🏢 거래처상품명", width=None), 
-                            # 숫자 칸들은 좁게 유지되도록 최소 설정만 적용
-                            avail: st.column_config.NumberColumn("✅ 가용재고", format="%d"),
-                            "리오더 수량": st.column_config.NumberColumn("📦 현재리오더", format="%d"),
-                            "추가발주분": st.column_config.NumberColumn("➕ 추가발주", format="%d", min_value=0),
-                            "권장발주량": st.column_config.NumberColumn("🚀 권장발주", format="%d")
+                            "상태": st.column_config.Column("📢 상태", width="small"),
+                            item: st.column_config.Column("📦 상품명", width="medium"), 
+                            option: st.column_config.Column("🎨 옵션", width="small"),
+                            # [핵심] 거래처상품명만 특정 픽셀로 고정해서 다른 셀들을 보호해!
+                            vendor_item: st.column_config.Column("🏢 거래처상품명", width=300), 
+                            # 나머지 숫자 데이터는 최소한의 공간만 차지하게 함
+                            avail: st.column_config.NumberColumn("✅ 가용재고", format="%d", width="small"),
+                            "리오더 수량": st.column_config.NumberColumn("📦 현재리오더", format="%d", width="small"),
+                            "추가발주분": st.column_config.NumberColumn("➕ 추가발주", format="%d", min_value=0, width="small"),
+                            "권장발주량": st.column_config.NumberColumn("🚀 권장발주", format="%d", width="small")
                         }
                     )
                     
@@ -310,7 +308,6 @@ with tab1:
                     with b1:
                         if st.button("💾 구글 시트 최종 저장", use_container_width=True, type="primary"):
                             try:
-                                # 저장 로직 (데이터 정수화 포함)
                                 for idx, row in final_order_df.iterrows():
                                     curr = pd.to_numeric(row.get('리오더 수량', 0), errors='coerce')
                                     curr = int(0 if pd.isna(curr) else curr)
