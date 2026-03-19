@@ -230,40 +230,63 @@ with tab1:
                 }
             )
 
-   # 5단계 편집기 바로 아래에 위치해야 함     
-                    st.divider()
-                    col_btn1, col_btn2 = st.columns(2)
+  # 5단계: 요약 및 저장
+            st.subheader("📋 5단계: 최종 발주 리스트 요약")
+            
+            if 'df_raw' in st.session_state:
+                to_order = st.session_state.df_raw.copy()
+                
+                # 기초 데이터 및 판매량 계산
+                v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
+                to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
+                
+                # 권장발주량 컬럼 보정
+                if '권장발주량' not in to_order.columns:
+                    if '권장 발주량' in to_order.columns:
+                        to_order['권장발주량'] = to_order['권장 발주량']
+                    else:
+                        to_order['권장발주량'] = 0
 
-                    # 1. 구글 시트 'history' 탭에 저장 (과거 기록용)
-                    if col_btn1.button("💾 구글 시트에 최종 기록 저장"):
-                        # 표시용 공백 제거 후 순수 데이터만 추출
-                        save_data = final_order_df.copy()
-                        for c in save_data.columns:
-                            if save_data[c].dtype == object:
-                                save_data[c] = save_data[c].astype(str).str.strip()
-                        
-                        success = save_history_to_gsheet(save_data)
-                        if success:
-                            st.success("✅ 'history' 탭에 오늘 기록이 추가되었습니다!")
-                        else:
-                            st.error("❌ 저장 실패. 설정을 확인하세요.")
+                # [상태 계산 함수] 가용재고 + 리오더 수량 기반
+                def check_urgency(row):
+                    v_av = pd.to_numeric(row.get(avail, 0), errors='coerce') or 0
+                    v_sl = pd.to_numeric(row.get('일판매량', 0), errors='coerce') or 0
+                    v_re = pd.to_numeric(row.get('리오더 수량', 0), errors='coerce') or 0
+                    # 3일치 미만이면 긴급, 5일치 미만이면 주의
+                    if v_sl > 0 and (v_av + v_re) < (v_sl * 3): return "🚨 긴급"
+                    elif v_sl > 0 and (v_av + v_re) < (v_sl * 5): return "⚠️ 주의"
+                    return "✅ 정상"
 
-                    # 2. 엑셀 파일로 다운로드
-                    download_df = final_order_df.copy()
-                    for c in download_df.columns:
-                        if download_df[c].dtype == object:
-                            download_df[c] = download_df[c].astype(str).str.strip()
+                to_order['상태'] = to_order.apply(check_urgency, axis=1)
 
-                    csv = download_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                    col_btn2.download_button(
-                        label="📥 발주 리스트 엑셀 다운로드",
-                        data=csv,
-                        file_name=f"발주리스트_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                        mime="text/csv"
-                    )
-                # 이 else는 if not to_order.empty: 와 짝궁입니다.
-                else:
-                    st.info("💡 발주할 상품이 없습니다. (권장발주량 > 0 또는 긴급/주의 상품 없음)")
+                # --- 상태 필터 UI ---
+                f_col1, f_col2 = st.columns([2, 2])
+                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_status_filter_v10")
+
+                # 기본 필터링: 권장발주량이 있거나, 상태가 정상이 아닌 것들
+                mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
+                to_order = to_order[mask].copy()
+                
+                # 사용자의 필터 선택 적용
+                if "🚨" in status_filter: 
+                    to_order = to_order[to_order['상태'] == "🚨 긴급"]
+                elif "⚠️" in status_filter: 
+                    to_order = to_order[to_order['상태'].str.contains("🚨|⚠️")]
+
+                if not to_order.empty:
+                    # [꼼수] 숫자 왼쪽 정렬을 위한 가공
+                    display_5step = to_order.copy()
+                    if '추가발주분' not in display_5step.columns:
+                        display_5step['추가발주분'] = 0
+                    
+                    num_targets_5 = [avail, "리오더 수량", "추가발주분", "권장발주량"]
+                    for col in num_targets_5:
+                        if col in display_5step.columns:
+                            # 앞 공백 추가하여 문자열로 변환 (왼쪽 정렬 유도)
+                            display_5step[col] = display_5step[col].fillna(0).astype(int).apply(lambda x: f"  {x}")
+
+                    # 컬럼 순서 및 구성
+                    final_display_cols = ["상태", item,
                     
             # 6단계: 과거 확인
             st.subheader("📜 6단계: 과거 데이터 확인")
