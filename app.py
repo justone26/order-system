@@ -241,24 +241,23 @@ with tab1:
                 }
             )
             
-# 5단계: 요약 및 저장 (KeyError 해결 및 안전한 컬럼 매칭)
+# 5단계: 요약 및 저장 (필터 복구 + 숫자 정렬 꼼수 적용)
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
             if 'df_raw' in st.session_state:
-                # 1. 계산용 데이터 준비
                 to_order = st.session_state.df_raw.copy()
                 
-                # 수치 계산
+                # 기초 데이터 계산
                 v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
                 to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
                 
-                # 권장발주량 컬럼 확인 및 생성
-                if '권장 발주량' in to_order.columns:
-                    to_order['권장발주량'] = to_order['권장 발주량']
-                elif '권장발주량' not in to_order.columns:
-                    to_order['권장발주량'] = 0
+                if '권장발주량' not in to_order.columns:
+                    if '권장 발주량' in to_order.columns:
+                        to_order['권장발주량'] = to_order['권장 발주량']
+                    else:
+                        to_order['권장발주량'] = 0
 
-                # 긴급도 계산
+                # [복구] 긴급도 상태 계산 로직
                 def check_urgency(row):
                     v_av = pd.to_numeric(row.get(avail, 0), errors='coerce') or 0
                     v_sl = pd.to_numeric(row.get('일판매량', 0), errors='coerce') or 0
@@ -269,39 +268,48 @@ with tab1:
 
                 to_order['상태'] = to_order.apply(check_urgency, axis=1)
 
-                # 필터링 로직 (생략 - 기존과 동일)
-                # ...
+                # --- [복구] 상태 필터 UI ---
+                f_col1, f_col2 = st.columns([2, 2])
+                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_status_filter_v10")
+
+                # 필터링 적용
+                mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
+                to_order = to_order[mask].copy()
+                
+                if "🚨" in status_filter: 
+                    to_order = to_order[to_order['상태'] == "🚨 긴급"]
+                elif "⚠️" in status_filter: 
+                    to_order = to_order[to_order['상태'].str.contains("🚨|⚠️")]
 
                 if not to_order.empty:
-                    # [꼼수] 표시용 데이터 생성 (숫자를 문자로 변환하여 우측 정렬 강제 해제)
-                    display_df = to_order.copy()
-                    if '추가발주분' not in display_df.columns:
-                        display_df['추가발주분'] = 0
-
-                    # 2. [에러 방지] 실제 존재하는 컬럼만 리스트업
-                    # vendor_item 변수가 비어있을 경우를 대비해 직접 이름을 확인해
-                    potential_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "추가발주분", "권장발주량"]
+                    # 표시용 데이터 가공 (숫자 왼쪽 정렬 꼼수)
+                    display_5step = to_order.copy()
+                    if '추가발주분' not in display_5step.columns:
+                        display_5step['추가발주분'] = 0
                     
-                    # 실제로 display_df에 존재하는 컬럼만 필터링 (KeyError 방지 핵심!)
-                    existing_cols = [c for c in potential_cols if c in display_df.columns]
-                    
-                    # 숫자 컬럼들을 문자로 변환 (중앙 정렬 느낌 유도)
+                    # 숫자 컬럼 리스트
                     num_targets = [avail, "리오더 수량", "추가발주분", "권장발주량"]
                     for col in num_targets:
-                        if col in display_df.columns:
-                            display_df[col] = display_df[col].fillna(0).astype(int).astype(str)
+                        if col in display_5step.columns:
+                            # 앞 공백 추가하여 왼쪽 정렬 유도
+                            display_5step[col] = display_5step[col].fillna(0).astype(int).apply(lambda x: f"  {x}")
 
-                    st.write(f"### ✏️ 발주 수량 확인")
+                    # 표시할 컬럼 및 순서 고정
+                    final_display_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "추가발주분", "권장발주량"]
+                    existing_cols = [c for c in final_display_cols if c in display_5step.columns]
                     
-                    # 3. 데이터 편집기 실행
+                    st.write(f"### ✏️ 발주 수량 확인 ({status_filter})")
+                    
+                    # 최종 데이터 편집기
                     final_order_df = st.data_editor(
-                        display_df[existing_cols], # 안전하게 존재하는 컬럼만 넣음!
+                        display_5step[existing_cols], 
                         use_container_width=True, 
-                        key="final_order_editor_no_keyerror",
+                        height=500, # 시원시원한 높이
+                        key="final_order_editor_fixed_v10",
                         column_config={
-                            "상태": st.column_config.Column("📢 상태", width=70),
+                            "상태": st.column_config.Column("📢 상태", width=80),
                             item: st.column_config.Column("📦 상품명", width="medium"), 
-                            option: st.column_config.Column("🎨 옵션", width=80),
+                            option: st.column_config.Column("🎨 옵션", width=100),
                             vendor_item: st.column_config.Column("🏢 공급처상품명", width=280), 
                             avail: st.column_config.Column("가용재고", width=80),
                             "리오더 수량": st.column_config.Column("현 리오더", width=80),
@@ -311,7 +319,7 @@ with tab1:
                     )
                     
                     st.divider()
-                    # (이후 저장 버튼 로직은 row.get()을 사용하여 안전하게 처리)
+                    # (이후 저장 및 다운로드 버튼 로직은 기존과 동일)
               
             # 6단계: 과거 확인
             st.subheader("📜 6단계: 과거 데이터 확인")
