@@ -242,13 +242,13 @@ with tab1:
                     "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                 }
             )
-# 5단계: 요약 및 저장 (🚨 필터링 & 엑셀 다운로드 복구)
+# 5단계: 요약 및 저장 (저장 및 다운로드 버튼 분리)
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
             if 'df_raw' in st.session_state:
                 to_order = st.session_state.df_raw.copy()
                 
-                # 기초 계산 (일판매량 및 권장발주량 이름 통일)
+                # 기초 계산 및 컬럼 정리
                 v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
                 to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
                 
@@ -275,14 +275,13 @@ with tab1:
                 status_filter = f_col1.selectbox(
                     "🎯 상태 필터 선택", 
                     ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"],
-                    key="final_status_filter"
+                    key="final_status_filter_v2"
                 )
 
-                # 1차 필터 (발주 필요건 + 정상 아닌 건)
+                # 발주 필요건 필터링
                 mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
                 to_order = to_order[mask].copy()
 
-                # 2차 필터 (사용자 선택 적용)
                 if status_filter == "🚨 긴급만 보기":
                     to_order = to_order[to_order['상태'] == "🚨 긴급(품절위험)"]
                 elif status_filter == "⚠️ 주의이상 보기":
@@ -292,7 +291,7 @@ with tab1:
                     if '추가발주분' not in to_order.columns:
                         to_order['추가발주분'] = 0
                     
-                    # 요청하신 8개 컬럼 순서
+                    # 8개 컬럼 순서 고정
                     final_display_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "추가발주분", "권장발주량"]
                     final_display_cols = [c for c in final_display_cols if c in to_order.columns or c in ["상태", "추가발주분"]]
 
@@ -302,26 +301,46 @@ with tab1:
                     final_order_df = st.data_editor(
                         to_order[final_display_cols], 
                         use_container_width=True, 
-                        key="final_order_editor",
+                        key="final_order_editor_v2",
                         column_config={
                             "상태": st.column_config.Column("📢 상태", width="medium"),
-                            "추가발주분": st.column_config.NumberColumn("➕ 추가발주분", help="새로 주문할 수량 입력"),
+                            "추가발주분": st.column_config.NumberColumn("➕ 추가발주분", help="이번에 새로 주문할 수량을 입력하세요."),
                             avail: st.column_config.NumberColumn("✅ 가용재고", disabled=True),
                             "리오더 수량": st.column_config.NumberColumn("📦 현재리오더수량", disabled=True),
                             "권장발주량": st.column_config.NumberColumn("🚀 권장발주량", disabled=True)
                         }
                     )
                     
-                    # --- [하단 버튼 영역: 저장 & 다운로드] ---
-                    st.divider()
+                    # --- [하단 버튼 배치] ---
+                    st.write("") # 간격 조절
                     btn_col1, btn_col2 = st.columns(2)
                     
                     with btn_col1:
-                        if st.button("💾 구글 시트 최종 저장", use_container_width=True):
+                        # 1. 구글 시트 저장 버튼
+                        if st.button("💾 구글 시트에 데이터 저장", use_container_width=True, type="primary"):
                             for idx, row in final_order_df.iterrows():
                                 current_re = int(row.get('리오더 수량', 0))
                                 added_re = int(row.get('추가발주분', 0))
-                                st.session_state.df_raw.at[idx, '리오더 수량'] = current_re + added_
+                                st.session_state.df_raw.at[idx, '리오더 수량'] = current_re + added_re
+                            
+                            save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
+                            save_df.columns = ['상품명', '옵션', '리오더 수량']
+                            save_reorder_data(save_df)
+                            st.success("✅ 구글 시트에 업데이트가 완료되었습니다!")
+                            st.rerun()
+                    
+                    with btn_col2:
+                        # 2. 독립적인 엑셀(CSV) 다운로드 버튼
+                        csv_data = final_order_df.to_csv(index=False).encode('utf-8-sig')
+                        st.download_button(
+                            label="📥 현재 화면 엑셀(CSV) 다운로드",
+                            data=csv_data,
+                            file_name=f"발주확인서_{datetime.now().strftime('%m%d_%H%M')}.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
+                else:
+                    st.info(f"필터 조건({status_filter})에 맞는 상품이 없습니다.")
                         
             # 6단계: 과거 확인
             st.subheader("📜 6단계: 과거 데이터 확인")
