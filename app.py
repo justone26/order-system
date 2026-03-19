@@ -78,7 +78,7 @@ with tab1:
             df_new.columns = df_new.columns.str.strip()
             df_new = df_new.loc[:, ~df_new.columns.duplicated()] 
             
-            # 구글 시트 연동 로직
+            # 구글 시트 연동 로직 (리오더 수량 복구)
             try:
                 sheet = get_sheet().sheet1
                 gs_data = pd.DataFrame(sheet.get_all_records())
@@ -90,13 +90,15 @@ with tab1:
                     df_new = pd.merge(df_new, gs_subset, on=['상품명', '옵션'], how='left', suffixes=('', '_gs'))
                     
                     if '리오더 수량_gs' in df_new.columns:
-                        df_new['리오더 수량'] = df_new['리오더 수량_gs'].fillna(0)
+                        df_new['리오더 수량'] = df_new['리오더 수량_gs'].fillna(0).astype(int)
                         df_new = df_new.drop(columns=['리오더 수량_gs'])
+                    else:
+                        if '리오더 수량' not in df_new.columns: df_new['리오더 수량'] = 0
                 else:
-                    df_new['리오더 수량'] = 0
+                    if '리오더 수량' not in df_new.columns: df_new['리오더 수량'] = 0
             except Exception as e:
                 st.warning(f"기존 리오더 수량 불러오기 실패: {e}")
-                df_new['리오더 수량'] = 0
+                if '리오더 수량' not in df_new.columns: df_new['리오더 수량'] = 0
 
             st.session_state.df_raw = df_new
             st.session_state.last_filename = uploaded_file.name
@@ -108,11 +110,10 @@ with tab1:
         df_current = st.session_state.df_raw
         cols = df_current.columns.tolist()
 
-        # 1단계: 매핑 설정 (여기서 NameError 방지를 위해 find_idx가 코드 상단에 있어야 함)
+        # 1단계: 매핑 설정
         st.subheader("⚙️ 1단계: 매핑 설정")
         c1, c2 = st.columns(2)
         
-        # find_idx 함수는 코드 맨 위에 정의되어 있어야 에러가 안 납니다.
         sold_out = c1.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
         vendor = c1.selectbox("공급처", cols, index=find_idx(cols, ['공급처']))
         item = c1.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
@@ -132,11 +133,9 @@ with tab1:
         
         if st.button("🚀 분석 실행"):
             df = st.session_state.df_raw.copy()
-            # 판매량 계산 및 발주량 계산
             daily_avg = pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7
             df['권장 발주량'] = ((daily_avg * lead_time) + (daily_avg * safety_stock) - pd.to_numeric(df[avail], errors='coerce').fillna(0)).clip(lower=0).astype(int)
             
-            # 리오더 수량 컬럼이 없으면 생성
             if '리오더 수량' not in df.columns: df['리오더 수량'] = 0
             if '리오더입고수량' not in df.columns: df['리오더입고수량'] = 0
             
@@ -144,29 +143,25 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
 
-# 4단계: 편집 (숫자 정렬 꼼수 및 표 크기 최적화 적용)
+        # 4단계: 편집 (숫자 정렬 꼼수 적용)
         if st.session_state.analyzed:
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
             
-            # --- [필터 및 검색] ---
             f1, f2 = st.columns([3, 1])
             search_query = f1.text_input("🔍 상품명 검색", key="prod_search_input")
             filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
             
             df_working = st.session_state.df_raw.copy()
 
-            # --- [데이터 전처리 및 계산] ---
             v_avail = pd.to_numeric(df_working[avail], errors='coerce').fillna(0)
             v_reorder = pd.to_numeric(df_working['리오더 수량'], errors='coerce').fillna(0)
             v_3day = pd.to_numeric(df_working[t3day], errors='coerce').fillna(0)
             
             df_working["일판매량"] = (v_3day / 3).round(0).astype(int)
-            
             needed_qty = (df_working["일판매량"] * (lead_time + safety_stock))
             current_assets = (v_avail + v_reorder)
             df_working["권장발주량"] = (needed_qty - current_assets).clip(lower=0).round(0).astype(int)
 
-            # 필터 적용
             if filter_mode == "정상만": 
                 df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
             elif filter_mode == "품절만": 
@@ -174,11 +169,10 @@ with tab1:
             if search_query: 
                 df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
 
-            # 리오더입고수량 칸 생성
             if "리오더입고수량" not in df_working.columns:
                 df_working["리오더입고수량"] = 0
 
-            # --- [자동 저장 함수 유지] ---
+            # 자동 저장 함수
             def auto_save_and_update():
                 if "main_editor" in st.session_state and st.session_state["main_editor"]["edited_rows"]:
                     changes = st.session_state["main_editor"]["edited_rows"]
@@ -186,12 +180,14 @@ with tab1:
                         row_idx = int(row_idx_str)
                         orig_idx = df_working.index[row_idx]
                         
-                        # 수정 시 다시 숫자로 변환하여 저장 (중요!)
                         if "리오더 수량" in change:
-                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(round(float(str(change["리오더 수량"]).strip())))
+                            # 꼼수로 들어간 공백 제거 후 숫자로 저장
+                            val = str(change["리오더 수량"]).replace(" ", "")
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(float(val))
                         
                         if "리오더입고수량" in change:
-                            in_qty = int(round(float(str(change["리오더입고수량"]).strip())))
+                            val = str(change["리오더입고수량"]).replace(" ", "")
+                            in_qty = int(float(val))
                             current_reorder = st.session_state.df_raw.at[orig_idx, "리오더 수량"]
                             st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_reorder - in_qty)
                     
@@ -203,26 +199,20 @@ with tab1:
                     except Exception as e:
                         st.error(f"저장 오류: {e}")
 
-            # --- [표시용 데이터 가공: 숫자 왼쪽 정렬 꼼수] ---
-            display_df = df_working.copy()
-            
-            # 공백을 추가하여 왼쪽으로 밀어낼 숫자 컬럼 리스트
-            num_cols_to_fix = [stock, avail, "리오더 수량", "리오더입고수량", "일판매량", t3day, "권장발주량"]
-            
-            for col in num_cols_to_fix:
-                if col in display_df.columns:
-                    # 숫자를 문자로 바꾸고 앞뒤에 공백을 넣어 왼쪽 정렬 느낌 유도
-                    display_df[col] = display_df[col].fillna(0).astype(int).apply(lambda x: f"  {x}")
+            # [꼼수 적용] 표시용 데이터 가공
+            display_df_4 = df_working.copy()
+            num_cols_4 = [stock, avail, "리오더 수량", "리오더입고수량", "일판매량", t3day, "권장발주량"]
+            for col in num_cols_4:
+                if col in display_df_4.columns:
+                    display_df_4[col] = display_df_4[col].fillna(0).astype(int).apply(lambda x: f"  {x}")
 
-            # 컬럼 순서 고정
-            display_cols = [sold_out, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "일판매량", t3day, "권장발주량"]
-            final_target = [c for c in display_cols if c in display_df.columns]
+            display_cols_4 = [sold_out, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "일판매량", t3day, "권장발주량"]
+            final_target_4 = [c for c in display_cols_4 if c in display_df_4.columns]
 
-            # --- [최종 화면 출력] ---
             st.data_editor(
-                display_df[final_target],
+                display_df_4[final_target_4],
                 use_container_width=True,
-                height=600,  # 👈 높이를 600으로 시원하게 키웠습니다.
+                height=600, 
                 key="main_editor",
                 on_change=auto_save_and_update,
                 column_config={
@@ -230,7 +220,6 @@ with tab1:
                     item: st.column_config.Column("📦 상품명", disabled=True, width="medium"),
                     option: st.column_config.Column("🎨 옵션", disabled=True, width="small"),
                     vendor_item: st.column_config.Column("🏢 공급처상품명", disabled=True, width=280),
-                    # [주의] Column으로 설정해야 왼쪽 정렬(꼼수)이 유지됩니다.
                     stock: st.column_config.Column("🔢 정상재고", disabled=True),
                     avail: st.column_config.Column("✅ 가용재고", disabled=True),
                     "리오더 수량": st.column_config.Column("📝 리오더 수량"),
@@ -240,24 +229,17 @@ with tab1:
                     "권장발주량": st.column_config.Column("🚀 권장발주량", disabled=True)
                 }
             )
-            
-# 5단계: 요약 및 저장 (필터 복구 + 숫자 정렬 꼼수 적용)
+
+            # 5단계: 요약 및 저장
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
-            
             if 'df_raw' in st.session_state:
                 to_order = st.session_state.df_raw.copy()
                 
-                # 기초 데이터 계산
                 v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
                 to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
-                
                 if '권장발주량' not in to_order.columns:
-                    if '권장 발주량' in to_order.columns:
-                        to_order['권장발주량'] = to_order['권장 발주량']
-                    else:
-                        to_order['권장발주량'] = 0
+                    to_order['권장발주량'] = to_order.get('권장 발주량', 0)
 
-                # [복구] 긴급도 상태 계산 로직
                 def check_urgency(row):
                     v_av = pd.to_numeric(row.get(avail, 0), errors='coerce') or 0
                     v_sl = pd.to_numeric(row.get('일판매량', 0), errors='coerce') or 0
@@ -268,44 +250,31 @@ with tab1:
 
                 to_order['상태'] = to_order.apply(check_urgency, axis=1)
 
-                # --- [복구] 상태 필터 UI ---
                 f_col1, f_col2 = st.columns([2, 2])
-                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_status_filter_v10")
+                status_filter = f_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="final_status_filter")
 
-                # 필터링 적용
                 mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
                 to_order = to_order[mask].copy()
-                
-                if "🚨" in status_filter: 
-                    to_order = to_order[to_order['상태'] == "🚨 긴급"]
-                elif "⚠️" in status_filter: 
-                    to_order = to_order[to_order['상태'].str.contains("🚨|⚠️")]
+                if "🚨" in status_filter: to_order = to_order[to_order['상태'] == "🚨 긴급"]
+                elif "⚠️" in status_filter: to_order = to_order[to_order['상태'].str.contains("🚨|⚠️")]
 
                 if not to_order.empty:
-                    # 표시용 데이터 가공 (숫자 왼쪽 정렬 꼼수)
                     display_5step = to_order.copy()
-                    if '추가발주분' not in display_5step.columns:
-                        display_5step['추가발주분'] = 0
+                    if '추가발주분' not in display_5step.columns: display_5step['추가발주분'] = 0
                     
-                    # 숫자 컬럼 리스트
-                    num_targets = [avail, "리오더 수량", "추가발주분", "권장발주량"]
-                    for col in num_targets:
+                    num_targets_5 = [avail, "리오더 수량", "추가발주분", "권장발주량"]
+                    for col in num_targets_5:
                         if col in display_5step.columns:
-                            # 앞 공백 추가하여 왼쪽 정렬 유도
                             display_5step[col] = display_5step[col].fillna(0).astype(int).apply(lambda x: f"  {x}")
 
-                    # 표시할 컬럼 및 순서 고정
                     final_display_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "추가발주분", "권장발주량"]
-                    existing_cols = [c for c in final_display_cols if c in display_5step.columns]
+                    existing_cols_5 = [c for c in final_display_cols if c in display_5step.columns]
                     
-                    st.write(f"### ✏️ 발주 수량 확인 ({status_filter})")
-                    
-                    # 최종 데이터 편집기
-                    final_order_df = st.data_editor(
-                        display_5step[existing_cols], 
+                    st.data_editor(
+                        display_5step[existing_cols_5], 
                         use_container_width=True, 
-                        height=500, # 시원시원한 높이
-                        key="final_order_editor_fixed_v10",
+                        height=500, 
+                        key="final_order_editor",
                         column_config={
                             "상태": st.column_config.Column("📢 상태", width=80),
                             item: st.column_config.Column("📦 상품명", width="medium"), 
@@ -316,11 +285,8 @@ with tab1:
                             "추가발주분": st.column_config.Column("추가발주", width=80),
                             "권장발주량": st.column_config.Column("권장발주", width=80)
                         }
-                    )
+                    )                    
                     
-                    st.divider()
-                    # (이후 저장 및 다운로드 버튼 로직은 기존과 동일)
-              
             # 6단계: 과거 확인
             st.subheader("📜 6단계: 과거 데이터 확인")
             if st.button("🔄 기록 불러오기"):
