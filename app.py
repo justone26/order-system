@@ -250,11 +250,13 @@ if st.session_state.analyzed:
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
+            # 1. 상단 컨트롤러 (필터 및 날짜)
             c5_1, c5_2 = st.columns([2, 1])
-            s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 정상 포함 전체보기"], index=0, key="s_filter_v5_final_fix")
-            hist_date_5 = c5_2.date_input("🗓️ 입고 기록 확인 날짜 (연동)", value=hist_date_4, key="date_5_v5_final_fix")
+            s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 정상 포함 전체보기"], index=0, key="s_filter_v5_final")
+            # 4단계 날짜와 연동되지만 여기서도 변경 가능
+            hist_date_5 = c5_2.date_input("🗓️ 입고 기록 확인 날짜 (연동)", value=hist_date_4, key="date_5_v5_final")
 
-            # 0. 데이터 복사 및 강력 키 생성
+            # 2. 데이터 준비 및 강력 키 생성
             to_order = df_work.copy()
             
             def total_clean(n):
@@ -266,37 +268,28 @@ if st.session_state.analyzed:
 
             to_order['unique_key'] = to_order[item].apply(total_clean) + to_order[option].astype(str).str.replace(" ", "").str.upper()
 
-            # 1. [KeyError 방지] 구글 시트 데이터 안전하게 처리
+            # 3. 과거 입고 데이터 매핑 (KeyError 방지 로직)
             to_order['과거 리오더입고'] = 0
             past_hist = load_history_from_gsheet()
-            
             if not past_hist.empty:
-                try:
-                    # '저장시간' 컬럼이 있는지 확인 후 '날짜' 컬럼 생성
-                    if '저장시간' in past_hist.columns:
-                        past_hist['날짜'] = past_hist['저장시간'].astype(str).str.split(' ').str[0]
-                        
-                        # 생성된 '날짜' 컬럼을 사용하여 필터링
-                        target_date_5 = hist_date_5.strftime("%Y-%m-%d")
-                        if '구분' in past_hist.columns:
-                            t_hist_5 = past_hist[(past_hist['날짜'] == target_date_5) & (past_hist['구분'] == "입고")].copy()
-                            
-                            if not t_hist_5.empty:
-                                t_hist_5['k_tmp'] = t_hist_5['상품명'].apply(total_clean) + t_hist_5['옵션'].astype(str).str.replace(" ", "").str.upper()
-                                in_map_5 = t_hist_5.groupby('k_tmp')['수량'].sum().to_dict()
-                                to_order['과거 리오더입고'] = to_order['unique_key'].map(in_map_5).fillna(0).astype(int)
-                except Exception as e:
-                    # 에러 발생 시 로그만 남기고 0으로 처리하여 앱 중단 방지
-                    print(f"매핑 에러 무시: {e}")
+                if '저장시간' in past_hist.columns:
+                    past_hist['날짜'] = past_hist['저장시간'].astype(str).str.split(' ').str[0]
+                    target_date_5 = hist_date_5.strftime("%Y-%m-%d")
+                    if '구분' in past_hist.columns:
+                        t_hist_5 = past_hist[(past_hist['날짜'] == target_date_5) & (past_hist['구분'] == "입고")].copy()
+                        if not t_hist_5.empty:
+                            t_hist_5['k_tmp'] = t_hist_5['상품명'].apply(total_clean) + t_hist_5['옵션'].astype(str).str.replace(" ", "").str.upper()
+                            in_map_5 = t_hist_5.groupby('k_tmp')['수량'].sum().to_dict()
+                            to_order['과거 리오더입고'] = to_order['unique_key'].map(in_map_5).fillna(0).astype(int)
 
-            # 2. 수치 계산 (추가발주 및 최종발주량)
-            if "extra_order_dict" not in st.session_state: 
+            # 4. 수치 계산 (추가발주 및 최종발주량)
+            if "extra_order_dict" not in st.session_state:
                 st.session_state.extra_order_dict = {}
             
             to_order['추가발주수량'] = to_order['unique_key'].map(st.session_state.extra_order_dict).fillna(0).astype(int)
             to_order['최종발주량'] = to_order['권장발주량'].astype(int) + to_order['추가발주수량'].astype(int)
 
-            # 3. 상태 판별 및 정렬
+            # 5. 상태 판별 및 정렬
             def get_final_status(r):
                 def safe_n(v):
                     res = pd.to_numeric(v, errors='coerce')
@@ -313,71 +306,58 @@ if st.session_state.analyzed:
             to_order['rank'] = to_order['상태'].map(status_rank)
             to_order = to_order.sort_values(by='rank').drop(columns=['rank'])
 
-            # 4. 필터링 및 출력 (요청 순서 유지)
+            # 6. 필터링 적용
             df_final = to_order.copy()
             if s_filter == "🚨긴급 + ⚠️주의 우선":
                 df_final = df_final[df_final['상태'].isin(["🚨 긴급", "⚠️ 주의"]) | (df_final['최종발주량'] > 0)]
             elif s_filter == "🚨 긴급만 보기":
                 df_final = df_final[df_final['상태'] == "🚨 긴급"]
 
+            # 7. 테이블 출력 (항목 순서 보장)
             if not df_final.empty:
-                # [순서] 가용재고, 리오더 수량, 추가발주수량, 과거 리오더입고, 권장발주량, 최종발주량
                 disp_final = ["상태", item, option, vendor, avail, "리오더 수량", "추가발주수량", "과거 리오더입고", "권장발주량", "최종발주량"]
                 valid_f_cols = [c for c in disp_final if c in df_final.columns or c in ["과거 리오더입고", "추가발주수량"]]
                 df_final_view = df_final[valid_f_cols].copy()
                 for c in df_final_view.columns: df_final_view[c] = df_final_view[c].astype(str)
                 
                 def on_edit_5():
-                    edits = st.session_state["editor_v5_fix"]["edited_rows"]
+                    edits = st.session_state["editor_v5_final"]["edited_rows"]
                     for r_idx_str, change in edits.items():
                         if "추가발주수량" in change:
                             r_key = df_final.iloc[int(r_idx_str)]['unique_key']
                             st.session_state.extra_order_dict[r_key] = int(change["추가발주수량"])
                     st.rerun()
 
-                st.data_editor(df_final_view, use_container_width=True, key="editor_v5_fix", on_change=on_edit_5,
+                st.data_editor(df_final_view, use_container_width=True, key="editor_v5_final", on_change=on_edit_5,
                                column_config={c: st.column_config.TextColumn(c) for c in df_final_view.columns}, hide_index=True)
+
+                # --- [핵심: 버튼 섹션] ---
+                st.write("") 
+                btn_c1, btn_c2 = st.columns(2)
+                
+                # 구글 시트 저장 버튼
+                if btn_c1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
+                    to_save = df_final[df_final['최종발주량'].astype(int) > 0].copy()
+                    if not to_save.empty:
+                        save_df = to_save[[item, option, '최종발주량']].rename(columns={item: '상품명', option: '옵션', '최종발주량': '수량'})
+                        if save_history_to_gsheet(save_df, log_type="발주"):
+                            st.success(f"✅ {len(save_df)}건 저장 완료!")
+                        else:
+                            st.error("❌ 시트 저장 실패")
+                    else:
+                        st.warning("발주 수량이 있는 상품이 없습니다.")
+
+                # 엑셀 다운로드 버튼
+                csv_data = df_final.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                btn_c2.download_button(
+                    label="📥 엑셀(CSV) 다운로드",
+                    data=csv_data,
+                    file_name=f"최종발주서_{datetime.now().strftime('%m%d_%H%M')}.csv",
+                    mime='text/csv',
+                    use_container_width=True
+                )
             else:
                 st.info("💡 표시할 발주 데이터가 없습니다.")
-
-    # --- [버튼 섹션: 구글 시트 저장 및 엑셀 다운로드] ---
-                st.write("") # 간격 띄우기
-                c_b1, c_b2 = st.columns(2)
-                
-                # 1. 구글 시트 저장 버튼
-                if c_b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, key="save_gsheet_v5"):
-                    # 최종발주량이 0보다 큰 데이터만 추출
-                    to_save = df_final[df_final['최종발주량'].astype(int) > 0].copy()
-                    
-                    if not to_save.empty:
-                        # 저장할 컬럼 구성 (상품명, 옵션, 최종발주량)
-                        save_df = to_save[[item, option, '최종발주량']].rename(
-                            columns={item: '상품명', option: '옵션', '최종발주량': '수량'}
-                        )
-                        # 공통 함수 호출 (기존에 정의된 save_history_to_gsheet 사용)
-                        if save_history_to_gsheet(save_df, log_type="발주"):
-                            st.success(f"✅ {len(save_df)}건의 발주 내역이 구글 시트에 저장되었습니다!")
-                        else:
-                            st.error("❌ 저장 중 오류가 발생했습니다. 설정 및 권한을 확인하세요.")
-                    else:
-                        st.warning("⚠️ 발주 수량이 0인 상품만 있어 저장할 내용이 없습니다.")
-
-                # 2. 엑셀(CSV) 다운로드 버튼
-                try:
-                    # 한글 깨짐 방지를 위해 utf-8-sig 사용
-                    csv_data = df_final.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                    file_name = f"최종발주서_{datetime.now().strftime('%m%d_%H%M')}.csv"
-                    
-                    c_b2.download_button(
-                        label="📥 엑셀(CSV) 다운로드",
-                        data=csv_data,
-                        file_name=file_name,
-                        mime='text/csv',
-                        use_container_width=True,
-                        key="download_csv_v5"
-                    )
-                except Exception as e:
-                    c_b2.error("다운로드 파일 생성 실패")
                 
         # 6단계: 과거 확인
 
