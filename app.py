@@ -134,11 +134,10 @@ with tab1:
 
             if "리오더입고수량" not in df_work.columns: df_work["리오더입고수량"] = 0
 
-            # 4단계용 컬럼 설정 (정렬 포함)
             config_4 = {
-                item: st.column_config.TextColumn(item, width="medium", help="왼쪽 정렬"),
+                item: st.column_config.TextColumn(item, width="medium"),
                 option: st.column_config.TextColumn(option, width="small"),
-                stock: st.column_config.NumberColumn(stock, format="%d", help="오른쪽 정렬"),
+                stock: st.column_config.NumberColumn(stock, format="%d"),
                 avail: st.column_config.NumberColumn(avail, format="%d"),
                 "리오더 수량": st.column_config.NumberColumn("리오더 수량", format="%d"),
                 "리오더입고수량": st.column_config.NumberColumn("리오더입고수량", format="%d"),
@@ -152,22 +151,19 @@ with tab1:
                 for r_idx_str, change in changes.items():
                     idx = int(r_idx_str)
                     orig_idx = df_work.index[idx]
-                    if "리오더 수량" in change:
-                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
+                    if "리오더 수량" in change: st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
                     if "리오더입고수량" in change:
                         in_qty = int(change["리오더입고수량"])
                         curr = st.session_state.df_raw.at[orig_idx, "리오더 수량"]
                         st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr - in_qty)
-                        hist_df = pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], in_qty]], columns=['상품명', '옵션', '수량'])
-                        save_history_to_gsheet(hist_df, log_type="입고")
+                        save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], in_qty]], columns=['상품명', '옵션', '수량']), log_type="입고")
                 save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
                 st.rerun()
 
-            full_cols = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
-            disp_cols = [c for c in full_cols if c in df_work.columns]
+            disp_cols = [c for c in [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"] if c in df_work.columns]
             st.data_editor(df_work[disp_cols], use_container_width=True, key="main_editor", on_change=on_edit_4, column_config=config_4)
 
-            # --- [5단계: 셀 배치 및 정렬 수정] ---
+            # --- [5단계: 실시간 계산 및 정렬 수정 버전] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
@@ -180,26 +176,21 @@ with tab1:
             to_order['과거입고수량'] = 0
             if not past_hist.empty and '구분' in past_hist.columns:
                 past_hist['날짜'] = past_hist['저장시간'].astype(str).str.split(' ').str[0]
-                target_day_hist = past_hist[(past_hist['날짜'] == hist_date.strftime("%Y-%m-%d")) & (past_hist['구분'] == "입고")]
-                if not target_day_hist.empty:
-                    target_day_hist['key'] = target_day_hist['상품명'].astype(str).str.strip() + target_day_hist['옵션'].astype(str).str.strip()
-                    in_map = target_day_hist.groupby('key')['수량'].sum().to_dict()
+                t_hist = past_hist[(past_hist['날짜'] == hist_date.strftime("%Y-%m-%d")) & (past_hist['구분'] == "입고")]
+                if not t_hist.empty:
+                    t_hist['key'] = t_hist['상품명'].astype(str).str.strip() + t_hist['옵션'].astype(str).str.strip()
+                    in_map = t_hist.groupby('key')['수량'].sum().to_dict()
                     to_order['key'] = to_order[item].astype(str).str.strip() + to_order[option].astype(str).str.strip()
                     to_order['과거입고수량'] = to_order['key'].map(in_map).fillna(0).astype(int)
 
-            def get_status(row):
-                v_av_num = pd.to_numeric(row[avail], errors='coerce') or 0
-                v_re_num = pd.to_numeric(row['리오더 수량'], errors='coerce') or 0
-                daily = row['일판매량']
-                total = v_av_num + v_re_num
-                if daily > 0:
-                    if total < (daily * 3): return "🚨 긴급"
-                    if total < (daily * 5): return "⚠️ 주의"
-                return "✅ 정상"
-
-            to_order['상태'] = to_order.apply(get_status, axis=1)
-            to_order['추가발주수량'] = 0 
+            to_order['상태'] = to_order.apply(lambda r: "🚨 긴급" if r['일판매량'] > 0 and (pd.to_numeric(r[avail], errors='coerce') or 0 + r['리오더 수량']) < (r['일판매량']*3) else ("⚠️ 주의" if r['일판매량'] > 0 and (pd.to_numeric(r[avail], errors='coerce') or 0 + r['리오더 수량']) < (r['일판매량']*5) else "✅ 정상"), axis=1)
             
+            # [수정] 추가발주수량 세션 상태 관리
+            if 'extra_order' not in st.session_state: st.session_state.extra_order = {}
+            to_order['key'] = to_order[item].astype(str) + to_order[option].astype(str)
+            to_order['추가발주수량'] = to_order['key'].map(st.session_state.extra_order).fillna(0).astype(int)
+            to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
+
             order_mask = (to_order['권장발주량'] > 0) | (to_order['상태'] != "✅ 정상")
             df_final = to_order[order_mask].copy()
             if "🚨" in s_filter: df_final = df_final[df_final['상태'] == "🚨 긴급"]
@@ -209,7 +200,6 @@ with tab1:
                 f_target = ["상태", item, option, vendor, vendor_item, avail, "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]
                 disp_final = [c for c in f_target if c in df_final.columns]
 
-                # 5단계용 컬럼 설정 (요청하신 순서 + 정렬)
                 config_5 = {
                     "상태": st.column_config.TextColumn("상태", width="small"),
                     item: st.column_config.TextColumn(item, width="medium"),
@@ -218,21 +208,29 @@ with tab1:
                     vendor_item: st.column_config.TextColumn(vendor_item, width="medium"),
                     avail: st.column_config.NumberColumn(avail, format="%d"),
                     "리오더 수량": st.column_config.NumberColumn("리오더 수량", format="%d"),
-                    "추가발주수량": st.column_config.NumberColumn("추가발주수량", min_value=0, default=0, format="%d"),
+                    "추가발주수량": st.column_config.NumberColumn("추가발주수량", min_value=0, format="%d"),
                     "과거입고수량": st.column_config.NumberColumn("과거입고수량", format="%d"),
                     "권장발주량": st.column_config.NumberColumn("권장발주량", format="%d"),
-                    "최종발주량": st.column_config.NumberColumn("최종발주량", format="%d")
+                    "최종발주량": st.column_config.NumberColumn("최종발주량", format="%d", disabled=True) # 자동계산용 잠금
                 }
                 
-                edited_final = st.data_editor(df_final[disp_final], use_container_width=True, key="final_editor", column_config=config_5)
-                edited_final['최종발주량'] = edited_final['권장발주량'] + edited_final['추가발주수량']
+                def on_edit_5():
+                    changes = st.session_state["final_editor"]["edited_rows"]
+                    for r_idx_str, change in changes.items():
+                        if "추가발주수량" in change:
+                            row_key = df_final.iloc[int(r_idx_str)]['key']
+                            st.session_state.extra_order[row_key] = int(change["추가발주수량"])
+                    st.rerun()
+
+                st.data_editor(df_final[disp_final], use_container_width=True, key="final_editor", column_config=config_5, on_change=on_edit_5)
                 
                 c_b1, c_b2 = st.columns(2)
                 if c_b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-                    save_data = edited_final[edited_final['최종발주량']>0][[item, option, '최종발주량']]
-                    if save_history_to_gsheet(save_data, log_type="발주"):
+                    # 현재 화면에 보이는 최종발주량 계산 데이터 저장
+                    save_df = df_final[df_final['최종발주량']>0][[item, option, '최종발주량']]
+                    if save_history_to_gsheet(save_df, log_type="발주"):
                         st.success("✅ 발주 기록 저장 완료!")
-                csv = edited_final.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                csv = df_final[disp_final].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
                 c_b2.download_button("📥 엑셀 다운로드", csv, f"최종발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
 
             # 6단계
