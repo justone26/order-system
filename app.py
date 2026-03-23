@@ -344,30 +344,78 @@ if st.session_state.analyzed:
             else:
                 st.info("💡 표시할 발주 데이터가 없습니다.")
                 
-        # 6단계: 과거 확인
-
+# --- [6단계: 과거 데이터 통합 조회] ---
             st.divider()
+            st.subheader("📜 6단계: 과거 데이터 통합 조회")
+            
+            # 1. 상단 컨트롤러 (날짜 범위 선택)
+            c6_1, c6_2 = st.columns(2)
+            with c6_1:
+                start_d = st.date_input("시작 날짜", datetime.now() - timedelta(days=7), key="s_date_v6")
+            with c6_2:
+                end_d = st.date_input("종료 날짜", datetime.now(), key="e_date_v6")
 
-            st.subheader("📜 6단계: 과거 데이터 확인")
+            # 2. 데이터 불러오기
+            hist_all = load_history_from_gsheet()
+            
+            if not hist_all.empty:
+                try:
+                    # '저장시간' 컬럼에서 날짜 추출 및 필터링
+                    if '저장시간' in hist_all.columns:
+                        hist_all['날짜'] = pd.to_datetime(hist_all['저장시간']).dt.date
+                        # 선택한 기간 내 데이터만 필터링
+                        df_filtered = hist_all[(hist_all['날짜'] >= start_d) & (hist_all['날짜'] <= end_d)].copy()
+                        
+                        if not df_filtered.empty:
+                            # 3. 데이터 요약 (날짜별, 상품명별 합계)
+                            # 4~5단계와 동일하게 상품명/옵션 공백 제거하여 깔끔하게 정리
+                            df_filtered['상품명'] = df_filtered['상품명'].str.strip()
+                            df_filtered['옵션'] = df_filtered['옵션'].astype(str).str.strip()
+                            
+                            # '구분'별(입고/발주) 탭 나누기
+                            tab1, tab2 = st.tabs(["📥 입고 내역 기록", "📤 발주 내역 기록"])
+                            
+                            with tab1:
+                                in_data = df_filtered[df_filtered['구분'] == "입고"]
+                                if not in_data.empty:
+                                    st.dataframe(in_data[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
+                                    # 입고 합계 요약
+                                    sum_in = in_data.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+                                    st.write("📋 **선택 기간 입고 합계**")
+                                    st.table(sum_in)
+                                else:
+                                    st.info("해당 기간에 입고 기록이 없습니다.")
+                                    
+                            with tab2:
+                                out_data = df_filtered[df_filtered['구분'] == "발주"]
+                                if not out_data.empty:
+                                    st.dataframe(out_data[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
+                                    # 발주 합계 요약
+                                    sum_out = out_data.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+                                    st.write("📋 **선택 기간 발주 합계**")
+                                    st.table(sum_out)
+                                else:
+                                    st.info("해당 기간에 발주 기록이 없습니다.")
+                        else:
+                            st.warning("선택하신 기간에는 저장된 데이터가 없습니다.")
+                    else:
+                        st.error("시트에 '저장시간' 컬럼이 없어 데이터를 분류할 수 없습니다.")
+                except Exception as e:
+                    st.error(f"데이터 처리 중 오류 발생: {e}")
+            else:
+                st.info("💡 구글 시트에 아직 저장된 데이터가 하나도 없습니다.")
 
-            if st.button("🔄 기록 불러오기"): st.session_state.db_history = load_history_from_gsheet()
-
-            if 'db_history' in st.session_state and not st.session_state.db_history.empty:
-
-                df_hist = st.session_state.db_history
-
-                df_hist['날짜'] = df_hist['저장시간'].astype(str).str.split(' ').str[0]
-
-                sel_date = st.date_input("날짜 선택", datetime.now())
-
-                day_data = df_hist[df_hist['날짜'] == sel_date.strftime("%Y-%m-%d")]
-
-                if not day_data.empty:
-
-                    sel_time = st.selectbox("⏰ 시간 선택", sorted(day_data['저장시간'].unique(), reverse=True))
-
-                    st.dataframe(day_data[day_data['저장시간'] == sel_time].drop(columns=['날짜']), use_container_width=True)
-
+            # 4. 전체 데이터 엑셀 다운로드 버튼
+            if not hist_all.empty:
+                st.write("---")
+                csv_all = hist_all.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                st.download_button(
+                    label="📥 전체 히스토리 다운로드 (CSV)",
+                    data=csv_all,
+                    file_name=f"전체기록_{datetime.now().strftime('%m%d')}.csv",
+                    mime='text/csv',
+                    use_container_width=True
+                )
 
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
