@@ -29,9 +29,8 @@ def save_history_to_gsheet(df):
         try: hist_sheet = spreadsheet.worksheet("history")
         except: 
             hist_sheet = spreadsheet.add_worksheet(title="history", rows="1000", cols="20")
-            hist_sheet.append_row(["저장시간"] + df.columns.tolist())
+            hist_sheet.append_row(["저장시간", "상품명", "옵션", "리오더입고수량"])
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # 모든 데이터를 문자열로 변환하여 에러 방지
         rows_to_add = [[now_str] + [str(x) for x in row] for row in df.values.tolist()]
         hist_sheet.append_rows(rows_to_add)
         return True
@@ -48,13 +47,15 @@ def get_in_qty_logs():
     try:
         df_h = load_history_from_gsheet()
         if df_h.empty: return {}
-        df_in = df_h[pd.to_numeric(df_h['리오더입고수량'], errors='coerce') > 0].copy()
-        log_dict = {}
-        for (name, opt), group in df_in.groupby(['상품명', '옵션']):
-            recent = group.sort_values(by='저장시간', ascending=False).head(3)
-            logs = [f"{str(r['저장시간'])[5:10]}({int(r['리오더입고수량'])}개)" for _, r in recent.iterrows()]
-            log_dict[(str(name).strip(), str(opt).strip())] = " / ".join(logs)
-        return log_dict
+        # 리오더입고수량 컬럼이 있는 데이터만 필터
+        if '리오더입고수량' in df_h.columns:
+            df_in = df_h[pd.to_numeric(df_h['리오더입고수량'], errors='coerce') > 0].copy()
+            log_dict = {}
+            for (name, opt), group in df_in.groupby(['상품명', '옵션']):
+                recent = group.sort_values(by='저장시간', ascending=False).head(3)
+                logs = [f"{str(r['저장시간'])[5:10]}({int(r['리오더입고수량'])}개)" for _, r in recent.iterrows()]
+                log_dict[(str(name).strip(), str(opt).strip())] = " / ".join(logs)
+            return log_dict
     except: return {}
 
 def find_idx(cols, target_keywords):
@@ -87,7 +88,7 @@ with tab1:
             df_new.columns = df_new.columns.str.strip()
             df_new = df_new.loc[:, ~df_new.columns.duplicated()] 
 
-            # [초기화 방합 로직] 구글 시트 데이터 우선 병합
+            # [해결] 초기화 방지: 구글 시트 데이터 병합
             try:
                 sheet = get_sheet().sheet1
                 gs_data = pd.DataFrame(sheet.get_all_records())
@@ -123,12 +124,14 @@ with tab1:
         avail = c2.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
         t3day = c2.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
 
-        # 2~3단계 분석
+        # 2~3단계 분석 (버튼 위치 수정됨)
         st.subheader("🚀 2~3단계: 분석 설정")
-        l1, l2, l3 = st.columns([1, 1, 1])
-        lt = l1.number_input("리드타임", value=10)
-        ss = l2.number_input("안전재고", value=7)
-        if l3.button("📊 분석 실행", use_container_width=True):
+        l1, l2 = st.columns(2)
+        lt = l1.number_input("리드타임 (일)", value=10)
+        ss = l2.number_input("안전재고 (일 수)", value=7)
+        
+        # 설정값 바로 아래에 배치
+        if st.button("📊 분석 실행", use_container_width=True):
             st.session_state.analyzed = True
             st.rerun()
 
@@ -177,10 +180,9 @@ with tab1:
             disp_cols = [sold_out, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "최근입고기록", "일판매량", "권장발주량"]
             st.data_editor(df_work[disp_cols], use_container_width=True, key="main_editor", on_change=on_main_edit)
 
-            # --- [5단계: 최종 발주 리스트 요약 - 경고 및 버튼 복구] ---
+            # 5단계 최종 요약
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
-            
             to_order = df_work.copy()
             def check_status(row):
                 v_sl = row['일판매량']
@@ -188,31 +190,23 @@ with tab1:
                 if v_sl > 0 and v_tot < (v_sl * 3): return "🚨 긴급"
                 elif v_sl > 0 and v_tot < (v_sl * 5): return "⚠️ 주의"
                 return "✅ 정상"
-            
             to_order['상태'] = to_order.apply(check_status, axis=1)
-            
             f1, f2 = st.columns([1, 1])
             s_filter = f1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
-            
-            # 발주 필요 상품만 추출
             order_mask = (to_order['권장발주량'] > 0) | (to_order['상태'] != "✅ 정상")
             df_final = to_order[order_mask].copy()
-            
             if "🚨" in s_filter: df_final = df_final[df_final['상태'] == "🚨 긴급"]
             elif "⚠️" in s_filter: df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
 
             if not df_final.empty:
                 final_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "권장발주량"]
                 edited_final = st.data_editor(df_final[final_cols], use_container_width=True, key="final_order_editor")
-                
                 col_btn1, col_btn2 = st.columns(2)
                 if col_btn1.button("💾 구글 시트에 최종 기록 저장", use_container_width=True):
                     if save_history_to_gsheet(edited_final): st.success("✅ 히스토리에 저장되었습니다!")
-                
                 csv = edited_final.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
                 col_btn2.download_button("📥 엑셀 다운로드", csv, f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
-            else:
-                st.info("💡 현재 발주가 필요한 상품이 없습니다.")
+            else: st.info("💡 현재 발주가 필요한 상품이 없습니다.")
 
 # --- [🌙 탭 2: 동대문 관리 및 히스토리] ---
 with tab2:
