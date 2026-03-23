@@ -13,6 +13,33 @@ def get_sheet():
     spreadsheet_key = "1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg"
     return client.open_by_key(spreadsheet_key)
 
+# [복구 함수] History에서 최신 리오더 수량을 추출해 시트1로 복사
+def recover_from_history():
+    try:
+        spreadsheet = get_sheet()
+        hist_sheet = spreadsheet.worksheet("history")
+        data = hist_sheet.get_all_records()
+        if not data:
+            st.error("history 탭에 데이터가 없습니다.")
+            return
+        
+        df_hist = pd.DataFrame(data)
+        # 저장시간 역순 정렬 후 상품명+옵션 중복 제거 (가장 최신 수량만 남김)
+        df_hist = df_hist.sort_values(by='저장시간', ascending=False)
+        # 사진을 보니 열 이름이 '상품명', '옵션', '리오더 수량'으로 되어 있음
+        df_latest = df_hist.drop_duplicates(subset=['상품명', '옵션'], keep='first')
+        
+        # 시트1 규격에 맞게 추출
+        df_to_save = df_latest[['상품명', '옵션', '리오더 수량']].copy()
+        
+        # 시트1에 덮어쓰기
+        sheet1 = spreadsheet.sheet1
+        sheet1.clear() # 복구 시에는 한 번 비우고 정렬해서 넣음
+        sheet1.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
+        st.success(f"✅ 총 {len(df_to_save)}개의 품목 수량을 history에서 복구했습니다!")
+    except Exception as e:
+        st.error(f"복구 중 오류 발생: {e}")
+
 def save_reorder_data(df):
     if df.empty: return 
     try:
@@ -64,9 +91,14 @@ tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리
 with tab1:
     if 'analyzed' not in st.session_state: st.session_state.analyzed = False
     
-    st.subheader("📁 데이터 업로드 (제작상품)")
+    st.subheader("📁 데이터 관리")
     
-    if st.button("🔄 제작상품 분석 리셋"):
+    c1, c2 = st.columns(2)
+    # [추가] 긴급 복구 버튼
+    if c1.button("🆘 긴급 데이터 복구 (History -> 시트1)", help="구글 시트의 데이터가 날아갔을 때 history 탭에서 최신 수량을 가져옵니다."):
+        recover_from_history()
+    
+    if c2.button("🔄 제작상품 분석 리셋"):
         if 'df_raw' in st.session_state: del st.session_state.df_raw
         if 'analyzed' in st.session_state: st.session_state.analyzed = False
         if 'last_filename' in st.session_state: del st.session_state.last_filename
@@ -257,20 +289,6 @@ with tab1:
                     if csv_data[c].dtype == object: csv_data[c] = csv_data[c].astype(str).str.strip()
                 csv = csv_data.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
                 col_btn2.download_button("📥 엑셀 다운로드", csv, f"발주_{datetime.now().strftime('%m%d_%H%M')}.csv", "text/csv")
-            else:
-                st.info("💡 발주할 상품이 없습니다.")
-
-            st.divider()
-            st.subheader("📜 6단계: 과거 데이터 확인")
-            if st.button("🔄 기록 불러오기"): st.session_state.db_history = load_history_from_gsheet()
-            if 'db_history' in st.session_state and not st.session_state.db_history.empty:
-                df_hist = st.session_state.db_history
-                df_hist['날짜'] = df_hist['저장시간'].astype(str).str.split(' ').str[0]
-                sel_date = st.date_input("날짜 선택", datetime.now())
-                day_data = df_hist[df_hist['날짜'] == sel_date.strftime("%Y-%m-%d")]
-                if not day_data.empty:
-                    sel_time = st.selectbox("⏰ 시간 선택", sorted(day_data['저장시간'].unique(), reverse=True))
-                    st.dataframe(day_data[day_data['저장시간'] == sel_time].drop(columns=['날짜']), use_container_width=True)
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
