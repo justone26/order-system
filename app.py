@@ -125,28 +125,35 @@ with tab1:
             st.rerun()
 
 if st.session_state.analyzed:
+            # --- [필수 함수 정의: AttributeError 방지형] ---
+            def safe_to_num(val):
+                """값 하나 혹은 시리즈를 숫자로 안전하게 변환"""
+                import pandas as pd
+                res = pd.to_numeric(val, errors='coerce')
+                # 결과가 판다스 객체면 fillna 사용, 아니면 일반 숫자 처리
+                if hasattr(res, 'fillna'):
+                    return res.fillna(0)
+                return 0 if pd.isna(res) else res
+
             # --- [4단계: 데이터 편집 및 재고 관리] ---
             st.divider()
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
             
-            # 0. 데이터 복사 및 특정 상품 제외 ('QT' 포함, 'BE' 시작)
             df_work = st.session_state.df_raw.copy()
             
+            # 0. 특정 상품 제외 ('QT' 포함, 'BE' 시작)
             if item in df_work.columns:
-                # 'QT' 포함 제외 (대소문자 무시)
                 df_work = df_work[~df_work[item].astype(str).str.contains('QT|qt', na=False)]
-                # 'BE'로 시작하는 상품 제외
                 df_work = df_work[~df_work[item].astype(str).str.contains('^BE|^be', na=False)]
 
-            # 1. 4단계 상단 UI (검색, 필터, 날짜)
+            # 1. 상단 UI
             f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
             search_q = f_c1.text_input("🔍 상품명 검색")
             filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
             hist_date_4 = f_c3.date_input("🗓️ 입고 기록 확인 날짜", datetime.now(), key="date_4")
 
-            # 2. 고유 키 생성 및 과거 입고 매핑
+            # 2. 고유 키 및 입고 매핑
             df_work['unique_key'] = df_work[item].astype(str).str.strip() + df_work[option].astype(str).str.strip()
-            
             past_hist = load_history_from_gsheet()
             df_work['리오더입고수량'] = 0
             if not past_hist.empty and '구분' in past_hist.columns:
@@ -157,27 +164,26 @@ if st.session_state.analyzed:
                     in_map = t_hist.groupby('k_tmp')['수량'].sum().to_dict()
                     df_work['리오더입고수량'] = df_work['unique_key'].map(in_map).fillna(0).astype(int)
 
-            # 3. 계산 로직 (에러 방지용 numeric 변환)
-            def to_num(s): return pd.to_numeric(s, errors='coerce').fillna(0)
-
-            df_work['일판매량'] = (to_num(df_work[t7day]) / 7 if to_num(df_work[t7day]).sum() > 0 else to_num(df_work[t3day]) / 3).round(0).astype(int)
-            df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (to_num(df_work[avail]) + to_num(df_work['리오더 수량']))).clip(lower=0).astype(int)
+            # 3. 수치 계산
+            v7_num = safe_to_num(df_work[t7day])
+            v3_num = safe_to_num(df_work[t3day])
+            df_work['일판매량'] = (v7_num / 7 if v7_num.sum() > 0 else v3_num / 3).round(0).astype(int)
             
-            # 사용자 필터 적용
+            # 권장발주량 계산
+            v_av_num = safe_to_num(df_work[avail])
+            v_re_num = safe_to_num(df_work['리오더 수량'])
+            df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (v_av_num + v_re_num)).clip(lower=0).astype(int)
+            
+            # 필터 적용
             if filter_m == "정상만": df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
             elif filter_m == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
             if search_q: df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False)]
 
-            # 4. 4단계 테이블 출력 (왼쪽 정렬 고정)
+            # 4. 4단계 출력
             if not df_work.empty:
-                # 실제 데이터프레임에 존재하는 컬럼 이름만 리스트화 (에러 방지 핵심)
                 disp_cols_4 = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
                 df_work_view = df_work[disp_cols_4].copy()
-                
-                # 숫자를 문자로 변환하여 왼쪽 정렬
-                for c in df_work_view.columns:
-                    df_work_view[c] = df_work_view[c].astype(str)
-                
+                for c in df_work_view.columns: df_work_view[c] = df_work_view[c].astype(str)
                 config_4 = {c: st.column_config.TextColumn(c) for c in df_work_view.columns}
 
                 def on_edit_4():
@@ -212,12 +218,17 @@ if st.session_state.analyzed:
             to_order['추가발주수량'] = to_order['unique_key'].map(st.session_state.extra_order_dict).fillna(0).astype(int)
             to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
 
+            # [해결] apply 내에서 safe_to_num을 사용하여 에러 차단
             def get_final_status(r):
-                total = (to_num(r[avail])) + to_num(r['리오더 수량'])
-                if r['일판매량'] > 0:
-                    if total < (r['일판매량'] * 3): return "🚨 긴급"
-                    if total < (r['일판매량'] * 5): return "⚠️ 주의"
+                av_val = safe_to_num(r[avail])
+                re_val = safe_to_num(r['리오더 수량'])
+                total = av_val + re_val
+                daily = r['일판매량']
+                if daily > 0:
+                    if total < (daily * 3): return "🚨 긴급"
+                    if total < (daily * 5): return "⚠️ 주의"
                 return "✅ 정상"
+            
             to_order['상태'] = to_order.apply(get_final_status, axis=1)
 
             order_mask = (to_order['권장발주량'] > 0) | (to_order['상태'] != "✅ 정상")
@@ -228,11 +239,7 @@ if st.session_state.analyzed:
             if not df_final.empty:
                 disp_final = ["상태", item, option, vendor, vendor_item, avail, "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]
                 df_final_view = df_final[disp_final].copy()
-                
-                # 모든 컬럼을 문자로 변환 (에러 방지 및 정렬)
-                for c in df_final_view.columns:
-                    df_final_view[c] = df_final_view[c].astype(str)
-                
+                for c in df_final_view.columns: df_final_view[c] = df_final_view[c].astype(str)
                 config_5 = {c: st.column_config.TextColumn(c) for c in df_final_view.columns}
                 
                 def on_edit_5():
