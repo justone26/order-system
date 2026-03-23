@@ -13,6 +13,24 @@ def get_sheet():
     spreadsheet_key = "1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg"
     return client.open_by_key(spreadsheet_key)
 
+# [추가] History에서 품목별 마지막 입고 기록을 가져오는 함수
+def get_last_history_data():
+    try:
+        spreadsheet = get_sheet()
+        hist_sheet = spreadsheet.worksheet("history")
+        data = hist_sheet.get_all_records()
+        if not data: return pd.DataFrame()
+        
+        df_h = pd.DataFrame(data)
+        # 입고 수량이 있었던 기록만 필터링 (추가발주분이나 리오더 수량이 0보다 큰 기록)
+        # 여기서는 '저장시간' 기준으로 가장 최신 데이터를 가져옵니다.
+        df_h = df_h.sort_values(by='저장시간', ascending=False)
+        # 상품명+옵션 조합으로 가장 최근 것만 남김
+        df_last = df_h.drop_duplicates(subset=['상품명', '옵션'], keep='first')
+        return df_last[['상품명', '옵션', '저장시간', '권장발주량']] # 권장발주량 혹은 입고량 열 이름에 맞게 수정 가능
+    except:
+        return pd.DataFrame()
+
 def save_reorder_data(df):
     if df.empty: return 
     try:
@@ -38,16 +56,6 @@ def save_history_to_gsheet(df):
         st.error(f"과거 기록 저장 실패: {e}")
         return False
 
-def load_history_from_gsheet():
-    try:
-        spreadsheet = get_sheet()
-        hist_sheet = spreadsheet.worksheet("history")
-        data = hist_sheet.get_all_records()
-        return pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"기록 불러오기 실패: {e}")
-        return pd.DataFrame()
-
 def find_idx(cols, target_keywords):
     for keyword in target_keywords:
         for i, col in enumerate(cols):
@@ -60,16 +68,14 @@ st.title("📦 통합 재고 관리 시스템")
 
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
-# --- [🏭 탭 1: 제작 상품 관리] ---
 with tab1:
     if 'analyzed' not in st.session_state: st.session_state.analyzed = False
     
     st.subheader("📁 데이터 업로드 (제작상품)")
     
     if st.button("🔄 제작상품 분석 리셋"):
-        if 'df_raw' in st.session_state: del st.session_state.df_raw
-        if 'analyzed' in st.session_state: st.session_state.analyzed = False
-        if 'last_filename' in st.session_state: del st.session_state.last_filename
+        for key in ['df_raw', 'analyzed', 'last_filename', 'df_history_match']:
+            if key in st.session_state: del st.session_state[key]
         st.rerun()
 
     uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="prod_upload")
@@ -91,23 +97,20 @@ with tab1:
                     gs_data = pd.DataFrame(gs_raw)
                     if not gs_data.empty and '상품명' in gs_data.columns:
                         gs_subset = gs_data[['상품명', '옵션', '리오더 수량']].copy()
-                        gs_subset['상품명'] = gs_subset['상품명'].astype(str).str.strip()
-                        gs_subset['옵션'] = gs_subset['옵션'].astype(str).str.strip()
-                        
                         df_new['match_name'] = df_new[tmp_item].astype(str).str.strip()
                         df_new['match_opt'] = df_new[tmp_option].astype(str).str.strip()
-
                         df_new = pd.merge(df_new, gs_subset, left_on=['match_name', 'match_opt'], right_on=['상품명', '옵션'], how='left', suffixes=('', '_gs'))
-                        
                         if '리오더 수량_gs' in df_new.columns:
                             df_new['리오더 수량'] = df_new['리오더 수량_gs'].fillna(0).astype(int)
                             cols_to_drop = [c for c in ['상품명_gs', '옵션_gs', '리오더 수량_gs', 'match_name', 'match_opt'] if c in df_new.columns]
                             df_new = df_new.drop(columns=cols_to_drop)
                 
+                # [추가] History 데이터 미리 불러오기
+                st.session_state.df_history_match = get_last_history_data()
+
                 if '리오더 수량' not in df_new.columns: df_new['리오더 수량'] = 0
             except Exception as e:
-                st.warning(f"기존 리오더 수량 불러오기 실패: {e}")
-                if '리오더 수량' not in df_new.columns: df_new['리오더 수량'] = 0
+                st.warning(f"데이터 연동 실패: {e}")
 
             st.session_state.df_raw = df_new
             st.session_state.last_filename = uploaded_file.name
@@ -137,45 +140,46 @@ with tab1:
         safety_stock = col_ss.number_input("안전재고 (일 수)", value=7)
         
         if st.button("🚀 분석 실행"):
-            df = st.session_state.df_raw.copy()
-            st.session_state.df_raw = df
             st.session_state.analyzed = True
             st.rerun()
 
         if st.session_state.analyzed:
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
-            f1, f2 = st.columns([3, 1])
-            search_query = f1.text_input("🔍 상품명 검색", key="prod_search_input")
-            filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
             
             df_working = st.session_state.df_raw.copy()
             
-            # --- [핵심 수정 로직] 권장발주량 계산 시 품절 상품 제외 ---
+            # 히스토리 데이터 매칭 (최근 입고일자 가져오기)
+            if 'df_history_match' in st.session_state and not st.session_state.df_history_match.empty:
+                hist = st.session_state.df_history_match
+                df_working = pd.merge(df_working, hist, left_on=[item, option], right_on=['상품명', '옵션'], how='left', suffixes=('', '_hist'))
+                df_working['최근기록일'] = df_working['저장시간'].fillna('-')
+            else:
+                df_working['최근기록일'] = '-'
+
             v_avail = pd.to_numeric(df_working[avail], errors='coerce').fillna(0)
             v_reorder = pd.to_numeric(df_working['리오더 수량'], errors='coerce').fillna(0)
             v_3day = pd.to_numeric(df_working[t3day], errors='coerce').fillna(0)
             df_working["일판매량"] = (v_3day / 3).round(0).astype(int)
             
-            # 기본 계산식
             needed_qty = (df_working["일판매량"] * (lead_time + safety_stock))
             current_assets = (v_avail + v_reorder)
             df_working["권장발주량"] = (needed_qty - current_assets).clip(lower=0).round(0).astype(int)
             
-            # 품절(단종)인 경우 권장발주량을 0으로 강제 조정
             is_sold_out = df_working[sold_out].astype(str).str.contains('품절', na=False)
             df_working.loc[is_sold_out, "권장발주량"] = 0
-            # ------------------------------------------------------
 
-            if filter_mode == "정상만": 
-                df_working = df_working[~is_sold_out]
-            elif filter_mode == "품절만": 
-                df_working = df_working[is_sold_out]
+            # 검색 및 필터
+            f1, f2 = st.columns([3, 1])
+            search_query = f1.text_input("🔍 상품명 검색", key="prod_search_input")
+            filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
             
-            if search_query: 
-                df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
+            if filter_mode == "정상만": df_working = df_working[~is_sold_out]
+            elif filter_mode == "품절만": df_working = df_working[is_sold_out]
+            if search_query: df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
 
             if "리오더입고수량" not in df_working.columns: df_working["리오더입고수량"] = 0
 
+            # 자동 저장 로직
             def auto_save_and_update():
                 if "main_editor" in st.session_state and st.session_state["main_editor"]["edited_rows"]:
                     changes = st.session_state["main_editor"]["edited_rows"]
@@ -194,22 +198,24 @@ with tab1:
                         save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
                         save_df.columns = ['상품명', '옵션', '리오더 수량']
                         save_reorder_data(save_df)
-                        st.toast("✅ 구글 시트 업데이트 완료!")
+                        st.toast("✅ 수량 업데이트 완료!")
                     except: pass
 
             display_df_4 = df_working.copy()
-            num_cols_4 = [stock, avail, "리오더 수량", "리오더입고수량", "일판매량", t3day, "권장발주량"]
-            for col in num_cols_4:
+            # 숫자 데이터 정리
+            for col in [stock, avail, "리오더 수량", "리오더입고수량", "권장발주량"]:
                 if col in display_df_4.columns:
                     display_df_4[col] = display_df_4[col].fillna(0).astype(int).apply(lambda x: f"  {x}")
 
-            display_cols_4 = [sold_out, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "일판매량", t3day, "권장발주량"]
+            # [핵심] 최근기록일 열을 앞쪽에 배치
+            display_cols_4 = [sold_out, "최근기록일", item, option, stock, avail, "리오더 수량", "리오더입고수량", "권장발주량"]
             final_target_4 = [c for c in display_cols_4 if c in display_df_4.columns]
 
             st.data_editor(
-                display_df_4[final_target_4], use_container_width=True, height=400, key="main_editor",
+                display_df_4[final_target_4], use_container_width=True, height=450, key="main_editor",
                 on_change=auto_save_and_update,
                 column_config={
+                    "최근기록일": st.column_config.Column("📅 마지막 저장일", width="medium"),
                     "리오더 수량": st.column_config.Column("📝 리오더 수량"),
                     "리오더입고수량": st.column_config.Column("➕ 입고수량 입력")
                 }
