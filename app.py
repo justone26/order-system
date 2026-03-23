@@ -306,4 +306,4 @@ with tab2:
             st.rerun()
         csv = edited_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         c3.download_button("📥 엑셀 다운로드", csv, "사입리스트.csv", "text/csv")
-지금까지 너랑 나와 같이 만들 프로그램이야 엑셀이 자꾸 초기화 되는 이유을 좀 체크해줘
+
