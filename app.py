@@ -99,7 +99,6 @@ with tab1:
         item = c1.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
         option = c1.selectbox("옵션", cols, index=find_idx(cols, ['옵션']))
         vendor_item = c1.selectbox("공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
-        reg_date = c2.selectbox("등록일", cols, index=find_idx(cols, ['등록일']))
         stock = c2.selectbox("정상재고", cols, index=find_idx(cols, ['정상재고']))
         avail = c2.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
         t3day = c2.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
@@ -130,6 +129,8 @@ with tab1:
             elif filter_m == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
             if search_q: df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False)]
 
+            if "리오더입고수량" not in df_work.columns: df_work["리오더입고수량"] = 0
+
             def on_edit_4():
                 changes = st.session_state["main_editor"]["edited_rows"]
                 for r_idx_str, change in changes.items():
@@ -148,17 +149,15 @@ with tab1:
                 save_reorder_data(save_df)
                 st.rerun()
 
-            disp_cols = [sold_out, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "일판매량", "권장발주량"]
+            # [수정] 존재하는 컬럼만 골라내서 KeyError 방지
+            full_cols = [sold_out, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "일판매량", "권장발주량"]
+            disp_cols = [c for c in full_cols if c in df_work.columns]
+            
             st.data_editor(df_work[disp_cols], use_container_width=True, key="main_editor", on_change=on_edit_4)
 
-            # --- [복구된 5단계] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
-            
-            # 요약용 데이터 준비
             to_order = df_work.copy()
-            if '추가발주분' not in st.session_state: st.session_state.추가발주분 = {}
-
             def check_status(row):
                 v_sl = row['일판매량']
                 v_tot = pd.to_numeric(row[avail], errors='coerce') + row['리오더 수량']
@@ -167,7 +166,6 @@ with tab1:
                 return "✅ 정상"
             
             to_order['상태'] = to_order.apply(check_status, axis=1)
-            # 초기 추가발주분 컬럼 생성
             to_order['추가발주분'] = 0 
             
             s_filter = st.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
@@ -178,24 +176,20 @@ with tab1:
             elif "⚠️" in s_filter: df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
 
             if not df_final.empty:
-                # 최종 발주량 계산: 권장 + 추가
                 df_final['최종발주량'] = df_final['권장발주량'] + df_final['추가발주분']
-                final_cols = ["상태", item, option, vendor_item, avail, "리오더 수량", "권장발주량", "추가발주분", "최종발주량"]
+                f_target = ["상태", item, option, vendor_item, avail, "리오더 수량", "권장발주량", "추가발주분", "최종발주량"]
+                disp_final = [c for c in f_target if c in df_final.columns]
                 
-                # [복구] 5단계 에디터: 추가발주분 수정 가능하게 설정
                 edited_final = st.data_editor(
-                    df_final[final_cols], 
+                    df_final[disp_final], 
                     use_container_width=True, 
                     key="final_editor",
-                    column_config={"추가발주분": st.column_config.NumberColumn("➕ 추가발주분", help="직접 더할 수량을 입력하세요", default=0)}
+                    column_config={"추가발주분": st.column_config.NumberColumn("➕ 추가발주분", default=0)}
                 )
                 
-                # 수정한 수량 반영하여 최종발주량 업데이트
                 edited_final['최종발주량'] = edited_final['권장발주량'] + edited_final['추가발주분']
-
                 col_btn1, col_btn2 = st.columns(2)
                 if col_btn1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-                    # 최종 발주량이 0보다 큰 것만 저장
                     save_target = edited_final[edited_final['최종발주량'] > 0]
                     if save_history_to_gsheet(save_target[[item, option, '최종발주량']], log_type="발주"):
                         st.success("✅ 발주 기록이 저장되었습니다!")
