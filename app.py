@@ -17,6 +17,7 @@ def get_sheet():
         return None
 
 def make_match_key(name, opt):
+    """상품명과 옵션을 합쳐 고유 키 생성"""
     return str(name).strip().replace(" ", "").upper() + str(opt).strip().replace(" ", "").upper()
 
 def save_reorder_data(new_work_df):
@@ -78,13 +79,11 @@ if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 tab1, tab2 = st.tabs(["📊 제작 상품 관리", "📜 히스토리 조회"])
 
 with tab1:
-    # --- 0단계: 업로드 ---
     uploaded_file = st.file_uploader("엑셀 파일을 올려주세요", type=['xlsx', 'xls', 'csv'])
     if uploaded_file:
         if 'df_raw' not in st.session_state or st.session_state.get('last_filename') != uploaded_file.name:
             df_new = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
             df_new.columns = df_new.columns.str.strip()
-            # 구글 시트에서 기존 리오더 수량 불러오기
             try:
                 sheet = get_sheet().sheet1
                 gs_df = pd.DataFrame(sheet.get_all_records())
@@ -106,7 +105,6 @@ with tab1:
         df_curr = st.session_state.df_raw
         cols = df_curr.columns.tolist()
 
-        # --- 1단계: 매핑 설정 (항목 복구) ---
         st.subheader("⚙️ 1단계: 매핑 설정")
         c1, c2 = st.columns(2)
         sold_out = c1.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
@@ -120,7 +118,6 @@ with tab1:
         t3day = c2.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
         t7day = c2.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
-        # --- 2~3단계: 분석 설정 ---
         st.subheader("🚀 분석 설정")
         l1, l2 = st.columns(2)
         lt = l1.number_input("리드타임 (일)", value=10)
@@ -131,7 +128,6 @@ with tab1:
 
     if st.session_state.get('analyzed'):
         st.divider()
-        # --- 4단계: 데이터 편집 및 입고 처리 ---
         st.subheader("📝 4단계: 재고 관리 및 입고 처리")
         df_work = st.session_state.df_raw.copy()
         df_work['unique_key'] = df_work.apply(lambda r: make_match_key(r[item], r[option]), axis=1)
@@ -141,7 +137,6 @@ with tab1:
         filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
         hist_date_4 = f_c3.date_input("🗓️ 과거 입고확인 날짜", datetime.now())
 
-        # 과거 입고수량 불러오기
         past_hist = load_history_from_gsheet()
         df_work['과거 리오더입고'] = 0
         if not past_hist.empty and '구분' in past_hist.columns and '저장시간' in past_hist.columns:
@@ -154,7 +149,6 @@ with tab1:
                     df_work['과거 리오더입고'] = df_work['unique_key'].map(in_map).fillna(0).astype(int)
             except: pass
 
-        # 판매량 및 권장발주량 계산
         v7, v3 = safe_num(df_work[t7day]), safe_num(df_work[t3day])
         df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(1)
         df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (safe_num(df_work[avail]) + safe_num(df_work['리오더 수량']))).clip(lower=0).round(0).astype(int)
@@ -164,46 +158,43 @@ with tab1:
         elif filter_m == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
         if search_q: df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
 
-        disp4 = [sold_out, vendor, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량"]
+        disp4 = [sold_out, vendor, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량", "unique_key"]
         edited4 = st.data_editor(df_work[disp4], use_container_width=True, hide_index=True, key="ed4")
 
         if st.button("💾 리오더/입고 데이터 저장"):
-            for idx, row in edited4.iterrows():
-                o_idx = df_work.index[idx]
-                st.session_state.df_raw.at[o_idx, "리오더 수량"] = int(row["리오더 수량"])
-                if int(row["리오더입고수량"]) > 0:
-                    st.session_state.df_raw.at[o_idx, "리오더 수량"] = max(0, int(row["리오더 수량"]) - int(row["리오더입고수량"]))
-                    save_history_to_gsheet(pd.DataFrame([[row[item], row[option], row["리오더입고수량"]]], columns=['상품명', '옵션', '수량']), "입고")
+            for _, row in edited4.iterrows():
+                target_key = row["unique_key"]
+                idx_list = st.session_state.df_raw[st.session_state.df_raw.apply(lambda r: make_match_key(r[item], r[option]), axis=1) == target_key].index
+                if not idx_list.empty:
+                    o_idx = idx_list[0]
+                    st.session_state.df_raw.at[o_idx, "리오더 수량"] = int(row["리오더 수량"])
+                    if int(row["리오더입고수량"]) > 0:
+                        st.session_state.df_raw.at[o_idx, "리오더 수량"] = max(0, int(row["리오더 수량"]) - int(row["리오더입고수량"]))
+                        save_history_to_gsheet(pd.DataFrame([[row[item], row[option], row["리오더입고수량"]]], columns=['상품명', '옵션', '수량']), "입고")
             save_df = st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'})
             if save_reorder_data(save_df):
-                st.success("✅ 구글 시트 저장 완료!"); st.rerun()
+                st.success("✅ 저장 완료!"); st.rerun()
 
         st.divider()
-        # --- 5단계: 최종 발주 요약 (알림/긴급 기능 복구) ---
         st.subheader("📋 5단계: 최종 발주 요약 및 알림")
         df_final = df_work.copy()
         df_final['추가 리오더'] = df_final['unique_key'].map(st.session_state.extra_order_dict).fillna(0).astype(int)
         df_final['최종발주량'] = df_final['권장발주량'] + df_final['추가 리오더']
         
-        # 상태 판별 로직 (긴급/주의/정상)
         def get_stat(r):
             total_inv = safe_num(r[avail]) + safe_num(r['리오더 수량'])
-            daily_sales = r['일판매량']
-            if daily_sales <= 0: return "✅ 정상"
-            days_left = total_inv / daily_sales
+            if r['일판매량'] <= 0: return "✅ 정상"
+            days_left = total_inv / r['일판매량']
             if days_left < 3: return "🚨 긴급"
             if days_left < 7: return "⚠️ 주의"
             return "✅ 정상"
         
         df_final['상태'] = df_final.apply(get_stat, axis=1)
-
-        disp5 = ["상태", item, option, vendor, avail, "리오더 수량", "추가 리오더", "과거 리오더입고", "권장발주량", "최종발주량"]
+        disp5 = ["상태", item, option, vendor, avail, "리오더 수량", "추가 리오더", "과거 리오더입고", "권장발주량", "최종발주량", "unique_key"]
         edited5 = st.data_editor(df_final[disp5], use_container_width=True, hide_index=True, key="ed5")
         
-        # 추가 리오더 값 세션 유지
-        for idx, row in edited5.iterrows():
-            k = df_final.iloc[idx]['unique_key']
-            st.session_state.extra_order_dict[k] = int(row["추가 리오더"])
+        for _, row in edited5.iterrows():
+            st.session_state.extra_order_dict[row["unique_key"]] = int(row["추가 리오더"])
 
         if st.button("📄 최종 발주 기록 확정"):
             order_data = edited5[edited5['최종발주량'] > 0]
