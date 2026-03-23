@@ -124,15 +124,33 @@ with tab1:
             st.rerun()
 
         if st.session_state.analyzed:
-            # --- 4단계: 데이터 편집 및 재고 관리 (왼쪽 정렬) ---
+   # --- [4단계: 데이터 편집 및 재고 관리] ---
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
             df_work = st.session_state.df_raw.copy()
             
-            f1, f2 = st.columns([3, 1])
-            search_q = f1.text_input("🔍 상품명 검색")
-            filter_m = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
+            # 4단계 상단 레이아웃: 검색, 필터, 그리고 [추가된 날짜 선택]
+            f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
+            search_q = f_c1.text_input("🔍 상품명 검색")
+            filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
+            # 5단계에 있던 날짜 선택 기능을 4단계로 가져옴
+            hist_date_4 = f_c3.date_input("🗓️ 입고 기록 확인 날짜", datetime.now(), key="date_4")
 
-            # 기본 계산
+            # [고유 키 생성] 매핑을 위해 필요
+            df_work['unique_key'] = df_work[item].astype(str).str.strip() + df_work[option].astype(str).str.strip()
+
+            # 1. 과거 입고 수량 불러오기 (4단계 표시용)
+            past_hist = load_history_from_gsheet()
+            df_work['리오더입고수량'] = 0
+            if not past_hist.empty and '구분' in past_hist.columns:
+                past_hist['날짜'] = past_hist['저장시간'].astype(str).str.split(' ').str[0]
+                # 사용자가 선택한 날짜(hist_date_4)의 입고 내역만 필터링
+                t_hist = past_hist[(past_hist['날짜'] == hist_date_4.strftime("%Y-%m-%d")) & (past_hist['구분'] == "입고")]
+                if not t_hist.empty:
+                    t_hist['k_tmp'] = t_hist['상품명'].astype(str).str.strip() + t_hist['옵션'].astype(str).str.strip()
+                    in_map = t_hist.groupby('k_tmp')['수량'].sum().to_dict()
+                    df_work['리오더입고수량'] = df_work['unique_key'].map(in_map).fillna(0).astype(int)
+
+            # 2. 기본 계산 로직
             v_7 = pd.to_numeric(df_work[t7day], errors='coerce').fillna(0)
             v_3 = pd.to_numeric(df_work[t3day], errors='coerce').fillna(0)
             df_work['일판매량'] = (v_7 / 7 if v_7.sum() > 0 else v_3 / 3).round(0).astype(int)
@@ -140,18 +158,18 @@ with tab1:
             v_re = pd.to_numeric(df_work['리오더 수량'], errors='coerce').fillna(0)
             df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (v_av + v_re)).clip(lower=0).astype(int)
             
+            # 필터 적용
             if filter_m == "정상만": df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
             elif filter_m == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
             if search_q: df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False)]
 
-            if "리오더입고수량" not in df_work.columns: df_work["리오더입고수량"] = 0
-
-            # [왼쪽 정렬 처리] 문자열 변환 및 TextColumn 설정
-            disp_cols_4 = [c for c in [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"] if c in df_work.columns]
+            # [핵심] 4단계 왼쪽 정렬 처리 (문자열 변환)
+            disp_cols_4 = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
             df_work_view = df_work[disp_cols_4].copy()
             num_cols_4 = [stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
             for c in num_cols_4:
                 if c in df_work_view.columns: df_work_view[c] = df_work_view[c].astype(str)
+            
             config_4 = {c: st.column_config.TextColumn(c) for c in disp_cols_4}
 
             def on_edit_4():
@@ -162,7 +180,7 @@ with tab1:
                     if "리오더 수량" in change:
                         try: st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
                         except: pass
-                    if "리오더입고수량" in change:
+                    if "리오더입고수량" in change: # 수동 입고 입력 시
                         try:
                             in_qty = int(change["리오더입고수량"])
                             curr = st.session_state.df_raw.at[orig_idx, "리오더 수량"]
@@ -174,29 +192,18 @@ with tab1:
 
             st.data_editor(df_work_view, use_container_width=True, key="main_editor_v4", on_change=on_edit_4, column_config=config_4, hide_index=True)
 
-            # --- 5단계: 최종 발주 리스트 요약 (왼쪽 정렬) ---
+            # --- [5단계: 최종 발주 리스트 요약] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
-            row1_c1, row1_c2 = st.columns([1, 1])
-            s_filter = row1_c1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
-            hist_date = row1_c2.date_input("🗓️ 리오더 입고과거확인 날짜", datetime.now())
+            # 5단계 필터
+            s_filter = st.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
             
             to_order = df_work.copy()
-            to_order['unique_key'] = to_order[item].astype(str).str.strip() + to_order[option].astype(str).str.strip()
-            
-            # 과거입고수량 매핑
-            past_hist = load_history_from_gsheet()
-            to_order['과거입고수량'] = 0
-            if not past_hist.empty and '구분' in past_hist.columns:
-                past_hist['날짜'] = past_hist['저장시간'].astype(str).str.split(' ').str[0]
-                t_hist = past_hist[(past_hist['날짜'] == hist_date.strftime("%Y-%m-%d")) & (past_hist['구분'] == "입고")]
-                if not t_hist.empty:
-                    t_hist['k_tmp'] = t_hist['상품명'].astype(str).str.strip() + t_hist['옵션'].astype(str).str.strip()
-                    in_map = t_hist.groupby('k_tmp')['수량'].sum().to_dict()
-                    to_order['과거입고수량'] = to_order['unique_key'].map(in_map).fillna(0).astype(int)
+            # 4단계에서 이미 계산된 '리오더입고수량'을 그대로 활용 (중복 로직 제거)
+            to_order['과거입고수량'] = to_order['리오더입고수량'] 
 
-            # 실시간 계산 및 상태 판별
+            # 실시간 합산 및 상태 판별
             to_order['추가발주수량'] = to_order['unique_key'].map(st.session_state.extra_order_dict).fillna(0).astype(int)
             to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
 
@@ -214,12 +221,12 @@ with tab1:
             elif "⚠️" in s_filter: df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
 
             if not df_final.empty:
-                # [왼쪽 정렬 처리] 문자열 변환 및 TextColumn 설정
+                # [핵심] 5단계 왼쪽 정렬 처리 (문자열 변환)
                 disp_final = ["상태", item, option, vendor, vendor_item, avail, "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]
                 df_final_view = df_final[disp_final].copy()
-                num_cols_5 = [avail, "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]
-                for c in num_cols_5:
+                for c in ["avail", "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]:
                     if c in df_final_view.columns: df_final_view[c] = df_final_view[c].astype(str)
+                
                 config_5 = {c: st.column_config.TextColumn(c) for c in disp_final}
                 
                 def on_edit_5():
@@ -233,6 +240,7 @@ with tab1:
 
                 st.data_editor(df_final_view, use_container_width=True, key="final_editor_v5", column_config=config_5, on_change=on_edit_5, hide_index=True)
                 
+                # 버튼 로직 생략 (기존과 동일)
                 c_b1, c_b2 = st.columns(2)
                 if c_b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
                     save_df = df_final[df_final['최종발주량'] > 0][[item, option, '최종발주량']]
