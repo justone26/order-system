@@ -136,7 +136,7 @@ with tab1:
         filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
         hist_date_4 = f_c3.date_input("🗓️ 과거 입고확인 날짜", datetime.now())
 
-        # 과거 입고수량 데이터 준비
+        # 과거 입고수량 불러오기
         past_hist = load_history_from_gsheet()
         df_all['과거 리오더입고'] = 0
         if not past_hist.empty and '구분' in past_hist.columns and '저장시간' in past_hist.columns:
@@ -149,26 +149,20 @@ with tab1:
                     df_all['과거 리오더입고'] = df_all['unique_key'].map(in_map).fillna(0).astype(int)
             except: pass
 
-        # 판매량 및 권장발주량 계산
+        # 판매량 계산
         v7, v3 = safe_num(df_all[t7day]), safe_num(df_all[t3day])
         df_all['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(1)
         df_all['권장발주량'] = ((df_all['일판매량'] * (lt + ss)) - (safe_num(df_all[avail]) + safe_num(df_all['리오더 수량']))).clip(lower=0).round(0).astype(int)
         df_all['리오더입고수량'] = 0
 
-        # 필터 적용 (이 필터링된 df_work가 5단계로 전달됩니다)
+        # 필터 적용
         df_work = df_all.copy()
         if filter_m == "정상만": df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
         elif filter_m == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
         if search_q: df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
 
         disp4 = [sold_out, vendor, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량", "unique_key"]
-        edited4 = st.data_editor(
-            df_work[disp4], 
-            use_container_width=True, 
-            hide_index=True, 
-            key="ed4",
-            column_config={"unique_key": None}
-        )
+        edited4 = st.data_editor(df_work[disp4], use_container_width=True, hide_index=True, key="ed4", column_config={"unique_key": None})
 
         if st.button("💾 리오더/입고 데이터 저장"):
             for _, row in edited4.iterrows():
@@ -187,11 +181,11 @@ with tab1:
         st.divider()
         st.subheader("📋 5단계: 최종 발주 요약 및 알림")
         
-        # 4단계에서 필터링된 df_work를 그대로 사용하여 필터 동기화
         df_final = df_work.copy()
         df_final['추가 리오더'] = df_final['unique_key'].map(st.session_state.extra_order_dict).fillna(0).astype(int)
         df_final['최종발주량'] = df_final['권장발주량'] + df_final['추가 리오더']
         
+        # 상태 판별 로직
         def get_stat(r):
             total_inv = safe_num(r[avail]) + safe_num(r['리오더 수량'])
             if r['일판매량'] <= 0: return "✅ 정상"
@@ -201,15 +195,15 @@ with tab1:
             return "✅ 정상"
         
         df_final['상태'] = df_final.apply(get_stat, axis=1)
+
+        # --- [추가] 상태 정렬을 위한 임시 숫자 부여 ---
+        # 긴급(0) -> 주의(1) -> 정상(2) 순으로 낮은 숫자를 주어 정렬
+        stat_order = {"🚨 긴급": 0, "⚠️ 주의": 1, "✅ 정상": 2}
+        df_final['sort_order'] = df_final['상태'].map(stat_order)
+        df_final = df_final.sort_values(by=['sort_order', item]).drop(columns=['sort_order'])
+
         disp5 = ["상태", item, option, vendor, avail, "리오더 수량", "추가 리오더", "과거 리오더입고", "권장발주량", "최종발주량", "unique_key"]
-        
-        edited5 = st.data_editor(
-            df_final[disp5], 
-            use_container_width=True, 
-            hide_index=True, 
-            key="ed5",
-            column_config={"unique_key": None}
-        )
+        edited5 = st.data_editor(df_final[disp5], use_container_width=True, hide_index=True, key="ed5", column_config={"unique_key": None})
         
         for _, row in edited5.iterrows():
             st.session_state.extra_order_dict[row["unique_key"]] = int(row["추가 리오더"])
