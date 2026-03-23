@@ -161,83 +161,106 @@ if st.session_state.analyzed:
             st.divider()
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
             
-            # 0. 데이터 복제
+            # 0. 데이터 복사
             df_work = st.session_state.df_raw.copy()
 
-            # 1. 상단 필터 UI
+            # 1. 상단 필터 UI (날짜 선택 포함)
             f_c1, f_c2, f_c3, f_c4 = st.columns([1.5, 1, 1, 1])
-            search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4_fix")
-            filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_v4_fix")
-            show_all_items = f_c3.checkbox("QT/BE 상품 포함하기", value=True, key="show_all_v4_fix")
-            hist_date_4 = f_c4.date_input("🗓️ 입고 날짜", datetime.now(), key="date_v4_fix")
+            search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4_final")
+            filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_v4_final")
+            show_all_items = f_c3.checkbox("QT/BE 상품 포함하기", value=True, key="show_all_v4_final")
+            
+            # [입고 날짜 셀렉트]
+            hist_date_4 = f_c4.date_input("🗓️ 입고 기록 확인 날짜", datetime.now(), key="date_v4_final")
 
-            # 2. 숫자 변환 함수 (계산 오류 방지)
+            # 2. 리오더 수량 및 입고 데이터 매핑 로직
+            def clean_name(n):
+                import re
+                return re.sub(r'^(QT|BE|qt|be)\s*', '', str(n)).strip()
+
+            df_work['clean_item'] = df_work[item].apply(clean_name)
+            df_work['unique_key'] = df_work['clean_item'] + df_work[option].astype(str).str.strip()
+
+            # [입고 기록 불러오기] 구글 시트에서 해당 날짜의 입고 수량을 가져와 매핑
+            past_hist = load_history_from_gsheet()
+            df_work['리오더입고수량'] = 0
+            if not past_hist.empty and '구분' in past_hist.columns:
+                past_hist['날짜'] = past_hist['저장시간'].astype(str).str.split(' ').str[0]
+                # 사용자가 선택한 날짜(hist_date_4)와 일치하는 '입고' 데이터만 필터링
+                t_hist = past_hist[(past_hist['날짜'] == hist_date_4.strftime("%Y-%m-%d")) & (past_hist['구분'] == "입고")]
+                if not t_hist.empty:
+                    t_hist['k_tmp'] = t_hist['상품명'].apply(clean_name) + t_hist['옵션'].astype(str).str.strip()
+                    in_map = t_hist.groupby('k_tmp')['수량'].sum().to_dict()
+                    df_work['리오더입고수량'] = df_work['unique_key'].map(in_map).fillna(0).astype(int)
+
+            # 3. 수치 계산 (안전한 숫자 변환)
             def safe_num(val):
-                try:
-                    import pandas as pd
-                    res = pd.to_numeric(val, errors='coerce')
-                    return res.fillna(0)
-                except:
-                    return 0
+                res = pd.to_numeric(val, errors='coerce')
+                return res.fillna(0) if hasattr(res, 'fillna') else (0 if pd.isna(res) else res)
 
-            # 3. 필수 수치 계산
             v7 = safe_num(df_work[t7day])
             v3 = safe_num(df_work[t3day])
             df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
-            
-            # 리오더 수량이 없으면 0으로 생성
-            if '리오더 수량' not in df_work.columns:
-                df_work['리오더 수량'] = 0
-            
             df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (safe_num(df_work[avail]) + safe_num(df_work['리오더 수량']))).clip(lower=0).astype(int)
 
-            # 4. 필터링 로직 (순서 중요)
-            # (1) 품절 필터
-            if sold_out in df_work.columns:
-                if filter_m == "정상만":
-                    df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
-                elif filter_m == "품절만":
-                    df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
+            # 4. 필터링 적용
+            if filter_m == "정상만":
+                df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
+            elif filter_m == "품절만":
+                df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
 
-            # (2) QT/BE 제외 필터 (체크 해제 시)
-            if not show_all_items and item in df_work.columns:
+            if not show_all_items:
                 df_work = df_work[~df_work[item].astype(str).str.contains('QT|qt|BE|be', na=False)]
 
-            # (3) 검색어 필터
-            if search_q and item in df_work.columns:
+            if search_q:
                 df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
 
-            # 5. 테이블 출력 (모든 항목 포함)
+            # 5. 테이블 출력 (모든 항목 복구 완료)
             if not df_work.empty:
-                # 표시할 항목 리스트
-                display_list = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", t3day, "일판매량", "권장발주량"]
-                # 실제 존재하는 컬럼만 선별
-                valid_cols = [c for c in display_list if c in df_work.columns]
+                # 보여줄 항목들: 품절여부, 제조사, 상품명, 옵션, 자체품번, 가용재고, 리오더수량, 입고수량, 3일판매량, 일판매량, 권장발주량
+                display_cols = [sold_out, vendor, item, option, vendor_item, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
                 
+                # 실제 데이터에 존재하는 컬럼만 선별하여 표시
+                valid_cols = [c for c in display_cols if c in df_work.columns]
                 df_view = df_work[valid_cols].copy()
-                for c in df_view.columns:
-                    df_view[c] = df_view[c].astype(str) # 왼쪽 정렬용
                 
+                # 왼쪽 정렬을 위해 모든 값을 문자열로 변환
+                for c in df_view.columns:
+                    df_view[c] = df_view[c].astype(str)
+                
+                # 에디터 설정
                 def on_edit_4():
-                    changes = st.session_state["editor_v4_fix"]["edited_rows"]
+                    changes = st.session_state["editor_final"]["edited_rows"]
                     for r_idx_str, change in changes.items():
                         idx = int(r_idx_str)
                         orig_idx = df_work.index[idx]
+                        
+                        # 리오더 수량 직접 수정 시
                         if "리오더 수량" in change:
                             st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
+                        
+                        # 리오더입고수량 입력 시 (수량 차감 및 기록)
+                        if "리오더입고수량" in change:
+                            in_qty = int(change["리오더입고수량"])
+                            curr_re = st.session_state.df_raw.at[orig_idx, "리오더 수량"]
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr_re - in_qty)
+                            # 구글 시트에 입고 내역 저장
+                            save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], in_qty]], columns=['상품명', '옵션', '수량']), log_type="입고")
+                    
+                    # 변경된 리오더 수량 시트에 업데이트
                     save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
                     st.rerun()
 
                 st.data_editor(
                     df_view, 
                     use_container_width=True, 
-                    key="editor_v4_fix", 
+                    key="editor_final", 
                     on_change=on_edit_4,
                     column_config={c: st.column_config.TextColumn(c) for c in df_view.columns},
                     hide_index=True
                 )
             else:
-                st.info("💡 표시할 상품이 없습니다. 상단 필터를 조정해 보세요.")
+                st.info("💡 선택하신 필터에 맞는 데이터가 없습니다. 상단 설정을 확인해주세요.")
                 
 # --- [5단계: 최종 발주 리스트 요약] ---
             st.divider()
