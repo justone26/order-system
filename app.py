@@ -47,7 +47,6 @@ def get_in_qty_logs():
     try:
         df_h = load_history_from_gsheet()
         if df_h.empty: return {}
-        # 리오더입고수량 컬럼이 있는 데이터만 필터
         if '리오더입고수량' in df_h.columns:
             df_in = df_h[pd.to_numeric(df_h['리오더입고수량'], errors='coerce') > 0].copy()
             log_dict = {}
@@ -88,7 +87,6 @@ with tab1:
             df_new.columns = df_new.columns.str.strip()
             df_new = df_new.loc[:, ~df_new.columns.duplicated()] 
 
-            # [해결] 초기화 방지: 구글 시트 데이터 병합
             try:
                 sheet = get_sheet().sheet1
                 gs_data = pd.DataFrame(sheet.get_all_records())
@@ -112,7 +110,6 @@ with tab1:
         df_curr = st.session_state.df_raw
         cols = df_curr.columns.tolist()
 
-        # 1단계 매핑
         st.subheader("⚙️ 1단계: 매핑 설정")
         c1, c2 = st.columns(2)
         sold_out = c1.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
@@ -124,31 +121,34 @@ with tab1:
         avail = c2.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
         t3day = c2.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
 
-        # 2~3단계 분석 (버튼 위치 수정됨)
         st.subheader("🚀 2~3단계: 분석 설정")
         l1, l2 = st.columns(2)
         lt = l1.number_input("리드타임 (일)", value=10)
         ss = l2.number_input("안전재고 (일 수)", value=7)
-        
-        # 설정값 바로 아래에 배치
         if st.button("📊 분석 실행", use_container_width=True):
             st.session_state.analyzed = True
             st.rerun()
 
         if st.session_state.analyzed:
-            # 4단계 데이터 편집
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
             df_work = st.session_state.df_raw.copy()
             
-            # 일판매량 및 권장발주량 계산 (품절 제외 포함)
+            # 필터 레이아웃 복구 (검색창 + 품절 필터)
+            f_col1, f_col2 = st.columns([3, 1])
+            s_query = f_col1.text_input("🔍 상품명 검색")
+            # [핵심 수정] 품절 필터 복구 및 '정상만' 기본값 설정
+            f_mode = f_col2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
+
+            # 계산
             v_av = pd.to_numeric(df_work[avail], errors='coerce').fillna(0)
             v_re = pd.to_numeric(df_work['리오더 수량'], errors='coerce').fillna(0)
             df_work['일판매량'] = (pd.to_numeric(df_work[t3day], errors='coerce').fillna(0) / 3).round(0).astype(int)
             df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (v_av + v_re)).clip(lower=0).astype(int)
             df_work.loc[df_work[sold_out].astype(str).str.contains('품절', na=False), '권장발주량'] = 0
 
-            # 검색 및 입고기록
-            s_query = st.text_input("🔍 상품명 검색")
+            # 필터링 적용
+            if f_mode == "정상만": df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
+            elif f_mode == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
             if s_query: df_work = df_work[df_work[item].astype(str).str.contains(s_query, case=False)]
             
             def match_log(row):
@@ -168,7 +168,6 @@ with tab1:
                         in_qty = int(change["리오더입고수량"])
                         curr = st.session_state.df_raw.at[orig_idx, "리오더 수량"]
                         st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr - in_qty)
-                        # 히스토리 기록
                         sh = get_sheet()
                         sh.worksheet("history").append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(df_work.at[orig_idx, item]), str(df_work.at[orig_idx, option]), in_qty])
                 save_df = st.session_state.df_raw[[item, option, '리오더 수량']].copy()
@@ -191,8 +190,8 @@ with tab1:
                 elif v_sl > 0 and v_tot < (v_sl * 5): return "⚠️ 주의"
                 return "✅ 정상"
             to_order['상태'] = to_order.apply(check_status, axis=1)
-            f1, f2 = st.columns([1, 1])
-            s_filter = f1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
+            s_col1, s_col2 = st.columns([1, 1])
+            s_filter = s_col1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
             order_mask = (to_order['권장발주량'] > 0) | (to_order['상태'] != "✅ 정상")
             df_final = to_order[order_mask].copy()
             if "🚨" in s_filter: df_final = df_final[df_final['상태'] == "🚨 긴급"]
