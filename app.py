@@ -154,7 +154,7 @@ with tab1:
             disp_cols = [c for c in full_cols if c in df_work.columns]
             st.data_editor(df_work[disp_cols], use_container_width=True, key="main_editor", on_change=on_edit_4)
 
-            # --- [5단계: 요청하신 순서로 셀 배치 수정] ---
+            # --- [5단계: 셀 배치 수정 및 ValueError 수정 완료] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
@@ -174,7 +174,18 @@ with tab1:
                     to_order['key'] = to_order[item].astype(str).str.strip() + to_order[option].astype(str).str.strip()
                     to_order['과거입고수량'] = to_order['key'].map(in_map).fillna(0).astype(int)
 
-            to_order['상태'] = to_order.apply(lambda r: "🚨 긴급" if r['일판매량'] > 0 and (pd.to_numeric(r[avail],0)+r['리오더 수량']) < (r['일판매량']*3) else ("⚠️ 주의" if r['일판매량'] > 0 and (pd.to_numeric(r[avail],0)+r['리오더 수량']) < (r['일판매량']*5) else "✅ 정상"), axis=1)
+            # 에러 방지를 위해 수동 수치 변환 로직 적용
+            def get_status(row):
+                v_av_num = pd.to_numeric(row[avail], errors='coerce') or 0
+                v_re_num = pd.to_numeric(row['리오더 수량'], errors='coerce') or 0
+                daily = row['일판매량']
+                total = v_av_num + v_re_num
+                if daily > 0:
+                    if total < (daily * 3): return "🚨 긴급"
+                    if total < (daily * 5): return "⚠️ 주의"
+                return "✅ 정상"
+
+            to_order['상태'] = to_order.apply(get_status, axis=1)
             to_order['추가발주수량'] = 0 
             
             order_mask = (to_order['권장발주량'] > 0) | (to_order['상태'] != "✅ 정상")
@@ -183,12 +194,11 @@ with tab1:
             elif "⚠️" in s_filter: df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
 
             if not df_final.empty:
-                # [수정 핵심] 요청하신 순서대로 컬럼 배치
+                # 요청하신 순서대로 컬럼 정렬
                 f_target = [
-                    "상태", item, option, vendor, vendor_item,  # 기본 정보
-                    avail, "리오더 수량",                         # 현재 재고 상황
-                    "추가발주수량", "과거입고수량",                # 조정 및 참고 수량
-                    "권장발주량", "최종발주량"                     # 최종 결과
+                    "상태", item, option, vendor, vendor_item, 
+                    avail, "리오더 수량", "추가발주수량", "과거입고수량", 
+                    "권장발주량", "최종발주량"
                 ]
                 disp_final = [c for c in f_target if c in df_final.columns]
                 
@@ -196,10 +206,10 @@ with tab1:
                     df_final[disp_final], 
                     use_container_width=True, 
                     key="final_editor",
-                    column_config={"추가발주수량": st.column_config.NumberColumn("➕ 추가발주수량", default=0)}
+                    column_config={"추가발주수량": st.column_config.NumberColumn("추가발주수량", min_value=0, default=0)}
                 )
                 
-                # 최종발주량 계산 로직 (수정된 데이터 반영)
+                # 최종발주량 계산
                 edited_final['최종발주량'] = edited_final['권장발주량'] + edited_final['추가발주수량']
                 
                 c_b1, c_b2 = st.columns(2)
@@ -209,6 +219,16 @@ with tab1:
                         st.success("✅ 발주 기록 저장 완료!")
                 csv = edited_final.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
                 c_b2.download_button("📥 엑셀 다운로드", csv, f"최종발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+
+            # 6단계
+            st.divider()
+            st.subheader("📜 6단계: 과거 데이터 및 입고 내역 확인")
+            if st.button("🔄 기록 불러오기"): st.session_state.db_history = load_history_from_gsheet()
+            if 'db_history' in st.session_state and not st.session_state.db_history.empty:
+                df_h = st.session_state.db_history
+                df_h['날짜'] = df_h['저장시간'].astype(str).str.split(' ').str[0]
+                sel_date = st.date_input("📅 상세 날짜 선택", datetime.now(), key="final_hist_date_2")
+                st.dataframe(df_h[df_h['날짜'] == sel_date.strftime("%Y-%m-%d")].sort_values('저장시간', ascending=False), use_container_width=True)
 
             # 6단계
             st.divider()
