@@ -339,6 +339,45 @@ if st.session_state.analyzed:
                                column_config={c: st.column_config.TextColumn(c) for c in df_final_view.columns}, hide_index=True)
             else:
                 st.info("💡 표시할 발주 데이터가 없습니다.")
+
+    # --- [버튼 섹션: 구글 시트 저장 및 엑셀 다운로드] ---
+                st.write("") # 간격 띄우기
+                c_b1, c_b2 = st.columns(2)
+                
+                # 1. 구글 시트 저장 버튼
+                if c_b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, key="save_gsheet_v5"):
+                    # 최종발주량이 0보다 큰 데이터만 추출
+                    to_save = df_final[df_final['최종발주량'].astype(int) > 0].copy()
+                    
+                    if not to_save.empty:
+                        # 저장할 컬럼 구성 (상품명, 옵션, 최종발주량)
+                        save_df = to_save[[item, option, '최종발주량']].rename(
+                            columns={item: '상품명', option: '옵션', '최종발주량': '수량'}
+                        )
+                        # 공통 함수 호출 (기존에 정의된 save_history_to_gsheet 사용)
+                        if save_history_to_gsheet(save_df, log_type="발주"):
+                            st.success(f"✅ {len(save_df)}건의 발주 내역이 구글 시트에 저장되었습니다!")
+                        else:
+                            st.error("❌ 저장 중 오류가 발생했습니다. 설정 및 권한을 확인하세요.")
+                    else:
+                        st.warning("⚠️ 발주 수량이 0인 상품만 있어 저장할 내용이 없습니다.")
+
+                # 2. 엑셀(CSV) 다운로드 버튼
+                try:
+                    # 한글 깨짐 방지를 위해 utf-8-sig 사용
+                    csv_data = df_final.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                    file_name = f"최종발주서_{datetime.now().strftime('%m%d_%H%M')}.csv"
+                    
+                    c_b2.download_button(
+                        label="📥 엑셀(CSV) 다운로드",
+                        data=csv_data,
+                        file_name=file_name,
+                        mime='text/csv',
+                        use_container_width=True,
+                        key="download_csv_v5"
+                    )
+                except Exception as e:
+                    c_b2.error("다운로드 파일 생성 실패")
                 
         # 6단계: 과거 확인
 
