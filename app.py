@@ -123,28 +123,30 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
 
-if st.session_state.analyzed:
-            # --- [4단계: 데이터 편집 및 재고 관리] ---
+# --- [4단계: 데이터 편집 및 재고 관리] ---
             st.divider()
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
             
-            # 0. 데이터 복사 및 초기 필터링 ('QT' 제외)
+            # 0. 데이터 복사 및 특정 상품 제외 필터링 (최상단 배치)
             df_work = st.session_state.df_raw.copy()
             
-            # 상품명(item) 컬럼에서 'QT' 포함 상품 제거 (대소문자 무시)
             if item in df_work.columns:
+                # (1) 상품명에 'QT' 또는 'qt'가 포함된 상품 제외
                 df_work = df_work[~df_work[item].astype(str).str.contains('QT|qt', na=False)]
+                # (2) 상품명이 'BE' 또는 'be'로 시작(^)하는 상품 제외
+                df_work = df_work[~df_work[item].astype(str).str.contains('^BE|^be', na=False)]
 
-            # 1. 상단 레이아웃: 검색, 필터, 날짜 선택
+            # 1. 상단 레이아웃: 검색, 품절 필터, 날짜 선택
             f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
             search_q = f_c1.text_input("🔍 상품명 검색")
             filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
+            # 5단계와 연동되는 날짜 선택 UI
             hist_date_4 = f_c3.date_input("🗓️ 입고 기록 확인 날짜", datetime.now(), key="date_4")
 
             # 2. 고유 키 생성 (매핑용)
             df_work['unique_key'] = df_work[item].astype(str).str.strip() + df_work[option].astype(str).str.strip()
 
-            # 3. 과거 입고 수량 불러오기 (날짜 기준)
+            # 3. 과거 입고 수량 불러오기 (선택한 날짜 기준)
             past_hist = load_history_from_gsheet()
             df_work['리오더입고수량'] = 0
             if not past_hist.empty and '구분' in past_hist.columns:
@@ -155,7 +157,7 @@ if st.session_state.analyzed:
                     in_map = t_hist.groupby('k_tmp')['수량'].sum().to_dict()
                     df_work['리오더입고수량'] = df_work['unique_key'].map(in_map).fillna(0).astype(int)
 
-            # 4. 수치 계산 (안전하게 처리)
+            # 4. 수치 계산 로직 (안전한 numeric 변환)
             v_7 = pd.to_numeric(df_work[t7day], errors='coerce').fillna(0)
             v_3 = pd.to_numeric(df_work[t3day], errors='coerce').fillna(0)
             df_work['일판매량'] = (v_7 / 7 if v_7.sum() > 0 else v_3 / 3).round(0).astype(int)
@@ -164,7 +166,7 @@ if st.session_state.analyzed:
             v_re = pd.to_numeric(df_work['리오더 수량'], errors='coerce').fillna(0)
             df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (v_av + v_re)).clip(lower=0).astype(int)
             
-            # 5. 사용자 추가 필터링 (품절/검색어)
+            # 5. 사용자 추가 필터링 (품절 여부 및 검색어)
             if filter_m == "정상만": 
                 df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
             elif filter_m == "품절만": 
@@ -173,19 +175,21 @@ if st.session_state.analyzed:
             if search_q: 
                 df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False)]
 
-            # 6. [왼쪽 정렬 처리] 표시용 데이터를 문자열로 변환
+            # 6. 화면 출력용 데이터 가공 (왼쪽 정렬 처리)
             if not df_work.empty:
                 disp_cols_4 = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
                 df_work_view = df_work[disp_cols_4].copy()
                 
-                # 숫자 컬럼 문자열 변환
+                # 숫자 컬럼을 텍스트로 변환하여 왼쪽 정렬 유도
                 num_cols_4 = [stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
                 for c in num_cols_4:
                     if c in df_work_view.columns:
                         df_work_view[c] = df_work_view[c].astype(str)
                 
+                # 모든 컬럼을 TextColumn으로 설정
                 config_4 = {c: st.column_config.TextColumn(c) for c in disp_cols_4}
 
+                # 수정 시 자동 실행 함수
                 def on_edit_4():
                     changes = st.session_state["main_editor_v4"]["edited_rows"]
                     for r_idx_str, change in changes.items():
@@ -213,8 +217,8 @@ if st.session_state.analyzed:
                     hide_index=True
                 )
             else:
-                st.warning("⚠️ 필터링 결과 표시할 데이터가 없습니다. (QT 제외 또는 품절 필터 확인)")
-
+                st.warning("⚠️ 표시할 데이터가 없습니다. 필터링 조건을 확인해주세요.")
+                
 # --- [5단계: 최종 발주 리스트 요약] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
