@@ -155,23 +155,22 @@ with tab1:
                 save_reorder_data(save_df)
                 st.rerun()
 
-            full_cols = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", "일판매량", "권장발주량"]
+            # [수정] 4단계 표시 컬럼에 t3day(3일 발주합계) 추가
+            full_cols = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
             disp_cols = [c for c in full_cols if c in df_work.columns]
             st.data_editor(df_work[disp_cols], use_container_width=True, key="main_editor", on_change=on_edit_4)
 
-            # --- [5단계: 상태 체크 로직 수정 완료] ---
+            # 5단계 요약
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             to_order = df_work.copy()
 
             def check_urgency(row):
-                # 안전하게 숫자로 변환
                 cur_av = pd.to_numeric(row[avail], errors='coerce') if avail in row else 0
                 if pd.isna(cur_av): cur_av = 0
                 cur_re = pd.to_numeric(row['리오더 수량'], errors='coerce') or 0
                 daily_sales = row['일판매량']
                 total_stock = cur_av + cur_re
-
                 if daily_sales > 0:
                     if total_stock < (daily_sales * 3): return "🚨 긴급"
                     elif total_stock < (daily_sales * 5): return "⚠️ 주의"
@@ -188,10 +187,10 @@ with tab1:
 
             if not df_final.empty:
                 df_final['최종발주량'] = df_final['권장발주량'] + df_final['추가발주분']
+                # 요약표에도 공급처 등 정보 확인 가능하게 구성
                 f_target = ["상태", item, option, vendor, vendor_item, avail, "리오더 수량", "권장발주량", "추가발주분", "최종발주량"]
                 disp_final = [c for c in f_target if c in df_final.columns]
                 
-                # 에디터에서 수정한 '추가발주분' 반영
                 edited_final = st.data_editor(df_final[disp_final], use_container_width=True, key="final_editor")
                 edited_final['최종발주량'] = edited_final['권장발주량'] + edited_final['추가발주분']
                 
@@ -203,7 +202,7 @@ with tab1:
                 csv = edited_final.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
                 c_b2.download_button("📥 엑셀 다운로드", csv, f"최종발주서_{datetime.now().strftime('%m%d')}.csv")
 
-            # 6단계
+            # 6단계 히스토리
             st.divider()
             st.subheader("📜 6단계: 과거 데이터 및 입고 내역 확인")
             if st.button("🔄 기록 불러오기"): st.session_state.db_history = load_history_from_gsheet()
