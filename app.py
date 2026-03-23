@@ -39,7 +39,10 @@ def load_history_from_gsheet():
     try:
         spreadsheet = get_sheet()
         hist_sheet = spreadsheet.worksheet("history")
-        return pd.DataFrame(hist_sheet.get_all_records())
+        df = pd.DataFrame(hist_sheet.get_all_records())
+        # 컬럼명 공백 제거 (에러 방지 핵심)
+        df.columns = df.columns.str.strip()
+        return df
     except: return pd.DataFrame()
 
 def find_idx(cols, target_keywords):
@@ -159,27 +162,25 @@ with tab1:
             disp_cols = [c for c in full_cols if c in df_work.columns]
             st.data_editor(df_work[disp_cols], use_container_width=True, key="main_editor", on_change=on_edit_4)
 
-            # --- [5단계: 이미지 요청사항 반영 (날짜선택 & 과거입고수량 셀추가)] ---
+            # --- [5단계: KeyError 수정 완료 버전] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
-            # 상단 필터 레이아웃
             row1_c1, row1_c2 = st.columns([1, 1])
             s_filter = row1_c1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
-            
-            # [추가] 과거 입고수량 확인을 위한 날짜 선택
             hist_date = row1_c2.date_input("🗓️ 리오더 입고수량 과거확인 날짜선택", datetime.now())
             
             to_order = df_work.copy()
-
-            # 과거 데이터 불러와서 매칭하기
             past_hist = load_history_from_gsheet()
             to_order['과거입고수량'] = 0
-            if not past_hist.empty:
+
+            # KeyError 방지를 위한 안전한 필터링 로직
+            if not past_hist.empty and '구분' in past_hist.columns and '저장시간' in past_hist.columns:
                 past_hist['날짜'] = past_hist['저장시간'].astype(str).str.split(' ').str[0]
-                target_day_hist = past_hist[(past_hist['날짜'] == hist_date.strftime("%Y-%m-%d")) & (past_hist['구분'] == "입고")]
-                if not target_day_hist.empty:
-                    # 상품명+옵션으로 키 생성하여 매칭
+                date_str = hist_date.strftime("%Y-%m-%d")
+                target_day_hist = past_hist[(past_hist['날짜'] == date_str) & (past_hist['구분'] == "입고")]
+                
+                if not target_day_hist.empty and '상품명' in target_day_hist.columns:
                     target_day_hist['key'] = target_day_hist['상품명'].astype(str).str.strip() + target_day_hist['옵션'].astype(str).str.strip()
                     in_map = target_day_hist.groupby('key')['수량'].sum().to_dict()
                     to_order['key'] = to_order[item].astype(str).str.strip() + to_order[option].astype(str).str.strip()
@@ -205,13 +206,11 @@ with tab1:
 
             if not df_final.empty:
                 df_final['최종발주량'] = df_final['권장발주량'] + df_final['추가발주분']
-                # [수정] 표 구성에 '과거입고수량' 추가
                 f_target = ["상태", item, option, vendor, vendor_item, avail, "리오더 수량", "과거입고수량", "권장발주량", "추가발주분", "최종발주량"]
                 disp_final = [c for c in f_target if c in df_final.columns]
                 
-                edited_final = st.data_editor(df_final[disp_final], use_container_width=True, key="final_editor", 
-                                             column_config={"과거입고수량": st.column_config.NumberColumn(f"{hist_date.strftime('%m/%d')} 입고분")})
-                
+                # 추가발주분 수동 입력을 위해 에디터 사용
+                edited_final = st.data_editor(df_final[disp_final], use_container_width=True, key="final_editor")
                 edited_final['최종발주량'] = edited_final['권장발주량'] + edited_final['추가발주분']
                 
                 c_b1, c_b2 = st.columns(2)
@@ -229,7 +228,7 @@ with tab1:
             if 'db_history' in st.session_state and not st.session_state.db_history.empty:
                 df_h = st.session_state.db_history
                 df_h['날짜'] = df_h['저장시간'].astype(str).str.split(' ').str[0]
-                sel_date = st.date_input("📅 상세 내역 날짜 선택", datetime.now())
+                sel_date = st.date_input("📅 상세 내역 날짜 선택", datetime.now(), key="hist_detail_date")
                 day_data = df_h[df_h['날짜'] == sel_date.strftime("%Y-%m-%d")]
                 st.dataframe(day_data.sort_values('저장시간', ascending=False), use_container_width=True)
 
