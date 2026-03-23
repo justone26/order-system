@@ -50,7 +50,7 @@ def find_idx(cols, target_keywords):
             if keyword in str(col): return i
     return 0
 
-# --- [2. 앱 설정 및 탭 구성] ---
+# --- [2. 앱 설정] ---
 st.set_page_config(layout="wide", page_title="재고 관리 시스템")
 st.title("📦 통합 재고 관리 시스템")
 
@@ -134,6 +134,19 @@ with tab1:
 
             if "리오더입고수량" not in df_work.columns: df_work["리오더입고수량"] = 0
 
+            # 4단계용 컬럼 설정 (정렬 포함)
+            config_4 = {
+                item: st.column_config.TextColumn(item, width="medium", help="왼쪽 정렬"),
+                option: st.column_config.TextColumn(option, width="small"),
+                stock: st.column_config.NumberColumn(stock, format="%d", help="오른쪽 정렬"),
+                avail: st.column_config.NumberColumn(avail, format="%d"),
+                "리오더 수량": st.column_config.NumberColumn("리오더 수량", format="%d"),
+                "리오더입고수량": st.column_config.NumberColumn("리오더입고수량", format="%d"),
+                t3day: st.column_config.NumberColumn(t3day, format="%d"),
+                "일판매량": st.column_config.NumberColumn("일판매량", format="%d"),
+                "권장발주량": st.column_config.NumberColumn("권장발주량", format="%d")
+            }
+
             def on_edit_4():
                 changes = st.session_state["main_editor"]["edited_rows"]
                 for r_idx_str, change in changes.items():
@@ -152,9 +165,9 @@ with tab1:
 
             full_cols = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
             disp_cols = [c for c in full_cols if c in df_work.columns]
-            st.data_editor(df_work[disp_cols], use_container_width=True, key="main_editor", on_change=on_edit_4)
+            st.data_editor(df_work[disp_cols], use_container_width=True, key="main_editor", on_change=on_edit_4, column_config=config_4)
 
-            # --- [5단계: 셀 배치 수정 및 ValueError 수정 완료] ---
+            # --- [5단계: 셀 배치 및 정렬 수정] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
@@ -174,7 +187,6 @@ with tab1:
                     to_order['key'] = to_order[item].astype(str).str.strip() + to_order[option].astype(str).str.strip()
                     to_order['과거입고수량'] = to_order['key'].map(in_map).fillna(0).astype(int)
 
-            # 에러 방지를 위해 수동 수치 변환 로직 적용
             def get_status(row):
                 v_av_num = pd.to_numeric(row[avail], errors='coerce') or 0
                 v_re_num = pd.to_numeric(row['리오더 수량'], errors='coerce') or 0
@@ -194,22 +206,25 @@ with tab1:
             elif "⚠️" in s_filter: df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
 
             if not df_final.empty:
-                # 요청하신 순서대로 컬럼 정렬
-                f_target = [
-                    "상태", item, option, vendor, vendor_item, 
-                    avail, "리오더 수량", "추가발주수량", "과거입고수량", 
-                    "권장발주량", "최종발주량"
-                ]
+                f_target = ["상태", item, option, vendor, vendor_item, avail, "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]
                 disp_final = [c for c in f_target if c in df_final.columns]
+
+                # 5단계용 컬럼 설정 (요청하신 순서 + 정렬)
+                config_5 = {
+                    "상태": st.column_config.TextColumn("상태", width="small"),
+                    item: st.column_config.TextColumn(item, width="medium"),
+                    option: st.column_config.TextColumn(option, width="small"),
+                    vendor: st.column_config.TextColumn(vendor, width="small"),
+                    vendor_item: st.column_config.TextColumn(vendor_item, width="medium"),
+                    avail: st.column_config.NumberColumn(avail, format="%d"),
+                    "리오더 수량": st.column_config.NumberColumn("리오더 수량", format="%d"),
+                    "추가발주수량": st.column_config.NumberColumn("추가발주수량", min_value=0, default=0, format="%d"),
+                    "과거입고수량": st.column_config.NumberColumn("과거입고수량", format="%d"),
+                    "권장발주량": st.column_config.NumberColumn("권장발주량", format="%d"),
+                    "최종발주량": st.column_config.NumberColumn("최종발주량", format="%d")
+                }
                 
-                edited_final = st.data_editor(
-                    df_final[disp_final], 
-                    use_container_width=True, 
-                    key="final_editor",
-                    column_config={"추가발주수량": st.column_config.NumberColumn("추가발주수량", min_value=0, default=0)}
-                )
-                
-                # 최종발주량 계산
+                edited_final = st.data_editor(df_final[disp_final], use_container_width=True, key="final_editor", column_config=config_5)
                 edited_final['최종발주량'] = edited_final['권장발주량'] + edited_final['추가발주수량']
                 
                 c_b1, c_b2 = st.columns(2)
@@ -229,27 +244,6 @@ with tab1:
                 df_h['날짜'] = df_h['저장시간'].astype(str).str.split(' ').str[0]
                 sel_date = st.date_input("📅 상세 날짜 선택", datetime.now(), key="final_hist_date_2")
                 st.dataframe(df_h[df_h['날짜'] == sel_date.strftime("%Y-%m-%d")].sort_values('저장시간', ascending=False), use_container_width=True)
-
-            # 6단계
-            st.divider()
-            st.subheader("📜 6단계: 과거 데이터 및 입고 내역 확인")
-            if st.button("🔄 기록 불러오기"): st.session_state.db_history = load_history_from_gsheet()
-            if 'db_history' in st.session_state and not st.session_state.db_history.empty:
-                df_h = st.session_state.db_history
-                df_h['날짜'] = df_h['저장시간'].astype(str).str.split(' ').str[0]
-                sel_date = st.date_input("📅 상세 날짜 선택", datetime.now(), key="final_hist_date")
-                st.dataframe(df_h[df_h['날짜'] == sel_date.strftime("%Y-%m-%d")].sort_values('저장시간', ascending=False), use_container_width=True)
-
-            # 6단계
-            st.divider()
-            st.subheader("📜 6단계: 과거 데이터 및 입고 내역 확인")
-            if st.button("🔄 기록 불러오기"): st.session_state.db_history = load_history_from_gsheet()
-            if 'db_history' in st.session_state and not st.session_state.db_history.empty:
-                df_h = st.session_state.db_history
-                df_h['날짜'] = df_h['저장시간'].astype(str).str.split(' ').str[0]
-                sel_date = st.date_input("📅 상세 내역 날짜 선택", datetime.now(), key="hist_detail_date")
-                day_data = df_h[df_h['날짜'] == sel_date.strftime("%Y-%m-%d")]
-                st.dataframe(day_data.sort_values('저장시간', ascending=False), use_container_width=True)
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
