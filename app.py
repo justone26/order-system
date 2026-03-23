@@ -13,38 +13,13 @@ def get_sheet():
     spreadsheet_key = "1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg"
     return client.open_by_key(spreadsheet_key)
 
-# [복구 함수] History에서 최신 리오더 수량을 추출해 시트1로 복사
-def recover_from_history():
-    try:
-        spreadsheet = get_sheet()
-        hist_sheet = spreadsheet.worksheet("history")
-        data = hist_sheet.get_all_records()
-        if not data:
-            st.error("history 탭에 데이터가 없습니다.")
-            return
-        
-        df_hist = pd.DataFrame(data)
-        # 저장시간 역순 정렬 후 상품명+옵션 중복 제거 (가장 최신 수량만 남김)
-        df_hist = df_hist.sort_values(by='저장시간', ascending=False)
-        # 사진을 보니 열 이름이 '상품명', '옵션', '리오더 수량'으로 되어 있음
-        df_latest = df_hist.drop_duplicates(subset=['상품명', '옵션'], keep='first')
-        
-        # 시트1 규격에 맞게 추출
-        df_to_save = df_latest[['상품명', '옵션', '리오더 수량']].copy()
-        
-        # 시트1에 덮어쓰기
-        sheet1 = spreadsheet.sheet1
-        sheet1.clear() # 복구 시에는 한 번 비우고 정렬해서 넣음
-        sheet1.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-        st.success(f"✅ 총 {len(df_to_save)}개의 품목 수량을 history에서 복구했습니다!")
-    except Exception as e:
-        st.error(f"복구 중 오류 발생: {e}")
-
+# [수정] 데이터 유실 방지: 지우지 않고 데이터가 있는 범위만 업데이트
 def save_reorder_data(df):
     if df.empty: return 
     try:
         sheet = get_sheet().sheet1
         data = [df.columns.values.tolist()] + df.values.tolist()
+        # clear()를 호출하지 않고 A1부터 덮어씁니다.
         sheet.update('A1', data) 
     except Exception as e:
         st.error(f"구글 시트 저장 실패: {e}")
@@ -91,14 +66,10 @@ tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리
 with tab1:
     if 'analyzed' not in st.session_state: st.session_state.analyzed = False
     
-    st.subheader("📁 데이터 관리")
+    st.subheader("📁 데이터 업로드 (제작상품)")
     
-    c1, c2 = st.columns(2)
-    # [추가] 긴급 복구 버튼
-    if c1.button("🆘 긴급 데이터 복구 (History -> 시트1)", help="구글 시트의 데이터가 날아갔을 때 history 탭에서 최신 수량을 가져옵니다."):
-        recover_from_history()
-    
-    if c2.button("🔄 제작상품 분석 리셋"):
+    # [수정] 복구 버튼은 삭제하고, 분석 리셋 버튼만 유지
+    if st.button("🔄 제작상품 분석 리셋"):
         if 'df_raw' in st.session_state: del st.session_state.df_raw
         if 'analyzed' in st.session_state: st.session_state.analyzed = False
         if 'last_filename' in st.session_state: del st.session_state.last_filename
@@ -129,6 +100,7 @@ with tab1:
                         df_new['match_name'] = df_new[tmp_item].astype(str).str.strip()
                         df_new['match_opt'] = df_new[tmp_option].astype(str).str.strip()
 
+                        # 구글 시트 데이터와 엑셀 데이터를 합침
                         df_new = pd.merge(df_new, gs_subset, left_on=['match_name', 'match_opt'], right_on=['상품명', '옵션'], how='left', suffixes=('', '_gs'))
                         
                         if '리오더 수량_gs' in df_new.columns:
@@ -202,6 +174,7 @@ with tab1:
 
             if "리오더입고수량" not in df_working.columns: df_working["리오더입고수량"] = 0
 
+            # 셀 편집 시 자동 저장 로직
             def auto_save_and_update():
                 if "main_editor" in st.session_state and st.session_state["main_editor"]["edited_rows"]:
                     changes = st.session_state["main_editor"]["edited_rows"]
