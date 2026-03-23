@@ -157,7 +157,7 @@ if st.session_state.analyzed:
                 res = pd.to_numeric(val, errors='coerce')
                 return res.fillna(0) if hasattr(res, 'fillna') else (0 if pd.isna(res) else res)
 
-            # --- [4단계: 데이터 편집 및 재고 관리] ---
+# --- [4단계: 데이터 편집 및 재고 관리] ---
             st.divider()
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
             
@@ -166,51 +166,55 @@ if st.session_state.analyzed:
             # 1. 상단 UI 컨트롤러
             f_c1, f_c2, f_c3, f_c4 = st.columns([1.5, 1, 1, 1])
             search_q = f_c1.text_input("🔍 상품명 검색", key="search_input")
-            # 초기 로딩 시 '정상만' 보이도록 index=1 설정
             filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="soldout_filter")
-            
-            # [수정] 체크박스: 해제 시 QT/BE 제외, 체크 시 QT/BE 포함 (직관적 로직)
             show_all_items = f_c3.checkbox("QT/BE 상품 포함하기", value=False, key="show_all_check")
             hist_date_4 = f_c4.date_input("🗓️ 입고 날짜 선택", datetime.now(), key="date_4")
 
-            # 2. [필터링 1] QT/BE 상품 제어
+            # 2. 필수 컬럼 및 리오더 수량 초기화 (에러 방지 핵심)
+            if '리오더 수량' not in df_work.columns:
+                df_work['리오더 수량'] = 0
+            if '리오더입고수량' not in df_work.columns:
+                df_work['리오더입고수량'] = 0
+
+            # 3. [필터링 1] QT/BE 상품 제어
             if item in df_work.columns:
                 if not show_all_items:
-                    # 체크 해제 상태면 QT/BE 포함 상품 제거
                     df_work = df_work[~df_work[item].astype(str).str.contains('QT|qt|BE|be', na=False)]
 
-            # 3. [필터링 2] 품절 여부 필터 (4단계 목록용)
+            # 4. [필터링 2] 품절 여부 필터
             if sold_out in df_work.columns:
                 if filter_m == "정상만":
                     df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
                 elif filter_m == "품절만":
                     df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
 
-            # 4. [필터링 3] 검색어 필터
-            if search_q and item in df_work.columns:
-                df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
-
-            # 5. 데이터 계산 (일판매량, 권장발주량 등)
+            # 5. 수치 계산 (일판매량, 권장발주량)
             df_work['unique_key'] = df_work[item].astype(str).str.strip() + df_work[option].astype(str).str.strip()
             
-            # 일판매량 계산
+            def safe_num(val):
+                res = pd.to_numeric(val, errors='coerce')
+                return res.fillna(0) if hasattr(res, 'fillna') else (0 if pd.isna(res) else res)
+
             v7_n = safe_num(df_work[t7day])
             v3_n = safe_num(df_work[t3day])
             df_work['일판매량'] = (v7_n / 7 if v7_n.sum() > 0 else v3_n / 3).round(0).astype(int)
-            
-            # 권장발주량 계산
             df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (safe_num(df_work[avail]) + safe_num(df_work['리오더 수량']))).clip(lower=0).astype(int)
 
-            # 6. 4단계 테이블 출력
+            # 6. [중요] KeyError 방지: 존재하는 컬럼만 추출
+            # 보여주고 싶은 전체 리스트
+            desired_cols = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
+            
+            # 실제 데이터프레임에 있는 컬럼만 필터링 (에러 발생 지점 해결)
+            valid_cols = [c for c in desired_cols if c in df_work.columns]
+            
             if not df_work.empty:
-                disp_cols_4 = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
-                valid_cols = [c for c in disp_cols_4 if c in df_work.columns or c in ["리오더입고수량", "일판매량", "권장발주량"]]
                 df_work_view = df_work[valid_cols].copy()
                 
-                # 왼쪽 정렬을 위해 모든 값 문자열 변환
+                # 왼쪽 정렬을 위해 문자열 변환
                 for c in df_work_view.columns:
                     df_work_view[c] = df_work_view[c].astype(str)
 
+                # 에디터 및 저장 로직 (이전과 동일)
                 def on_edit_4():
                     changes = st.session_state["main_editor_v4"]["edited_rows"]
                     for r_idx_str, change in changes.items():
@@ -222,13 +226,18 @@ if st.session_state.analyzed:
                             in_qty = int(change["리오더입고수량"])
                             curr = st.session_state.df_raw.at[orig_idx, "리오더 수량"]
                             st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr - in_qty)
-                            # 입고 내역 저장
                             save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], in_qty]], columns=['상품명', '옵션', '수량']), log_type="입고")
                     save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
                     st.rerun()
 
-                st.data_editor(df_work_view, use_container_width=True, key="main_editor_v4", on_change=on_edit_4, 
-                               column_config={c: st.column_config.TextColumn(c) for c in df_work_view.columns}, hide_index=True)
+                st.data_editor(
+                    df_work_view, 
+                    use_container_width=True, 
+                    key="main_editor_v4", 
+                    on_change=on_edit_4, 
+                    column_config={c: st.column_config.TextColumn(c) for c in df_work_view.columns}, 
+                    hide_index=True
+                )
 
             # --- [5단계: 최종 발주 리스트 요약] ---
             st.divider()
