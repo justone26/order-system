@@ -17,7 +17,6 @@ def get_sheet():
         return None
 
 def make_match_key(name, opt):
-    """상품명과 옵션을 합쳐 고유 키 생성"""
     return str(name).strip().replace(" ", "").upper() + str(opt).strip().replace(" ", "").upper()
 
 def save_reorder_data(new_work_df):
@@ -158,8 +157,15 @@ with tab1:
         elif filter_m == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
         if search_q: df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
 
+        # --- [수정] unique_key는 보여주지 않도록 column_config 사용 ---
         disp4 = [sold_out, vendor, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량", "unique_key"]
-        edited4 = st.data_editor(df_work[disp4], use_container_width=True, hide_index=True, key="ed4")
+        edited4 = st.data_editor(
+            df_work[disp4], 
+            use_container_width=True, 
+            hide_index=True, 
+            key="ed4",
+            column_config={"unique_key": None} # 화면에서 숨김
+        )
 
         if st.button("💾 리오더/입고 데이터 저장"):
             for _, row in edited4.iterrows():
@@ -191,7 +197,15 @@ with tab1:
         
         df_final['상태'] = df_final.apply(get_stat, axis=1)
         disp5 = ["상태", item, option, vendor, avail, "리오더 수량", "추가 리오더", "과거 리오더입고", "권장발주량", "최종발주량", "unique_key"]
-        edited5 = st.data_editor(df_final[disp5], use_container_width=True, hide_index=True, key="ed5")
+        
+        # --- [수정] 여기서도 unique_key 숨김 ---
+        edited5 = st.data_editor(
+            df_final[disp5], 
+            use_container_width=True, 
+            hide_index=True, 
+            key="ed5",
+            column_config={"unique_key": None} # 화면에서 숨김
+        )
         
         for _, row in edited5.iterrows():
             st.session_state.extra_order_dict[row["unique_key"]] = int(row["추가 리오더"])
