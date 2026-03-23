@@ -13,13 +13,11 @@ def get_sheet():
     spreadsheet_key = "1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg"
     return client.open_by_key(spreadsheet_key)
 
-# [수정] 데이터 유실 방지: 지우지 않고 데이터가 있는 범위만 업데이트
 def save_reorder_data(df):
     if df.empty: return 
     try:
         sheet = get_sheet().sheet1
         data = [df.columns.values.tolist()] + df.values.tolist()
-        # clear()를 호출하지 않고 A1부터 덮어씁니다.
         sheet.update('A1', data) 
     except Exception as e:
         st.error(f"구글 시트 저장 실패: {e}")
@@ -68,7 +66,6 @@ with tab1:
     
     st.subheader("📁 데이터 업로드 (제작상품)")
     
-    # [수정] 복구 버튼은 삭제하고, 분석 리셋 버튼만 유지
     if st.button("🔄 제작상품 분석 리셋"):
         if 'df_raw' in st.session_state: del st.session_state.df_raw
         if 'analyzed' in st.session_state: st.session_state.analyzed = False
@@ -100,7 +97,6 @@ with tab1:
                         df_new['match_name'] = df_new[tmp_item].astype(str).str.strip()
                         df_new['match_opt'] = df_new[tmp_option].astype(str).str.strip()
 
-                        # 구글 시트 데이터와 엑셀 데이터를 합침
                         df_new = pd.merge(df_new, gs_subset, left_on=['match_name', 'match_opt'], right_on=['상품명', '옵션'], how='left', suffixes=('', '_gs'))
                         
                         if '리오더 수량_gs' in df_new.columns:
@@ -142,10 +138,6 @@ with tab1:
         
         if st.button("🚀 분석 실행"):
             df = st.session_state.df_raw.copy()
-            daily_avg = pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7
-            df['권장 발주량'] = ((daily_avg * lead_time) + (daily_avg * safety_stock) - pd.to_numeric(df[avail], errors='coerce').fillna(0)).clip(lower=0).astype(int)
-            if '리오더 수량' not in df.columns: df['리오더 수량'] = 0
-            if '리오더입고수량' not in df.columns: df['리오더입고수량'] = 0
             st.session_state.df_raw = df
             st.session_state.analyzed = True
             st.rerun()
@@ -157,24 +149,33 @@ with tab1:
             filter_mode = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
             
             df_working = st.session_state.df_raw.copy()
+            
+            # --- [핵심 수정 로직] 권장발주량 계산 시 품절 상품 제외 ---
             v_avail = pd.to_numeric(df_working[avail], errors='coerce').fillna(0)
             v_reorder = pd.to_numeric(df_working['리오더 수량'], errors='coerce').fillna(0)
             v_3day = pd.to_numeric(df_working[t3day], errors='coerce').fillna(0)
             df_working["일판매량"] = (v_3day / 3).round(0).astype(int)
+            
+            # 기본 계산식
             needed_qty = (df_working["일판매량"] * (lead_time + safety_stock))
             current_assets = (v_avail + v_reorder)
             df_working["권장발주량"] = (needed_qty - current_assets).clip(lower=0).round(0).astype(int)
+            
+            # 품절(단종)인 경우 권장발주량을 0으로 강제 조정
+            is_sold_out = df_working[sold_out].astype(str).str.contains('품절', na=False)
+            df_working.loc[is_sold_out, "권장발주량"] = 0
+            # ------------------------------------------------------
 
             if filter_mode == "정상만": 
-                df_working = df_working[~df_working[sold_out].astype(str).str.contains('품절', na=False)]
+                df_working = df_working[~is_sold_out]
             elif filter_mode == "품절만": 
-                df_working = df_working[df_working[sold_out].astype(str).str.contains('품절', na=False)]
+                df_working = df_working[is_sold_out]
+            
             if search_query: 
                 df_working = df_working[df_working[item].astype(str).str.contains(search_query, case=False, na=False)]
 
             if "리오더입고수량" not in df_working.columns: df_working["리오더입고수량"] = 0
 
-            # 셀 편집 시 자동 저장 로직
             def auto_save_and_update():
                 if "main_editor" in st.session_state and st.session_state["main_editor"]["edited_rows"]:
                     changes = st.session_state["main_editor"]["edited_rows"]
@@ -215,12 +216,22 @@ with tab1:
             )
 
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
+            # 5단계에서도 동일하게 품절 상품은 제외하거나 수량을 0으로 처리
             to_order = st.session_state.df_raw.copy()
             v_3day_val = pd.to_numeric(to_order[t3day], errors='coerce').fillna(0)
             to_order['일판매량'] = (v_3day_val / 3).round(0).astype(int)
-            if '권장발주량' not in to_order.columns: to_order['권장발주량'] = to_order.get('권장 발주량', 0)
+            
+            # 분석 수량 다시 계산 (품절 고려)
+            v_av_5 = pd.to_numeric(to_order[avail], errors='coerce').fillna(0)
+            v_re_5 = pd.to_numeric(to_order['리오더 수량'], errors='coerce').fillna(0)
+            to_order['권장발주량'] = ((to_order['일판매량'] * (lead_time + safety_stock)) - (v_av_5 + v_re_5)).clip(lower=0).round(0).astype(int)
+            
+            # 품절 상품은 권장발주량 0
+            to_order.loc[to_order[sold_out].astype(str).str.contains('품절', na=False), '권장발주량'] = 0
 
             def check_urgency(row):
+                # 품절이면 상태 체크 의미 없음
+                if '품절' in str(row.get(sold_out, "")): return "⏹️ 단종"
                 v_av = pd.to_numeric(row.get(avail, 0), errors='coerce') or 0
                 v_sl = pd.to_numeric(row.get('일판매량', 0), errors='coerce') or 0
                 v_re = pd.to_numeric(row.get('리오더 수량', 0), errors='coerce') or 0
@@ -231,8 +242,10 @@ with tab1:
             to_order['상태'] = to_order.apply(check_urgency, axis=1)
             status_filter = st.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"], key="f_filter_v11")
             
-            mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) | (to_order['상태'] != "✅ 정상")
+            # 발주할 게 있거나 상태가 정상이 아닌 것들만 표시 (단, 단종은 제외)
+            mask = (pd.to_numeric(to_order['권장발주량'], errors='coerce') > 0) & (to_order['상태'] != "⏹️ 단종")
             to_order = to_order[mask].copy()
+            
             if "🚨" in status_filter: to_order = to_order[to_order['상태'] == "🚨 긴급"]
             elif "⚠️" in status_filter: to_order = to_order[to_order['상태'].str.contains("🚨|⚠️")]
 
@@ -262,6 +275,8 @@ with tab1:
                     if csv_data[c].dtype == object: csv_data[c] = csv_data[c].astype(str).str.strip()
                 csv = csv_data.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
                 col_btn2.download_button("📥 엑셀 다운로드", csv, f"발주_{datetime.now().strftime('%m%d_%H%M')}.csv", "text/csv")
+            else:
+                st.info("💡 발주할 상품이 없거나 모든 부족 상품이 '품절(단종)' 상태입니다.")
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
