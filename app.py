@@ -105,6 +105,50 @@ with tab1:
         df_curr = st.session_state.df_raw
         cols = df_curr.columns.tolist()
 
+if uploaded_file is not None:
+        # 1. 파일 읽기 (중복 실행 방지 로직 포함)
+        if 'df_raw' not in st.session_state or st.session_state.get('last_filename') != uploaded_file.name:
+            df_new = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
+            df_new.columns = df_new.columns.str.strip()
+            df_new = df_new.loc[:, ~df_new.columns.duplicated()] 
+            
+            try:
+                # 2. 구글 시트에서 전체 리오더 데이터 로드 (A업체, B업체 등 전체가 들어있음)
+                sheet = get_sheet().sheet1
+                gs_data = pd.DataFrame(sheet.get_all_records())
+                
+                if not gs_data.empty and '리오더 수량' in gs_data.columns:
+                    # 엑셀의 상품명/옵션 컬럼 자동 찾기
+                    t_item = next((c for c in df_new.columns if '상품명' in c), df_new.columns[0])
+                    t_opt = next((c for c in df_new.columns if '옵션' in c), df_new.columns[1])
+                    
+                    # [핵심] 비교용 키 생성 (공백 제거 + 대문자 통일)
+                    def make_match_key(name, opt):
+                        return str(name).replace(" ", "").upper() + str(opt).replace(" ", "").upper()
+
+                    # 현재 업로드한 엑셀에 키 생성
+                    df_new['k_tmp'] = df_new.apply(lambda r: make_match_key(r[t_item], r[t_opt]), axis=1)
+                    
+                    # 구글 시트 전체 데이터에도 키 생성
+                    gs_data['k_tmp'] = gs_data.apply(lambda r: make_match_key(r['상품명'], r['옵션']), axis=1)
+                    
+                    # 3. 매핑 (구글 시트에 있는 수량을 현재 엑셀 옆에 붙임)
+                    reorder_map = gs_data.set_index('k_tmp')['리오더 수량'].to_dict()
+                    df_new['리오더 수량'] = df_new['k_tmp'].map(reorder_map).fillna(0).astype(int)
+                    
+                    # 임시 키 삭제
+                    df_new.drop(columns=['k_tmp'], inplace=True)
+                else: 
+                    df_new['리오더 수량'] = 0
+            except Exception as e:
+                st.error(f"구글 시트 연동 중 오류 발생: {e}")
+                df_new['리오더 수량'] = 0
+                
+            # 세션에 저장하여 4단계로 전달
+            st.session_state.df_raw = df_new
+            st.session_state.last_filename = uploaded_file.name
+            st.rerun()
+        
         # --- 1단계: 매핑 설정 ---
         st.subheader("⚙️ 1단계: 매핑 설정")
         c1, c2 = st.columns(2)
