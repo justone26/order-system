@@ -167,6 +167,90 @@ File "/home/adminuser/venv/lib/python3.14/site-packages/pandas/core/frame.py", l
 File "/home/adminuser/venv/lib/python3.14/site-packages/pandas/core/indexes/base.py", line 3819, in get_loc
     raise KeyError(key) from err
 
+
+# --- [4단계: 데이터 편집 및 재고 관리 - 최종 복구본] ---
+            st.divider()
+            st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
+            
+            df_work = st.session_state.df_raw.copy()
+
+            # 1. 상단 UI 컨트롤러
+            f_c1, f_c2, f_c3, f_c4 = st.columns([1.5, 1, 1, 1])
+            search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4_final")
+            filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_v4_final")
+            show_all_items = f_c3.checkbox("QT/BE 상품 포함하기", value=True, key="show_all_v4_final")
+            hist_date_4 = f_c4.date_input("🗓️ 입고 날짜", datetime.now(), key="date_v4_final")
+
+            # 2. 클린 상품명 및 고유 키 생성
+            def clean_name(n):
+                import re
+                return re.sub(r'^(QT|BE|qt|be)\s*', '', str(n)).strip()
+
+            df_work['clean_item'] = df_work[item].apply(clean_name)
+            df_work['unique_key'] = df_work['clean_item'] + df_work[option].astype(str).str.strip()
+
+            # 3. 수치 계산을 위한 안전한 숫자 변환 함수
+            def safe_num(val):
+                res = pd.to_numeric(val, errors='coerce')
+                return res.fillna(0) if hasattr(res, 'fillna') else (0 if pd.isna(res) else res)
+
+            # 일판매량 및 권장발주량 계산
+            v7 = safe_num(df_work[t7day])
+            v3 = safe_num(df_work[t3day])
+            df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
+            df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (safe_num(df_work[avail]) + safe_num(df_work['리오더 수량']))).clip(lower=0).astype(int)
+
+            # 4. 필터링 로직 적용
+            # (1) 품절 필터
+            if sold_out in df_work.columns:
+                if filter_m == "정상만":
+                    df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
+                elif filter_m == "품절만":
+                    df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
+
+            # (2) QT/BE 제외 필터
+            if not show_all_items:
+                df_work = df_work[~df_work[item].astype(str).str.contains('QT|qt|BE|be', na=False)]
+
+            # (3) 검색어 필터
+            if search_q:
+                df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
+
+            # 5. 테이블 출력
+            if not df_work.empty:
+                # 항목 복구: 품절상태, 제조사, 상품명, 옵션, 자체품번, 가용재고, 리오더수량, 입고수량, 3일판매량, 일판매량, 권장발주량
+                display_list = [sold_out, vendor, item, option, vendor_item, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
+                valid_cols = [c for c in display_list if c in df_work.columns or c in ["리오더입고수량"]]
+                
+                # 리오더입고수량이 컬럼에 없으면 0으로 생성
+                if "리오더입고수량" not in df_work.columns:
+                    df_work["리오더입고수량"] = 0
+
+                df_view = df_work[valid_cols].copy()
+                for c in df_view.columns:
+                    df_view[c] = df_view[c].astype(str)
+                
+                def on_edit_4():
+                    changes = st.session_state["editor_v4_final"]["edited_rows"]
+                    for r_idx_str, change in changes.items():
+                        idx = int(r_idx_str)
+                        orig_idx = df_work.index[idx]
+                        if "리오더 수량" in change:
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
+                    save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
+                    st.rerun()
+
+                st.data_editor(
+                    df_view, 
+                    use_container_width=True, 
+                    key="editor_v4_final", 
+                    on_change=on_edit_4,
+                    column_config={c: st.column_config.TextColumn(c) for c in df_view.columns},
+                    hide_index=True
+                )
+            else:
+                st.info("💡 표시할 데이터가 없습니다. 필터를 조정해 보세요.")
+                
 # --- [5단계: 최종 발주 리스트 요약] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
