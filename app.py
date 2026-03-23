@@ -205,7 +205,7 @@ if st.session_state.analyzed:
 
                 st.data_editor(df_work_view, use_container_width=True, key="main_editor_v4", on_change=on_edit_4, column_config=config_4, hide_index=True)
 
-            # --- [5단계: 최종 발주 리스트 요약] ---
+   # --- [5단계: 최종 발주 리스트 요약] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
@@ -218,7 +218,6 @@ if st.session_state.analyzed:
             to_order['추가발주수량'] = to_order['unique_key'].map(st.session_state.extra_order_dict).fillna(0).astype(int)
             to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
 
-            # [해결] apply 내에서 safe_to_num을 사용하여 에러 차단
             def get_final_status(r):
                 av_val = safe_to_num(r[avail])
                 re_val = safe_to_num(r['리오더 수량'])
@@ -231,35 +230,62 @@ if st.session_state.analyzed:
             
             to_order['상태'] = to_order.apply(get_final_status, axis=1)
 
+            # --- [우선순위 정렬 로직 추가] ---
+            # 상태별로 숫자를 부여하여 정렬 (긴급: 0, 주의: 1, 정상: 2)
+            status_rank = {"🚨 긴급": 0, "⚠️ 주의": 1, "✅ 정상": 2}
+            to_order['rank'] = to_order['상태'].map(status_rank)
+            to_order = to_order.sort_values(by='rank').drop(columns=['rank'])
+
+            # 필터링 적용
             order_mask = (to_order['권장발주량'] > 0) | (to_order['상태'] != "✅ 정상")
             df_final = to_order[order_mask].copy()
-            if "🚨" in s_filter: df_final = df_final[df_final['상태'] == "🚨 긴급"]
-            elif "⚠️" in s_filter: df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
+            
+            if "🚨" in s_filter: 
+                df_final = df_final[df_final['상태'] == "🚨 긴급"]
+            elif "⚠️" in s_filter: 
+                df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
 
             if not df_final.empty:
+                # 표시 컬럼 정의
                 disp_final = ["상태", item, option, vendor, vendor_item, avail, "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]
                 df_final_view = df_final[disp_final].copy()
-                for c in df_final_view.columns: df_final_view[c] = df_final_view[c].astype(str)
+                
+                # 왼쪽 정렬을 위해 모든 컬럼 문자열 변환
+                for c in df_final_view.columns:
+                    df_final_view[c] = df_final_view[c].astype(str)
+                
                 config_5 = {c: st.column_config.TextColumn(c) for c in df_final_view.columns}
                 
                 def on_edit_5():
                     edits = st.session_state["final_editor_v5"]["edited_rows"]
                     for r_idx_str, change in edits.items():
+                        # 데이터프레임이 정렬되었으므로 iloc로 정확한 행 참조
                         if "추가발주수량" in change:
                             r_key = df_final.iloc[int(r_idx_str)]['unique_key']
-                            try: st.session_state.extra_order_dict[r_key] = int(change["추가발주수량"])
+                            try:
+                                st.session_state.extra_order_dict[r_key] = int(change["추가발주수량"])
                             except: pass
                     st.rerun()
 
-                st.data_editor(df_final_view, use_container_width=True, key="final_editor_v5", column_config=config_5, on_change=on_edit_5, hide_index=True)
+                st.data_editor(
+                    df_final_view, 
+                    use_container_width=True, 
+                    key="final_editor_v5", 
+                    column_config=config_5, 
+                    on_change=on_edit_5, 
+                    hide_index=True
+                )
                 
                 c_b1, c_b2 = st.columns(2)
                 if c_b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-                    save_df = df_final[df_final['최종발주량'] > 0][[item, option, '최종발주량']]
-                    if save_history_to_gsheet(save_df): st.success("✅ 저장 완료!")
+                    save_df = df_final[df_final['최종발주량'].astype(int) > 0][[item, option, '최종발주량']]
+                    if save_history_to_gsheet(save_df):
+                        st.success("✅ 저장 완료!")
                 
-                csv = df_final.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                csv = df_final[disp_final].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
                 c_b2.download_button("📥 엑셀 다운로드", csv, f"최종발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+            else:
+                st.info("현재 조건에 맞는 발주 데이터가 없습니다.")
                 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
