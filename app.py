@@ -151,196 +151,156 @@ if st.session_state.analyzed:
             if "extra_order_dict" not in st.session_state:
                 st.session_state.extra_order_dict = {}
 
-# --- [4단계: 데이터 편집 및 재고 관리] ---
+if st.session_state.analyzed:
+            # --- [필수 함수 정의] ---
+            def safe_num(val):
+                res = pd.to_numeric(val, errors='coerce')
+                return res.fillna(0) if hasattr(res, 'fillna') else (0 if pd.isna(res) else res)
+
+            # --- [4단계: 데이터 편집 및 재고 관리] ---
             st.divider()
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
             
-            # 0. 기초 데이터 복사
             df_work = st.session_state.df_raw.copy()
 
-            # 1. 상단 UI (필터 컨트롤러)
+            # 1. 상단 UI 컨트롤러
             f_c1, f_c2, f_c3, f_c4 = st.columns([1.5, 1, 1, 1])
             search_q = f_c1.text_input("🔍 상품명 검색", key="search_input")
-            
-            # [핵심] index=1로 설정하여 초기 로딩 시 "정상만"이 선택되게 함
+            # 초기 로딩 시 '정상만' 보이도록 index=1 설정
             filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="soldout_filter")
             
-            # QT/BE 포함 여부 (러블리마켓 대응)
-            show_all_items = f_c3.checkbox("QT/BE 상품 포함하기", value=True, key="show_all_check")
-            hist_date_4 = f_c4.date_input("🗓️ 입고 날짜", datetime.now(), key="date_4")
+            # [수정] 체크박스: 해제 시 QT/BE 제외, 체크 시 QT/BE 포함 (직관적 로직)
+            show_all_items = f_c3.checkbox("QT/BE 상품 포함하기", value=False, key="show_all_check")
+            hist_date_4 = f_c4.date_input("🗓️ 입고 날짜 선택", datetime.now(), key="date_4")
 
-            # 2. [필터링 1] QT/BE 제외 로직 (체크박스 해제 시)
-            if not show_all_items and item in df_work.columns:
-                df_work = df_work[~df_work[item].astype(str).str.contains('QT|qt|BE|be', na=False)]
+            # 2. [필터링 1] QT/BE 상품 제어
+            if item in df_work.columns:
+                if not show_all_items:
+                    # 체크 해제 상태면 QT/BE 포함 상품 제거
+                    df_work = df_work[~df_work[item].astype(str).str.contains('QT|qt|BE|be', na=False)]
 
-            # 3. [필터링 2] 품절 필터 (초기 로딩 시 filter_m="정상만"이므로 즉시 실행됨)
+            # 3. [필터링 2] 품절 여부 필터 (4단계 목록용)
             if sold_out in df_work.columns:
-                # 데이터의 공백 제거 후 비교하여 정확도 향상
-                temp_sold_out = df_work[sold_out].astype(str).str.strip()
                 if filter_m == "정상만":
-                    df_work = df_work[~temp_sold_out.str.contains('품절', na=False)]
+                    df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
                 elif filter_m == "품절만":
-                    df_work = df_work[temp_sold_out.str.contains('품절', na=False)]
+                    df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
 
             # 4. [필터링 3] 검색어 필터
             if search_q and item in df_work.columns:
                 df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
 
-            # 5. 리오더 수량 매핑 및 계산 로직
-            def safe_num(val):
-                res = pd.to_numeric(val, errors='coerce')
-                return res.fillna(0) if hasattr(res, 'fillna') else (0 if pd.isna(res) else res)
-
-            # 고유키 생성 (리오더 수량 매핑용)
+            # 5. 데이터 계산 (일판매량, 권장발주량 등)
             df_work['unique_key'] = df_work[item].astype(str).str.strip() + df_work[option].astype(str).str.strip()
             
-            # 수치 계산
+            # 일판매량 계산
             v7_n = safe_num(df_work[t7day])
             v3_n = safe_num(df_work[t3day])
             df_work['일판매량'] = (v7_n / 7 if v7_n.sum() > 0 else v3_n / 3).round(0).astype(int)
+            
+            # 권장발주량 계산
             df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (safe_num(df_work[avail]) + safe_num(df_work['리오더 수량']))).clip(lower=0).astype(int)
 
-            # 6. 테이블 출력 (데이터 에디터)
+            # 6. 4단계 테이블 출력
             if not df_work.empty:
                 disp_cols_4 = [sold_out, vendor, item, option, vendor_item, stock, avail, "리오더 수량", "리오더입고수량", t3day, "일판매량", "권장발주량"]
-                # 실제 존재하는 컬럼만 필터링 (에러 방지)
-                valid_cols = [c for c in disp_cols_4 if c in df_work.columns]
+                valid_cols = [c for c in disp_cols_4 if c in df_work.columns or c in ["리오더입고수량", "일판매량", "권장발주량"]]
                 df_work_view = df_work[valid_cols].copy()
                 
-                # 왼쪽 정렬을 위해 문자열 변환
+                # 왼쪽 정렬을 위해 모든 값 문자열 변환
                 for c in df_work_view.columns:
                     df_work_view[c] = df_work_view[c].astype(str)
-                
-                config_4 = {c: st.column_config.TextColumn(c) for c in df_work_view.columns}
 
                 def on_edit_4():
                     changes = st.session_state["main_editor_v4"]["edited_rows"]
                     for r_idx_str, change in changes.items():
                         idx = int(r_idx_str)
-                        orig_idx = df_work.index[idx] # 필터링된 상태의 인덱스를 원본 인덱스로 매핑
+                        orig_idx = df_work.index[idx]
                         if "리오더 수량" in change:
-                            try: st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
-                            except: pass
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
                         if "리오더입고수량" in change:
-                            try:
-                                in_qty = int(change["리오더입고수량"])
-                                curr_re = st.session_state.df_raw.at[orig_idx, "리오더 수량"]
-                                st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr_re - in_qty)
-                                # 입고 내역 저장
-                                save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], in_qty]], columns=['상품명', '옵션', '수량']), log_type="입고")
-                            except: pass
-                    # 변경사항 시트 저장
+                            in_qty = int(change["리오더입고수량"])
+                            curr = st.session_state.df_raw.at[orig_idx, "리오더 수량"]
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr - in_qty)
+                            # 입고 내역 저장
+                            save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], in_qty]], columns=['상품명', '옵션', '수량']), log_type="입고")
                     save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
                     st.rerun()
 
-                st.data_editor(
-                    df_work_view, 
-                    use_container_width=True, 
-                    key="main_editor_v4", 
-                    on_change=on_edit_4, 
-                    column_config=config_4, 
-                    hide_index=True
-                )
-            else:
-                st.warning("⚠️ 선택하신 필터(정상만)에 해당하는 데이터가 없습니다.")
+                st.data_editor(df_work_view, use_container_width=True, key="main_editor_v4", on_change=on_edit_4, 
+                               column_config={c: st.column_config.TextColumn(c) for c in df_work_view.columns}, hide_index=True)
 
-# --- [5단계: 최종 발주 리스트 요약] ---
+            # --- [5단계: 최종 발주 리스트 요약] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
-            # 상태 필터 UI
-            s_filter = st.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 정상 포함 전체보기"], index=0)
+            c5_1, c5_2 = st.columns([2, 1])
+            s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 정상 포함 전체보기"], index=0)
+            hist_date_5 = c5_2.date_input("🗓️ 입고 기록 날짜 (연동)", value=hist_date_4, key="date_5")
 
+            # 5단계 전용 데이터프레임 생성
             to_order = df_work.copy()
-            
-            # 추가발주수량 딕셔너리 안전 참조
-            if "extra_order_dict" not in st.session_state:
-                st.session_state.extra_order_dict = {}
-                
+
+            # [핵심 수정] 5단계 발주 리스트에서는 '품절' 상품 무조건 제외
+            if sold_out in to_order.columns:
+                to_order = to_order[~to_order[sold_out].astype(str).str.contains('품절', na=False)]
+
+            # 추가발주량 및 최종발주량 계산
             to_order['추가발주수량'] = to_order['unique_key'].map(st.session_state.extra_order_dict).fillna(0).astype(int)
             to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
 
             # 상태 판별 함수
-            def get_status(r):
-                av_val = safe_num(r[avail])
-                re_val = safe_num(r['리오더 수량'])
-                total = av_val + re_val
+            def get_final_status(r):
+                total = safe_num(r[avail]) + safe_num(r['리오더 수량'])
                 daily = r['일판매량']
                 if daily > 0:
                     if total < (daily * 3): return "🚨 긴급"
                     if total < (daily * 5): return "⚠️ 주의"
                 return "✅ 정상"
             
-            to_order['상태'] = to_order.apply(get_status, axis=1)
+            to_order['상태'] = to_order.apply(get_final_status, axis=1)
 
-            # 위험도 순 정렬 (긴급-주의-정상)
+            # 정렬 순서 정의 (긴급 -> 주의 -> 정상)
             status_rank = {"🚨 긴급": 0, "⚠️ 주의": 1, "✅ 정상": 2}
             to_order['rank'] = to_order['상태'].map(status_rank)
             to_order = to_order.sort_values(by='rank').drop(columns=['rank'])
 
-            # 필터링 로직 적용
-            if "🚨긴급" in s_filter:
-                df_final = to_order[to_order['상태'].isin(["🚨 긴급", "⚠️ 주의"]) | (to_order['권장발주량'] > 0)].copy()
-            elif "긴급만" in s_filter:
+            # 5단계 상태 필터 적용
+            if s_filter == "🚨긴급 + ⚠️주의 우선":
+                df_final = to_order[to_order['상태'].isin(["🚨 긴급", "⚠️ 주의"]) | (to_order['최종발주량'] > 0)].copy()
+            elif s_filter == "🚨 긴급만 보기":
                 df_final = to_order[to_order['상태'] == "🚨 긴급"].copy()
             else:
                 df_final = to_order.copy()
 
             if not df_final.empty:
-                # [수정포인트] 변수명을 disp_final로 통일하여 NameError 방지
                 disp_final = ["상태", item, option, vendor, vendor_item, avail, "리오더 수량", "추가발주수량", "권장발주량", "최종발주량"]
-                df_view_5 = df_final[disp_final].copy()
-                
-                # 왼쪽 정렬을 위한 문자열 변환
-                for c in df_view_5.columns:
-                    df_view_5[c] = df_view_5[c].astype(str)
+                df_final_view = df_final[disp_final].copy()
+                for c in df_final_view.columns:
+                    df_final_view[c] = df_final_view[c].astype(str)
 
-                # 데이터 에디터 출력
                 def on_edit_5():
                     edits = st.session_state["final_editor_v5"]["edited_rows"]
                     for r_idx_str, change in edits.items():
                         if "추가발주수량" in change:
-                            # 정렬된 상태이므로 iloc로 정확한 행의 key 추출
                             r_key = df_final.iloc[int(r_idx_str)]['unique_key']
-                            try:
-                                st.session_state.extra_order_dict[r_key] = int(change["추가발주수량"])
-                            except: pass
+                            st.session_state.extra_order_dict[r_key] = int(change["추가발주수량"])
                     st.rerun()
 
-                st.data_editor(
-                    df_view_5, 
-                    key="final_editor_v5", 
-                    on_change=on_edit_5, 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={c: st.column_config.TextColumn(c) for c in df_view_5.columns}
-                )
+                st.data_editor(df_final_view, use_container_width=True, key="final_editor_v5", 
+                               on_change=on_edit_5, column_config={c: st.column_config.TextColumn(c) for c in df_final_view.columns}, hide_index=True)
                 
-                # 하단 버튼부
+                # 저장 및 다운로드 버튼
                 c_b1, c_b2 = st.columns(2)
-                
-                # 1. 구글 시트 저장 버튼
                 if c_b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
                     save_df = df_final.copy()
                     save_df['최종발주량'] = pd.to_numeric(save_df['최종발주량'], errors='coerce').fillna(0)
                     save_df = save_df[save_df['최종발주량'] > 0][[item, option, '최종발주량']]
-                    if not save_df.empty:
-                        if save_history_to_gsheet(save_df):
-                            st.success("✅ 구글 시트에 저장되었습니다!")
-                    else:
-                        st.warning("발주 수량이 있는 상품이 없습니다.")
+                    if save_history_to_gsheet(save_df):
+                        st.success("✅ 저장 완료!")
                 
-                # 2. 엑셀 다운로드 버튼 (에러 났던 부분 수정 완료)
-                csv_data = df_final[disp_final].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                c_b2.download_button(
-                    label="📥 엑셀 다운로드",
-                    data=csv_data,
-                    file_name=f"최종발주서_{datetime.now().strftime('%m%d_%H%M')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-            else:
-                st.info("현재 조건에 맞는 발주 데이터가 없습니다.")
+                csv = df_final[disp_final].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                c_b2.download_button("📥 엑셀 다운로드", csv, f"최종발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
 
         # 6단계: 과거 확인
 
