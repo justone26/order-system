@@ -190,62 +190,96 @@ if st.session_state.analyzed:
 
             st.data_editor(df_work_view, use_container_width=True, key="main_editor_v4", on_change=on_edit_4, column_config=config_4, hide_index=True)
 
-            # --- [5단계: 최종 발주 리스트 요약] ---
+# --- [5단계: 최종 발주 리스트 요약] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
-            s_filter = st.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
             
+            # 5단계 상단 안내 및 필터
+            c5_1, c5_2 = st.columns([2, 2])
+            with c5_1:
+                s_filter = st.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
+            with c5_2:
+                # 4단계에서 선택한 날짜(hist_date_4)를 표시하여 혼동 방지
+                st.info(f"📅 확인 중인 입고 날짜: **{hist_date_4.strftime('%Y-%m-%d')}** (4단계 설정 기준)")
+
+            # 데이터 준비
             to_order = df_work.copy()
+            
+            # [복구] 4단계에서 계산된 '리오더입고수량'을 5단계 '과거입고수량'으로 매핑
             to_order['과거입고수량'] = to_order['리오더입고수량'] 
+            
+            # 실시간 추가발주 합산 계산
             to_order['추가발주수량'] = to_order['unique_key'].map(st.session_state.extra_order_dict).fillna(0).astype(int)
             to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
 
+            # 상태 판별 함수 (🚨긴급 / ⚠️주의)
             def get_final_status(r):
-                total = (pd.to_numeric(r[avail], errors='coerce') or 0) + r['리오더 수량']
-                if r['일판매량'] > 0:
-                    if total < (r['일판매량'] * 3): return "🚨 긴급"
-                    if total < (r['일판매량'] * 5): return "⚠️ 주의"
+                v_av_n = pd.to_numeric(r[avail], errors='coerce') or 0
+                v_re_n = pd.to_numeric(r['리오더 수량'], errors='coerce') or 0
+                daily = r['일판매량']
+                total_stock = v_av_n + v_re_n
+                if daily > 0:
+                    if total_stock < (daily * 3): return "🚨 긴급"
+                    if total_stock < (daily * 5): return "⚠️ 주의"
                 return "✅ 정상"
+            
             to_order['상태'] = to_order.apply(get_final_status, axis=1)
 
+            # 필터링 로직
             order_mask = (to_order['권장발주량'] > 0) | (to_order['상태'] != "✅ 정상")
             df_final = to_order[order_mask].copy()
-            if "🚨" in s_filter: df_final = df_final[df_final['상태'] == "🚨 긴급"]
-            elif "⚠️" in s_filter: df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
+            
+            if "🚨" in s_filter: 
+                df_final = df_final[df_final['상태'] == "🚨 긴급"]
+            elif "⚠️" in s_filter: 
+                df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
 
             if not df_final.empty:
-                # [중요] 컬럼 리스트와 데이터프레임 컬럼을 정확히 일치시킴
+                # [왼쪽 정렬용] 컬럼 리스트 정의 (이름 정확히 일치 확인)
                 disp_final = ["상태", item, option, vendor, vendor_item, avail, "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]
                 df_final_view = df_final[disp_final].copy()
                 
-                # 숫자 컬럼 문자열 변환 (왼쪽 정렬용)
+                # 숫자 컬럼들을 문자열로 변환 (왼쪽 정렬 강제)
                 num_to_str_5 = [avail, "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]
                 for c in num_to_str_5:
                     if c in df_final_view.columns:
                         df_final_view[c] = df_final_view[c].astype(str)
                 
-                # 에러 방지용 config 생성 (컬럼명이 정확히 일치해야 함)
+                # 모든 컬럼을 TextColumn으로 설정
                 config_5 = {c: st.column_config.TextColumn(c) for c in disp_final}
                 
+                # 값 수정 시 세션 업데이트
                 def on_edit_5():
                     edits = st.session_state["final_editor_v5"]["edited_rows"]
                     for r_idx_str, change in edits.items():
                         if "추가발주수량" in change:
                             r_key = df_final.iloc[int(r_idx_str)]['unique_key']
-                            try: st.session_state.extra_order_dict[r_key] = int(change["추가발주수량"])
+                            try:
+                                st.session_state.extra_order_dict[r_key] = int(change["추가발주수량"])
                             except: pass
                     st.rerun()
 
-                st.data_editor(df_final_view, use_container_width=True, key="final_editor_v5", column_config=config_5, on_change=on_edit_5, hide_index=True)
+                # 에디터 출력
+                st.data_editor(
+                    df_final_view, 
+                    use_container_width=True, 
+                    key="final_editor_v5", 
+                    column_config=config_5, 
+                    on_change=on_edit_5, 
+                    hide_index=True
+                )
                 
                 # 버튼 영역
                 c_b1, c_b2 = st.columns(2)
                 if c_b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
                     save_df = df_final[df_final['최종발주량'] > 0][[item, option, '최종발주량']]
-                    if save_history_to_gsheet(save_df): st.success("✅ 저장 완료!")
+                    if save_history_to_gsheet(save_df, log_type="발주"):
+                        st.success("✅ 발주 기록 저장 완료!")
                 
                 csv = df_final[disp_final].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
                 c_b2.download_button("📥 엑셀 다운로드", csv, f"최종발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+            else:
+                st.info("현재 조건에 맞는 발주 데이터가 없습니다.")
 
             # --- 6단계: 과거 기록 ---
             st.divider()
