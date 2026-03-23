@@ -207,9 +207,96 @@ with tab1:
                 col_btn2.download_button("📥 엑셀 다운로드", csv, f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
             else: st.info("💡 현재 발주가 필요한 상품이 없습니다.")
 
-# --- [🌙 탭 2: 동대문 관리 및 히스토리] ---
+      # 6단계: 과거 확인
+
+            st.divider()
+
+            st.subheader("📜 6단계: 과거 데이터 확인")
+
+            if st.button("🔄 기록 불러오기"): st.session_state.db_history = load_history_from_gsheet()
+
+            if 'db_history' in st.session_state and not st.session_state.db_history.empty:
+
+                df_hist = st.session_state.db_history
+
+                df_hist['날짜'] = df_hist['저장시간'].astype(str).str.split(' ').str[0]
+
+                sel_date = st.date_input("날짜 선택", datetime.now())
+
+                day_data = df_hist[df_hist['날짜'] == sel_date.strftime("%Y-%m-%d")]
+
+                if not day_data.empty:
+
+                    sel_time = st.selectbox("⏰ 시간 선택", sorted(day_data['저장시간'].unique(), reverse=True))
+
+                    st.dataframe(day_data[day_data['저장시간'] == sel_time].drop(columns=['날짜']), use_container_width=True)
+
+
+
+# --- [🌙 탭 2: 동대문 사입 관리] ---
+
 with tab2:
-    st.subheader("📜 6단계: 입고 히스토리 확인")
-    if st.button("🔄 히스토리 불러오기"): st.session_state.db_hist = load_history_from_gsheet()
-    if 'db_hist' in st.session_state and not st.session_state.db_hist.empty:
-        st.dataframe(st.session_state.db_hist.sort_values(by='저장시간', ascending=False), use_container_width=True)
+
+    st.subheader("🌙 동대문 사입 및 미납 관리")
+
+    dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
+
+    if dong_file:
+
+        if "last_file_name" not in st.session_state or st.session_state.last_file_name != dong_file.name:
+
+            df = pd.read_excel(dong_file)
+
+            df.columns = df.columns.str.strip()
+
+            required_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '판매수량', '발주수량', '가중율', '3일판매']
+
+            for col in required_cols:
+
+                if col not in df.columns: df[col] = 0 if col not in ['선택', '품절', '상품명', '공급처', '공급처상품명'] else ""
+
+            for col in ['정상재고', '가용재고', '3일판매']: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+            df['판매수량'] = (df['정상재고'] - df['가용재고']).clip(lower=0)
+
+            df['가중율'] = df['판매수량'].apply(lambda n: 2.0 if n >= 10 else (1.5 if n >= 6 else (1.2 if n >= 3 else 1.0)))
+
+            df['발주수량'] = (df['판매수량'] * df['가중율']).astype(int)
+
+            st.session_state.df_dong_current = df[required_cols]
+
+            st.session_state.last_file_name = dong_file.name
+
+
+
+        df_display = st.session_state.df_dong_current.copy()
+
+        search_query = st.text_input("상품명 검색 (사입)")
+
+        if search_query: df_display = df_display[df_display['상품명'].astype(str).str.contains(search_query, case=False, na=False)]
+
+        
+
+        df_display['선택'] = df_display['선택'].astype(bool)
+
+        edited_df = st.data_editor(df_display, use_container_width=True, key="dong_editor")
+
+        
+
+        st.divider()
+
+        c1, c2, c3 = st.columns(3)
+
+        add_val = c1.number_input("추가 수량", value=1, min_value=1)
+
+        if c2.button("🚀 선택 상품 수량 더하기"):
+
+            selected = edited_df[edited_df['선택'] == True].index
+
+            for idx in selected: st.session_state.df_dong_current.at[idx, '발주수량'] += add_val
+
+            st.rerun()
+
+        csv = edited_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+
+        c3.download_button("📥 엑셀 다운로드", csv, "사입리스트.csv", "text/csv")
