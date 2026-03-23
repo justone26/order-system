@@ -205,12 +205,13 @@ if st.session_state.analyzed:
 
                 st.data_editor(df_work_view, use_container_width=True, key="main_editor_v4", on_change=on_edit_4, column_config=config_4, hide_index=True)
 
-   # --- [5단계: 최종 발주 리스트 요약] ---
+  # --- [5단계: 최종 발주 리스트 요약] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
             c5_1, c5_2 = st.columns([2, 1])
-            s_filter = c5_1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
+            # 필터 옵션 구성: 기본값을 '🚨긴급 + ⚠️주의'로 설정하여 분석 시 바로 보이게 함
+            s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 정상 포함 전체보기"], index=0)
             hist_date_5 = c5_2.date_input("🗓️ 입고 기록 확인 날짜 (연동)", value=hist_date_4, key="date_5")
 
             to_order = df_work.copy()
@@ -218,6 +219,7 @@ if st.session_state.analyzed:
             to_order['추가발주수량'] = to_order['unique_key'].map(st.session_state.extra_order_dict).fillna(0).astype(int)
             to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
 
+            # 상태 판별 함수
             def get_final_status(r):
                 av_val = safe_to_num(r[avail])
                 re_val = safe_to_num(r['리오더 수량'])
@@ -230,27 +232,29 @@ if st.session_state.analyzed:
             
             to_order['상태'] = to_order.apply(get_final_status, axis=1)
 
-            # --- [우선순위 정렬 로직 추가] ---
-            # 상태별로 숫자를 부여하여 정렬 (긴급: 0, 주의: 1, 정상: 2)
+            # --- [우선순위 정렬 및 필터링 핵심 로직] ---
+            # 1. 우선순위 점수 부여 (긴급:0, 주의:1, 정상:2)
             status_rank = {"🚨 긴급": 0, "⚠️ 주의": 1, "✅ 정상": 2}
             to_order['rank'] = to_order['상태'].map(status_rank)
+            
+            # 2. 정렬 (위험한 순서대로)
             to_order = to_order.sort_values(by='rank').drop(columns=['rank'])
 
-            # 필터링 적용
-            order_mask = (to_order['권장발주량'] > 0) | (to_order['상태'] != "✅ 정상")
-            df_final = to_order[order_mask].copy()
-            
-            if "🚨" in s_filter: 
-                df_final = df_final[df_final['상태'] == "🚨 긴급"]
-            elif "⚠️" in s_filter: 
-                df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
+            # 3. 필터링 로직 적용
+            if s_filter == "🚨긴급 + ⚠️주의 우선":
+                # 권장발주량이 있거나, 상태가 긴급/주의인 것만 노출
+                df_final = to_order[to_order['상태'].isin(["🚨 긴급", "⚠️ 주의"]) | (to_order['권장발주량'] > 0)].copy()
+            elif s_filter == "🚨 긴급만 보기":
+                df_final = to_order[to_order['상태'] == "🚨 긴급"].copy()
+            else: # "✅ 정상 포함 전체보기"
+                df_final = to_order.copy()
 
             if not df_final.empty:
                 # 표시 컬럼 정의
                 disp_final = ["상태", item, option, vendor, vendor_item, avail, "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]
                 df_final_view = df_final[disp_final].copy()
                 
-                # 왼쪽 정렬을 위해 모든 컬럼 문자열 변환
+                # 왼쪽 정렬을 위해 문자열 변환
                 for c in df_final_view.columns:
                     df_final_view[c] = df_final_view[c].astype(str)
                 
@@ -259,7 +263,6 @@ if st.session_state.analyzed:
                 def on_edit_5():
                     edits = st.session_state["final_editor_v5"]["edited_rows"]
                     for r_idx_str, change in edits.items():
-                        # 데이터프레임이 정렬되었으므로 iloc로 정확한 행 참조
                         if "추가발주수량" in change:
                             r_key = df_final.iloc[int(r_idx_str)]['unique_key']
                             try:
@@ -276,9 +279,13 @@ if st.session_state.analyzed:
                     hide_index=True
                 )
                 
+                # 버튼 (저장 및 다운로드)
                 c_b1, c_b2 = st.columns(2)
                 if c_b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-                    save_df = df_final[df_final['최종발주량'].astype(int) > 0][[item, option, '최종발주량']]
+                    # 문자로 변환했던 최종발주량을 다시 숫자로 바꿔서 저장
+                    save_df = df_final.copy()
+                    save_df['최종발주량'] = pd.to_numeric(save_df['최종발주량'], errors='coerce').fillna(0)
+                    save_df = save_df[save_df['최종발주량'] > 0][[item, option, '최종발주량']]
                     if save_history_to_gsheet(save_df):
                         st.success("✅ 저장 완료!")
                 
