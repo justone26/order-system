@@ -10,17 +10,13 @@ def get_sheet():
     scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    # 보내주신 시트 키 유지
     spreadsheet_key = "1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg"
     return client.open_by_key(spreadsheet_key)
 
-# [수정] 데이터 유실 방지를 위해 sheet.clear() 제거 및 안전장치 추가
 def save_reorder_data(df):
     if df.empty: return 
     try:
         sheet = get_sheet().sheet1
-        # 시트 전체를 지우지 않고 A1부터 데이터 크기만큼만 덮어씁니다.
-        # 이렇게 해야 통신 오류 시 전체 데이터가 날아가는 것을 방지합니다.
         data = [df.columns.values.tolist()] + df.values.tolist()
         sheet.update('A1', data) 
     except Exception as e:
@@ -70,7 +66,6 @@ with tab1:
     
     st.subheader("📁 데이터 업로드 (제작상품)")
     
-    # [수정] 모든 메모리를 날리는 clear() 대신, 분석 상태와 파일 정보만 전략적으로 삭제
     if st.button("🔄 제작상품 분석 리셋"):
         if 'df_raw' in st.session_state: del st.session_state.df_raw
         if 'analyzed' in st.session_state: st.session_state.analyzed = False
@@ -102,7 +97,6 @@ with tab1:
                         df_new['match_name'] = df_new[tmp_item].astype(str).str.strip()
                         df_new['match_opt'] = df_new[tmp_option].astype(str).str.strip()
 
-                        # [수정] merge 시 기존 수량을 안전하게 가져오기
                         df_new = pd.merge(df_new, gs_subset, left_on=['match_name', 'match_opt'], right_on=['상품명', '옵션'], how='left', suffixes=('', '_gs'))
                         
                         if '리오더 수량_gs' in df_new.columns:
@@ -112,7 +106,7 @@ with tab1:
                 
                 if '리오더 수량' not in df_new.columns: df_new['리오더 수량'] = 0
             except Exception as e:
-                st.warning(f"기존 리오더 수량 불러오기 실패 (새 수량 0으로 시작): {e}")
+                st.warning(f"기존 리오더 수량 불러오기 실패: {e}")
                 if '리오더 수량' not in df_new.columns: df_new['리오더 수량'] = 0
 
             st.session_state.df_raw = df_new
@@ -278,7 +272,7 @@ with tab1:
                     sel_time = st.selectbox("⏰ 시간 선택", sorted(day_data['저장시간'].unique(), reverse=True))
                     st.dataframe(day_data[day_data['저장시간'] == sel_time].drop(columns=['날짜']), use_container_width=True)
 
-# --- [🌙 탭 2: 동대문 사입 관리] --- (기존 기능 그대로 유지)
+# --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
     st.subheader("🌙 동대문 사입 및 미납 관리")
     dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'csv'], key="dong_tab_upload")
@@ -306,4 +300,9 @@ with tab2:
         st.divider()
         c1, c2, c3 = st.columns(3)
         add_val = c1.number_input("추가 수량", value=1, min_value=1)
-        if c
+        if c2.button("🚀 선택 상품 수량 더하기"):
+            selected = edited_df[edited_df['선택'] == True].index
+            for idx in selected: st.session_state.df_dong_current.at[idx, '발주수량'] += add_val
+            st.rerun()
+        csv = edited_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        c3.download_button("📥 엑셀 다운로드", csv, "사입리스트.csv", "text/csv")
