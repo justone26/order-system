@@ -191,16 +191,23 @@ with tab1:
             st.data_editor(df_work[disp_cols_4], use_container_width=True, key="main_editor", on_change=on_edit_4, column_config=config_4)
 
             # --- [5단계: 최종 발주 요약 - 정렬 및 실시간 계산 반영 버전] ---
+if st.session_state.analyzed:
+            # --- [5단계: 최종 발주 리스트 요약] ---
             st.divider()
             st.subheader("📋 5단계: 최종 발주 리스트 요약")
             
+            # 1. 상단 필터 및 설정 레이아웃
             row1_c1, row1_c2 = st.columns([1, 1])
             s_filter = row1_c1.selectbox("🎯 상태 필터", ["전체보기", "🚨 긴급만 보기", "⚠️ 주의이상 보기"])
             hist_date = row1_c2.date_input("🗓️ 리오더 입고과거확인 날짜", datetime.now())
             
+            # 2. 데이터 복사 및 기본 전처리
             to_order = df_work.copy()
             
-            # 과거입고수량 매핑
+            # [고유 키 생성] 상품명+옵션으로 수정 데이터를 추적함
+            to_order['unique_key'] = to_order[item].astype(str).str.strip() + to_order[option].astype(str).str.strip()
+            
+            # 3. 과거 입고 수량 매핑 로직
             past_hist = load_history_from_gsheet()
             to_order['과거입고수량'] = 0
             if not past_hist.empty and '구분' in past_hist.columns:
@@ -209,14 +216,9 @@ with tab1:
                 if not t_hist.empty:
                     t_hist['key_tmp'] = t_hist['상품명'].astype(str).str.strip() + t_hist['옵션'].astype(str).str.strip()
                     in_map = t_hist.groupby('key_tmp')['수량'].sum().to_dict()
-                    to_order['key_tmp'] = to_order[item].astype(str).str.strip() + to_order[option].astype(str).str.strip()
-                    to_order['과거입고수량'] = to_order['key_tmp'].map(in_map).fillna(0).astype(int)
-                    to_order.drop(columns=['key_tmp'], inplace=True)
+                    to_order['과거입고수량'] = to_order['unique_key'].map(in_map).fillna(0).astype(int)
 
-            # 고유 키 생성 (추가발주 저장용)
-            to_order['unique_key'] = to_order[item].astype(str).str.strip() + to_order[option].astype(str).str.strip()
-            
-            # 상태 계산 (정확한 수치 변환 적용)
+            # 4. [중요] 긴급/주의 상태 판별 로직
             def get_final_status(r):
                 v_av_n = pd.to_numeric(r[avail], errors='coerce') or 0
                 v_re_n = pd.to_numeric(r['리오더 수량'], errors='coerce') or 0
@@ -226,67 +228,81 @@ with tab1:
                     if total_stock < (daily * 3): return "🚨 긴급"
                     if total_stock < (daily * 5): return "⚠️ 주의"
                 return "✅ 정상"
+            
             to_order['상태'] = to_order.apply(get_final_status, axis=1)
 
-            # [핵심] 세션에서 추가발주수량 불러오기 및 최종발주량 합산
+            # 5. 실시간 계산 반영 (권장 + 추가 = 최종)
+            # 세션에 저장된 '추가발주수량' 딕셔너리에서 값을 가져옴
             to_order['추가발주수량'] = to_order['unique_key'].map(st.session_state.extra_order_dict).fillna(0).astype(int)
             to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
 
-            # 필터링 적용
+            # 6. 필터링 (권장발주가 있거나, 상태가 정상이 아닌 것들)
             order_mask = (to_order['권장발주량'] > 0) | (to_order['상태'] != "✅ 정상")
             df_final = to_order[order_mask].copy()
-            if "🚨" in s_filter: df_final = df_final[df_final['상태'] == "🚨 긴급"]
-            elif "⚠️" in s_filter: df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
+            
+            if "🚨" in s_filter: 
+                df_final = df_final[df_final['상태'] == "🚨 긴급"]
+            elif "⚠️" in s_filter: 
+                df_final = df_final[df_final['상태'].str.contains("🚨|⚠️")]
 
             if not df_final.empty:
-                # 요청하신 순서대로 컬럼 배치
+                # [강제 정렬 밑작업] 모든 숫자 컬럼을 int형으로 확정
+                num_cols_to_fix = [avail, "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]
+                for col in num_cols_to_fix:
+                    if col in df_final.columns:
+                        df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0).astype(int)
+
+                # 7. 컬럼 배치 순서 설정
                 f_target = ["상태", item, option, vendor, vendor_item, avail, "리오더 수량", "추가발주수량", "과거입고수량", "권장발주량", "최종발주량"]
                 disp_final = [c for c in f_target if c in df_final.columns]
 
-                # [핵심] 숫자 컬럼 오른쪽 정렬 설정 (NumberColumn)
+                # 8. [강제 오른쪽 정렬] 설정
                 config_5 = {
                     "상태": st.column_config.TextColumn("상태", width="small"),
                     item: st.column_config.TextColumn(item, width="medium"),
                     option: st.column_config.TextColumn(option, width="small"),
                     vendor: st.column_config.TextColumn(vendor, width="small"),
                     vendor_item: st.column_config.TextColumn(vendor_item, width="medium"),
-                    # 숫자들은 모두 NumberColumn으로 지정 (자동 오른쪽 정렬)
-                    avail: st.column_config.NumberColumn(avail, format="%d"),
-                    "리오더 수량": st.column_config.NumberColumn("리오더 수량", format="%d"),
-                    "추가발주수량": st.column_config.NumberColumn("추가발주수량", min_value=0, format="%d"),
-                    "과거입고수량": st.column_config.NumberColumn("과거입고수량", format="%d"),
-                    "권장발주량": st.column_config.NumberColumn("권장발주량", format="%d"),
-                    "최종발주량": st.column_config.NumberColumn("최종발주량", format="%d")
+                    # alignment="right"를 명시하여 오른쪽 정렬 강제
+                    avail: st.column_config.NumberColumn(avail, format="%d", alignment="right"),
+                    "리오더 수량": st.column_config.NumberColumn("리오더 수량", format="%d", alignment="right"),
+                    "추가발주수량": st.column_config.NumberColumn("추가발주수량", min_value=0, format="%d", alignment="right"),
+                    "과거입고수량": st.column_config.NumberColumn("과거입고수량", format="%d", alignment="right"),
+                    "권장발주량": st.column_config.NumberColumn("권장발주량", format="%d", alignment="right"),
+                    "최종발주량": st.column_config.NumberColumn("최종발주량", format="%d", alignment="right")
                 }
                 
+                # 수정 즉시 반영 함수
                 def on_edit_5():
-                    edits = st.session_state["final_editor"]["edited_rows"]
+                    edits = st.session_state["final_editor_v3"]["edited_rows"]
                     for r_idx_str, change in edits.items():
                         if "추가발주수량" in change:
-                            # 현재 필터링된 데이터프레임의 인덱스로 고유 키를 찾아 세션에 저장
                             r_key = df_final.iloc[int(r_idx_str)]['unique_key']
                             st.session_state.extra_order_dict[r_key] = int(change["추가발주수량"])
-                    st.rerun() # 새로고침하여 최종발주량 즉시 계산 반영
+                    st.rerun()
 
+                # 9. 에디터 출력
                 st.data_editor(
                     df_final[disp_final], 
                     use_container_width=True, 
-                    key="final_editor", 
+                    key="final_editor_v3", 
                     column_config=config_5, 
                     on_change=on_edit_5,
                     hide_index=True
                 )
                 
+                # 10. 하단 저장 및 다운로드 버튼
                 c_b1, c_b2 = st.columns(2)
                 if c_b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-                    # 현재 계산된 최종발주량 기준으로 저장
                     save_df = df_final[df_final['최종발주량'] > 0][[item, option, '최종발주량']]
                     if save_history_to_gsheet(save_df, log_type="발주"):
                         st.success("✅ 발주 기록 저장 완료!")
                 
                 csv = df_final[disp_final].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
                 c_b2.download_button("📥 엑셀 다운로드", csv, f"최종발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
-
+            else:
+                st.info("현재 조건에 맞는 발주 데이터가 없습니다.")
+                
             # --- 6단계: 과거 데이터 확인 ---
             st.divider()
             st.subheader("📜 6단계: 과거 데이터 및 입고 내역 확인")
