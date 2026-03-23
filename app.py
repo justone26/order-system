@@ -348,12 +348,17 @@ if st.session_state.analyzed:
             st.divider()
             st.subheader("📜 6단계: 과거 데이터 통합 조회")
             
+            # [에러 해결] 필요한 모듈을 함수 내에서 직접 선언하거나 상단에 추가해야 합니다.
+            from datetime import datetime, timedelta
+
             # 1. 상단 컨트롤러 (날짜 범위 선택)
             c6_1, c6_2 = st.columns(2)
             with c6_1:
-                start_d = st.date_input("시작 날짜", datetime.now() - timedelta(days=7), key="s_date_v6")
+                # 기본값: 오늘로부터 7일 전
+                start_d = st.date_input("시작 날짜", datetime.now() - timedelta(days=7), key="s_date_v6_fix")
             with c6_2:
-                end_d = st.date_input("종료 날짜", datetime.now(), key="e_date_v6")
+                # 기본값: 오늘
+                end_d = st.date_input("종료 날짜", datetime.now(), key="e_date_v6_fix")
 
             # 2. 데이터 불러오기
             hist_all = load_history_from_gsheet()
@@ -362,60 +367,66 @@ if st.session_state.analyzed:
                 try:
                     # '저장시간' 컬럼에서 날짜 추출 및 필터링
                     if '저장시간' in hist_all.columns:
-                        hist_all['날짜'] = pd.to_datetime(hist_all['저장시간']).dt.date
+                        # 저장시간을 날짜 형식으로 변환 (에러 방지를 위해 errors='coerce' 사용)
+                        hist_all['날짜_dt'] = pd.to_datetime(hist_all['저장시간'], errors='coerce').dt.date
+                        
                         # 선택한 기간 내 데이터만 필터링
-                        df_filtered = hist_all[(hist_all['날짜'] >= start_d) & (hist_all['날짜'] <= end_d)].copy()
+                        df_filtered = hist_all[(hist_all['날짜_dt'] >= start_d) & (hist_all['날짜_dt'] <= end_d)].copy()
                         
                         if not df_filtered.empty:
-                            # 3. 데이터 요약 (날짜별, 상품명별 합계)
-                            # 4~5단계와 동일하게 상품명/옵션 공백 제거하여 깔끔하게 정리
-                            df_filtered['상품명'] = df_filtered['상품명'].str.strip()
-                            df_filtered['옵션'] = df_filtered['옵션'].astype(str).str.strip()
-                            
                             # '구분'별(입고/발주) 탭 나누기
                             tab1, tab2 = st.tabs(["📥 입고 내역 기록", "📤 발주 내역 기록"])
                             
                             with tab1:
-                                in_data = df_filtered[df_filtered['구분'] == "입고"]
-                                if not in_data.empty:
-                                    st.dataframe(in_data[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
-                                    # 입고 합계 요약
-                                    sum_in = in_data.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
-                                    st.write("📋 **선택 기간 입고 합계**")
-                                    st.table(sum_in)
+                                # '구분' 컬럼 존재 확인 후 필터링
+                                if '구분' in df_filtered.columns:
+                                    in_data = df_filtered[df_filtered['구분'] == "입고"]
+                                    if not in_data.empty:
+                                        st.dataframe(in_data[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
+                                        # 요약 합계
+                                        sum_in = in_data.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+                                        st.write("📋 **해당 기간 상품별 입고 총합**")
+                                        st.table(sum_in)
+                                    else:
+                                        st.info("기간 내 입고 기록이 없습니다.")
                                 else:
-                                    st.info("해당 기간에 입고 기록이 없습니다.")
+                                    st.warning("시트에 '구분' 컬럼이 없습니다.")
                                     
                             with tab2:
-                                out_data = df_filtered[df_filtered['구분'] == "발주"]
-                                if not out_data.empty:
-                                    st.dataframe(out_data[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
-                                    # 발주 합계 요약
-                                    sum_out = out_data.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
-                                    st.write("📋 **선택 기간 발주 합계**")
-                                    st.table(sum_out)
-                                else:
-                                    st.info("해당 기간에 발주 기록이 없습니다.")
+                                if '구분' in df_filtered.columns:
+                                    out_data = df_filtered[df_filtered['구분'] == "발주"]
+                                    if not out_data.empty:
+                                        st.dataframe(out_data[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
+                                        # 요약 합계
+                                        sum_out = out_data.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+                                        st.write("📋 **해당 기간 상품별 발주 총합**")
+                                        st.table(sum_out)
+                                    else:
+                                        st.info("기간 내 발주 기록이 없습니다.")
                         else:
-                            st.warning("선택하신 기간에는 저장된 데이터가 없습니다.")
+                            st.warning("선택하신 기간에 해당하는 데이터가 시트에 없습니다.")
                     else:
-                        st.error("시트에 '저장시간' 컬럼이 없어 데이터를 분류할 수 없습니다.")
+                        st.error("시트에 '저장시간' 컬럼이 없어 날짜별 조회가 불가능합니다.")
                 except Exception as e:
-                    st.error(f"데이터 처리 중 오류 발생: {e}")
+                    st.error(f"데이터 조회 중 오류가 발생했습니다: {e}")
             else:
-                st.info("💡 구글 시트에 아직 저장된 데이터가 하나도 없습니다.")
+                st.info("💡 구글 시트에 저장된 기록이 없습니다.")
 
-            # 4. 전체 데이터 엑셀 다운로드 버튼
+            # 3. 전체 데이터 다운로드 (데이터가 있을 때만)
             if not hist_all.empty:
                 st.write("---")
-                csv_all = hist_all.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                st.download_button(
-                    label="📥 전체 히스토리 다운로드 (CSV)",
-                    data=csv_all,
-                    file_name=f"전체기록_{datetime.now().strftime('%m%d')}.csv",
-                    mime='text/csv',
-                    use_container_width=True
-                )
+                try:
+                    csv_all = hist_all.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                    st.download_button(
+                        label="📥 전체 히스토리 다운로드 (CSV)",
+                        data=csv_all,
+                        file_name=f"전체기록_{datetime.now().strftime('%m%d')}.csv",
+                        mime='text/csv',
+                        use_container_width=True,
+                        key="btn_full_dl"
+                    )
+                except:
+                    pass
 
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
