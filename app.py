@@ -3,6 +3,8 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta, timezone
+import time  # 👈 이 줄을 꼭 추가해 주세요!
+
 
 # 한국 시간(KST) 설정 (UTC+9)
 KST = timezone(timedelta(hours=9))
