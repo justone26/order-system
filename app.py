@@ -124,29 +124,24 @@ with tab1:
     if st.session_state.get('df_raw') is not None:
         df_curr = st.session_state.df_raw
         cols = df_curr.columns.tolist()
-
-
         st.subheader("⚙️ 매핑 설정")
-              c1, c2 = st.columns(2)
-        sold_out = c1.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
-        vendor = c1.selectbox("공급처", cols, index=find_idx(cols, ['공급처']))
-        item = c1.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
-        option = c1.selectbox("옵션", cols, index=find_idx(cols, ['옵션']))
-        vendor_item = c1.selectbox("공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
-        reg_date = c2.selectbox("등록일", cols, index=find_idx(cols, ['등록일']))
-        stock = c2.selectbox("정상재고", cols, index=find_idx(cols, ['정상재고']))
-        avail = c2.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
-        t3day = c2.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
-        t7day = c2.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
+        c1, c2 = st.columns(2)
+        sold_out = c1.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
+        vendor = c1.selectbox("공급처", cols, index=find_idx(cols, ['공급처']))
+        item = c1.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
+        option = c1.selectbox("옵션", cols, index=find_idx(cols, ['옵션']))
+        stock = c2.selectbox("정상재고", cols, index=find_idx(cols, ['정상재고']))
+        avail = c2.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
+        t3day = c2.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
+        t7day = c2.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
-        # --- 2~3단계: 분석 설정 ---
-        st.subheader("🚀 2~3단계: 분석 설정")
-        l1, l2 = st.columns(2)
-        lt = l1.number_input("리드타임 (일)", value=10)
-        ss = l2.number_input("안전재고 (일 수)", value=7)
-        if st.button("📊 분석 실행", use_container_width=True):
-            st.session_state.analyzed = True
-            st.rerun()
+        st.subheader("🚀 분석 설정")
+        l1, l2 = st.columns(2)
+        lt = l1.number_input("리드타임 (일)", value=10)
+        ss = l2.number_input("안전재고 (일 수)", value=7)
+        if st.button("📊 분석 실행", use_container_width=True):
+            st.session_state.analyzed = True
+            st.rerun()
 
 if st.session_state.analyzed:
             # --- [필수 함수 정의: AttributeError 방지형] ---
