@@ -281,12 +281,25 @@ if st.button("📂 구글 시트 데이터 로드", use_container_width=True):
 st.divider()
 st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
 
+# 🚨 [추가] 변수 정의 (이게 없어서 stock, avail 에러가 났던 겁니다!)
+sold_out = "품절"
+vendor = "공급쳐"
+v_item = "공급쳐상품명"
+item = "상품명"
+option = "옵션"
+stock = "정상재고"    # 👈 에러 범인 1
+avail = "가용재고"    # 👈 에러 범인 2
+t7day = "7일판매"
+t3day = "3일판매"
+lt = 3  # 리드타임
+ss = 2  # 안전재고
+
 # 💡 [안전장치] 데이터 로드 확인
 if 'df_raw' not in st.session_state:
     st.info("👆 상단에서 데이터를 먼저 불러와주세요.")
     st.stop()
 
-# 1. 데이터 복사 및 수치형 변환
+# 1. 데이터 복사 및 수치형 변환 (이제 여기서 에러가 안 납니다!)
 df_work = st.session_state.df_raw.copy()
 
 num_cols = [stock, avail, "리오더 수량", t7day, t3day]
@@ -300,7 +313,6 @@ v3 = df_work[t3day]
 df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
 df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 df_work['3일발주합계'] = df_work[t3day]
-
 # 3. 상단 UI 및 필터
 f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
 search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4_input_final_v2")
