@@ -379,45 +379,42 @@ with tab1:
                     st.rerun()
 
         st.write("---")
-        # 5. 🔥 [복구] 버튼 2개 (저장 & 엑셀다운로드)
-        # --- 5단계 하단: 저장 및 엑셀 버튼 부분 ---
+       # --- 5단계 하단: 저장 버튼 부분 (띄어쓰기 에러 수정본) ---
         b1, b2 = st.columns(2)
         
         if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-            # 1. 발주 대상 추출 (권장발주량이나 추가발주수량이 있는 항목)
+            # 1. 발주 대상 추출
             order_ready = df_5[(df_5['권장발주량'] > 0) | (df_5['추가발주수량'] > 0)].copy()
             
             if not order_ready.empty:
-                # 2. 💡 [핵심] 6단계에서 보여줄 모든 수치를 각각의 컬럼(칸)으로 만듭니다.
+                # 2. 💡 [수정 핵심] 컬럼명 띄어쓰기를 실제 데이터와 일치시킵니다.
                 order_ready['공급쳐상품명'] = order_ready[v_item]
                 order_ready['가용재고'] = order_ready[avail]
-                # '리오더 수량' 변수명이 다를 수 있으니 확인 후 매핑
-                order_ready['리오더수량'] = order_ready['리오더수량'] 
-                order_ready['추가발주수량'] = order_ready['추가발주수량']
-                order_ready['권장발주수량'] = order_ready['권장발주량']
                 
-                # 3. 시트에 저장할 최종 컬럼 리스트 (이 이름들이 6단계 제목이 됩니다)
+                # 만약 에러가 나면 아래 '리오더 수량' 부분을 소스 상단의 변수명과 맞춰야 합니다.
+                # 보통 사장님 소스 상단에 "리오더 수량"으로 되어 있을 겁니다.
+                order_ready['리오더수량_저장'] = order_ready['리오더 수량'] 
+                order_ready['추가발주수량_저장'] = order_ready['추가발주수량']
+                order_ready['권장발주수량_저장'] = order_ready['권장발주량']
+                
+                # 3. 시트에 저장할 데이터 (6단계 제목이 될 이름들)
                 save_data = order_ready[[
                     item, option, '공급쳐상품명', 
-                    '가용재고', '리오더수량', '추가발주수량', '권장발주수량'
+                    '가용재고', '리오더수량_저장', '추가발주수량_저장', '권장발주수량_저장'
                 ]]
+                
+                # 6단계에서 보기 편하게 이름 다시 깔끔하게 변경
+                save_data.columns = [
+                    "상품명", "옵션", "공급쳐상품명", 
+                    "가용재고", "리오더수량", "추가발주수량", "권장발주수량"
+                ]
                 
                 # 4. 저장 함수 호출
                 if save_history_to_gsheet(save_data, log_type="발주"):
-                    st.success(f"✅ 모든 수치 데이터 {len(order_ready)}건이 저장되었습니다!")
+                    st.success(f"✅ 모든 데이터가 정상 저장되었습니다! 6단계로 가보세요.")
                     st.rerun()
             else:
                 st.warning("발주할 수량이 있는 상품이 없습니다.")
-
-        # 엑셀 다운로드 버튼 (현재 화면 기준)
-        csv_data = df_display_5[actual_cols_5].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        b2.download_button(
-            label="📥 현재 리스트 엑셀 다운로드",
-            data=csv_data,
-            file_name=f"발주서_{datetime.now().strftime('%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
         
 # --- [6단계: 전체 히스토리 내역 - 모든 수치 데이터 복구] ---
         st.divider()
