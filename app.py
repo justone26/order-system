@@ -316,30 +316,38 @@ with tab1:
                 else:
                     st.info("수정된 데이터가 없습니다.")
 
-        # --- [5단계: 최종 발주 리스트 요약] ---
+# --- [5단계: 최종 발주 리스트 요약 - 새로고침 완결 버전] ---
         st.divider()
         st.subheader("📋 5단계: 최종 발주 리스트 요약")
         
-        if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
-        
-        # 최신 데이터 동기화
+        # 1. 세션 주머니 확인 (추가발주수량 저장용)
+        if 'add_order_dict' not in st.session_state: 
+            st.session_state.add_order_dict = {}
+
+        # 2. 최신 데이터 동기화 (4단계에서 바뀐 리오더 수량 반영됨)
         to_order = st.session_state.df_raw.copy()
+        
+        # 세션에 저장된 추가발주수량을 데이터프레임에 매핑
         to_order['추가발주수량'] = to_order.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
         
-        # 5단계 계산 로직
+        # 3. 실시간 재계산 로직
         v7_f = safe_num(to_order[t7day]); v3_f = safe_num(to_order[t3day])
         to_order['일판매량'] = (v7_f / 7 if v7_f.sum() > 0 else v3_f / 3).round(0).astype(int)
         to_order['권장발주량'] = ((to_order['일판매량'] * (lt + ss)) - (safe_num(to_order[avail]) + safe_num(to_order['리오더 수량']))).clip(lower=0).astype(int)
         
+        # 상태 판별 함수
         def get_final_status(r):
-            ts = safe_num(r[avail]) + safe_num(r['리오더 수량'])
+            total_stock = safe_num(r[avail]) + safe_num(r['리오더 수량'])
             daily = r['일판매량']
             if daily > 0:
-                if ts < (daily * 3): return "🚨 긴급"
-                if ts < (daily * 5): return "⚠️ 주의"
+                if total_stock < (daily * 3): return "🚨 긴급"
+                if total_stock < (daily * 5): return "⚠️ 주의"
             return "✅ 정상"
+        
         to_order['상태'] = to_order.apply(get_final_status, axis=1)
+        to_order = to_order.sort_values(by='상태')
 
+        # 4. 필터 UI
         c5_1, c5_2 = st.columns([2, 1])
         s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 전체보기"], index=0, key="s_filter_v5_final")
         
@@ -348,21 +356,55 @@ with tab1:
         elif s_filter == "🚨 긴급만 보기": 
             to_order = to_order[to_order['상태'] == "🚨 긴급"]
 
+        # 5. 표시할 컬럼 설정 (KeyError 방지용 안전장치 포함)
         disp_final = ["상태", item, option, vendor, avail, "리오더 수량", "추가발주수량", "권장발주량"]
-        actual_cols = [c for c in disp_final if c in to_order.columns]
+        actual_cols = [col for col in disp_final if col in to_order.columns]
 
-        with st.form("form_step_5"):
+        # 💡 [화면 고정 울타리]
+        with st.form("form_step_5_final"):
+            # 에디터 배치 (key를 editor_v5_final로 고정)
             edited_v5 = st.data_editor(to_order[actual_cols], use_container_width=True, key="editor_v5_final", hide_index=True)
-            submit_v5 = st.form_submit_button("✅ 추가발주수량 반영 (클릭 시 하단 버튼 활성화)", use_container_width=True)
+            
+            # 반영 버튼
+            submit_v5 = st.form_submit_button("✅ 추가발주수량 확정 및 화면 갱신", use_container_width=True, type="primary")
             
             if submit_v5:
-                edits_v5 = edited_v5.get("edited_rows", {})
-                for r_idx_str, change in edits_v5.items():
-                    orig_idx = to_order.index[int(r_idx_str)]
-                    if "추가발주수량" in change:
-                        st.session_state.add_order_dict[orig_idx] = int(change["추가발주수량"])
-                st.success("✅ 추가발주수량이 반영되었습니다.")
-                st.rerun()
+                # 수정된 내용 추출
+                edits_v5 = st.session_state["editor_v5_final"].get("edited_rows", {})
+                
+                if edits_v5:
+                    for r_idx_str, change in edits_v5.items():
+                        # 화면상 인덱스를 원본 데이터의 인덱스로 변환
+                        orig_idx = to_order.index[int(r_idx_str)]
+                        
+                        if "추가발주수량" in change:
+                            # 💡 세션 주머니에 사장님이 입력한 값을 딱 저장!
+                            st.session_state.add_order_dict[orig_idx] = int(change["추가발주수량"])
+                    
+                    st.success("✅ 수치가 반영되었습니다. 화면을 새로고침합니다.")
+                    # 💡 [핵심] 페이지를 다시 읽어서 바뀐 수치를 표에 그려줌
+                    st.rerun()
+                else:
+                    st.info("수정된 추가 수량이 없습니다.")
+
+        # 6. 하단 버튼 및 다운로드부
+        st.write("---")
+        b1, b2 = st.columns(2)
+        
+        # 저장 버튼 (구글 시트 연동)
+        if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, key="final_save_btn"):
+            to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
+            order_final = to_order[to_order['최종발주량'] > 0].copy()
+            if not order_final.empty:
+                if save_history_to_gsheet(order_final[[item, option, '최종발주량']], log_type="발주"):
+                    st.success("✅ 발주 기록이 저장되었습니다!")
+                    st.rerun()
+            else:
+                st.warning("발주할 항목이 없습니다.")
+
+        # 엑셀 다운로드 (현재 화면에 보이는 데이터 기준)
+        csv_data = to_order[actual_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        b2.download_button("📥 엑셀(CSV) 다운로드", data=csv_data, file_name=f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True, key="csv_down_btn")
 
         # 6. 최종 버튼 및 다운로드
         b1, b2 = st.columns(2)
