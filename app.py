@@ -36,12 +36,14 @@ def save_reorder_data(new_work_df):
         sheet.clear()
         sheet.update([final_df.columns.values.tolist()] + final_df.fillna(0).values.tolist())
         return True
-    except: return False
+    except:
+        return False
 
 def save_history_to_gsheet(df, log_type="발주"):
     try:
         spreadsheet = get_sheet()
-        try: hist_sheet = spreadsheet.worksheet("history")
+        try:
+            hist_sheet = spreadsheet.worksheet("history")
         except:
             hist_sheet = spreadsheet.add_worksheet(title="history", rows="1000", cols="20")
             hist_sheet.append_row(["저장시간", "구분", "상품명", "옵션", "수량"])
@@ -49,7 +51,8 @@ def save_history_to_gsheet(df, log_type="발주"):
         rows_to_add = [[now_str, log_type] + [str(x) for x in row] for row in df.values.tolist()]
         hist_sheet.append_rows(rows_to_add)
         return True
-    except: return False
+    except:
+        return False
 
 def load_history_from_gsheet():
     try:
@@ -57,7 +60,8 @@ def load_history_from_gsheet():
         hist_sheet = spreadsheet.worksheet("history")
         data = hist_sheet.get_all_records()
         return pd.DataFrame(data) if data else pd.DataFrame(columns=["저장시간", "구분", "상품명", "옵션", "수량"])
-    except: return pd.DataFrame(columns=["저장시간", "구분", "상품명", "옵션", "수량"])
+    except:
+        return pd.DataFrame(columns=["저장시간", "구분", "상품명", "옵션", "수량"])
 
 def find_idx(cols, target_keywords):
     for keyword in target_keywords:
@@ -73,25 +77,29 @@ def safe_num(val):
 st.set_page_config(layout="wide", page_title="제작상품 재고관리")
 st.title("🏭 제작 상품 재고 관리 시스템")
 
-if "extra_order_dict" not in st.session_state: st.session_state.extra_order_dict = {}
-if 'analyzed' not in st.session_state: st.session_state.analyzed = False
+if "extra_order_dict" not in st.session_state:
+    st.session_state.extra_order_dict = {}
+if 'analyzed' not in st.session_state:
+    st.session_state.analyzed = False
 
 tab1, tab2 = st.tabs(["📊 제작 상품 관리", "📜 히스토리 조회"])
 
 with tab1:
-    # --- 0단계: 업로드 및 6단계 기능 ---
+    # 6단계: 이전 데이터 불러오기 버튼
     c_up1, c_up2 = st.columns([3, 1])
     uploaded_file = c_up1.file_uploader("엑셀 파일을 올려주세요", type=['xlsx', 'xls', 'csv'])
     
-    if c_up2.button("🔄 6단계: 이전 리오더 데이터 불러오기", use_container_width=True):
+    if c_up2.button("🔄 6단계: 이전 데이터 로드", use_container_width=True):
         try:
             sheet = get_sheet().sheet1
             gs_df = pd.DataFrame(sheet.get_all_records())
             if not gs_df.empty:
                 st.session_state.df_raw = gs_df.rename(columns={'상품명': '기존상품명', '옵션': '기존옵션'})
-                st.success("데이터를 성공적으로 불러왔습니다.")
-            else: st.warning("데이터가 비어있습니다.")
-        except: st.error("시트 연결에 실패했습니다.")
+                st.success("이전 리오더 데이터를 불러왔습니다.")
+            else:
+                st.warning("데이터가 없습니다.")
+        except:
+            st.error("연결 실패")
 
     if uploaded_file:
         if 'df_raw' not in st.session_state or st.session_state.get('last_filename') != uploaded_file.name:
@@ -108,8 +116,10 @@ with tab1:
                     rmap = gs_df.set_index('k_tmp')['리오더 수량'].to_dict()
                     df_new['리오더 수량'] = df_new['k_tmp'].map(rmap).fillna(0).astype(int)
                     df_new.drop(columns=['k_tmp'], inplace=True)
-                else: df_new['리오더 수량'] = 0
-            except: df_new['리오더 수량'] = 0
+                else:
+                    df_new['리오더 수량'] = 0
+            except:
+                df_new['리오더 수량'] = 0
             st.session_state.df_raw = df_new
             st.session_state.last_filename = uploaded_file.name
             st.rerun()
