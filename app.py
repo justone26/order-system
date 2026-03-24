@@ -282,7 +282,7 @@ with tab1:
         # 4. 저장 폼
         with st.form("form_step_4_final_secure"):
             edited_v4 = st.data_editor(df_work[actual_display_cols], use_container_width=True, key="editor_v4_final", hide_index=True)
-            submit_v4 = st.form_submit_button("💾 4단계 변경사항 저장 (입고 반영 후 0으로 리셋)", use_container_width=True, type="primary")
+            submit_v4 = st.form_submit_button("💾 4단계 입고수량 저장 및 화면갱신 ", use_container_width=True, type="primary")
             
             if submit_v4:
                 edits = st.session_state["editor_v4_final"].get("edited_rows", {})
