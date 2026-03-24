@@ -312,51 +312,41 @@ with tab1:
                     st.success("✅ 리오더 수량 차감 및 저장이 완료되었습니다!")
                     st.rerun()
                     
-# --- [5단계: 최종 발주 리스트 요약 - 8개 컬럼 및 리오더 실시간 연동 완결판] ---
+# --- [5단계: 최종 발주 리스트 요약 - 저장 및 엑셀 버튼 복구] ---
         st.divider()
         st.subheader("📋 5단계: 최종 발주 리스트 요약")
         
-        # 1. 추가발주 입력값 임시 보관용 (입력창 초기화 방지)
         if 'add_order_dict' not in st.session_state: 
             st.session_state.add_order_dict = {}
 
-        # 💡 [연동] 4단계와 동일한 최신 원본 데이터를 실시간으로 가져옵니다.
         df_5 = st.session_state.df_raw.copy()
 
-        # 숫자형 변환 (계산 오류 및 16,000장 버그 차단)
+        # 숫자형 변환 및 일판매량(반올림) 계산
         num_cols_5 = [avail, '리오더 수량', t7day, t3day]
         for c in num_cols_5:
             if c in df_5.columns:
                 df_5[c] = pd.to_numeric(df_5[c], errors='coerce').fillna(0).astype(int)
 
-        # 2. [계산 로직] 일판매량 반올림 및 권장발주량
         v7_5 = df_5[t7day]; v3_5 = df_5[t3day]
-        # 일판매량: 반올림 후 정수 처리 (소수점 제거)
         df_5['일판매량'] = (v7_5 / 7 if v7_5.sum() > 0 else v3_5 / 3).round(0).astype(int)
-        
-        # 권장발주량 = (일판매량 * 확보일수) - (가용재고 + 리오더 수량)
         df_5['권장발주량'] = ((df_5['일판매량'] * (lt + ss)) - (df_5[avail] + df_5['리오더 수량'])).clip(lower=0).astype(int)
-        
-        # 추가발주수량 입력 컬럼 생성
         df_5['추가발주수량'] = df_5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
 
-        # 상태 판별 (🚨긴급 / ⚠️주의 / ✅정상)
+        # 상태 판별
         def get_final_status(r):
-            stock_sum = r[avail] + r['리오더 수량']
-            daily = r['일판매량']
+            stock_sum = r[avail] + r['리오더 수량']; daily = r['일판매량']
             if daily > 0:
                 if stock_sum < (daily * 3): return "🚨 긴급"
                 if stock_sum < (daily * 5): return "⚠️ 주의"
             return "✅ 정상"
         df_5['상태'] = df_5.apply(get_final_status, axis=1)
 
-        # 3. [UI] 검색 및 필터링
+        # 검색 및 필터 UI
         c5_1, c5_2, c5_3 = st.columns([1.5, 1.5, 1])
-        search_q_v5 = c5_2.text_input("🔍 전체 상품명 검색 (입력 시 상태필터 무시)", key="v5_full_ordered_final")
+        search_q_v5 = c5_2.text_input("🔍 전체 상품명 검색", key="v5_ordered_final_fix")
         s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 전체보기"], index=0)
-        hist_date_5 = c5_3.date_input("🗓️ 기록 확인 날짜", datetime.now(), key="date_v5_final")
+        hist_date_5 = c5_3.date_input("🗓️ 기록 확인 날짜", datetime.now())
 
-        # 필터링 적용 (검색 우선)
         if search_q_v5:
             df_5 = df_5[df_5[item].astype(str).str.contains(search_q_v5, case=False, na=False)]
         else:
@@ -367,60 +357,56 @@ with tab1:
         
         df_5 = df_5.sort_values(by='상태')
 
-        # 🎯 [순서 및 명칭 정리] 사장님 요청 8개 컬럼
-        # 상태 => 상품명 => 옵션 => 공급쳐상품명 => 가용재고 => 리오더수량 => 추가발주수량 => 권장발주량
-        df_display_5 = df_5.rename(columns={
-            item: "상품명",
-            option: "옵션",
-            v_item: "공급쳐상품명",
-            avail: "가용재고",
-            "리오더 수량": "리오더수량"
-        })
-
-        final_cols_5 = [
-            "상태", "상품명", "옵션", "공급쳐상품명", 
-            "가용재고", "리오더수량", "추가발주수량", "권장발주량"
-        ]
+        # 🎯 [순서 정리] 상태, 상품명, 옵션, 공급쳐상품명, 가용재고, 리오더수량, 추가발주수량, 권장발주량
+        df_display_5 = df_5.rename(columns={item: "상품명", option: "옵션", v_item: "공급쳐상품명", avail: "가용재고", "리오더 수량": "리오더수량"})
+        final_cols_5 = ["상태", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장발주량"]
         actual_cols_5 = [c for c in final_cols_5 if c in df_display_5.columns]
 
-        # 4. 데이터 에디터 및 발주 확정 (리오더 수량 합산 로직)
-        with st.form("form_step_5_sync_and_save"):
-            edited_v5 = st.data_editor(df_display_5[actual_cols_5], use_container_width=True, key="editor_v5_ordered_final", hide_index=True)
-            submit_v5 = st.form_submit_button("✅ 추가발주 확정 및 리오더 수량 반영", use_container_width=True, type="primary")
-            
-            if submit_v5:
-                edits = st.session_state["editor_v5_ordered_final"].get("edited_rows", {})
+        # 4. 데이터 에디터
+        with st.form("form_step_5_final_v15"):
+            edited_v5 = st.data_editor(df_display_5[actual_cols_5], use_container_width=True, key="editor_v5_v15", hide_index=True)
+            if st.form_submit_button("✅ 수량 확정 (리오더 수량 합산)", use_container_width=True, type="primary"):
+                edits = st.session_state["editor_v5_v15"].get("edited_rows", {})
                 if edits:
                     for r_idx_str, change in edits.items():
                         orig_idx = df_5.index[int(r_idx_str)]
-                        
                         if "추가발주수량" in change:
                             add_qty = int(change["추가발주수량"])
-                            if add_qty > 0:
-                                # 💡 [연동] 추가 발주한 만큼 원본 리오더 수량에 더하기
-                                current_re = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
-                                st.session_state.df_raw.at[orig_idx, "리오더 수량"] = current_re + add_qty
-                                # 입력창 데이터 유지용
-                                st.session_state.add_order_dict[orig_idx] = add_qty
-                    
-                    # 리오더 수량 데이터 구글 시트 백업 (필요 시 주석 해제)
-                    # save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
-                    
-                    st.success("✅ 발주량이 리오더 수량에 반영되었습니다. 4단계에서도 확인 가능합니다!")
+                            # 💡 4단계 연동: 추가발주한 만큼 리오더 수량 증가
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] += add_qty
+                            st.session_state.add_order_dict[orig_idx] = add_qty
+                    st.success("✅ 리오더 수량이 갱신되었습니다.")
                     st.rerun()
 
         st.write("---")
+        # 5. 🔥 [복구] 버튼 2개 (저장 & 엑셀다운로드)
+        b1, b2 = st.columns(2)
         
-        # 5. 📥 [사장님 질문] 엑셀 다운로드 버튼 (현재 보이는 리스트 기준)
-        if not df_display_5.empty:
-            csv_data = df_display_5[actual_cols_5].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button(
-                label="📥 현재 발주 리스트 엑셀(CSV) 다운로드",
-                data=csv_data,
-                file_name=f"최종발주서_{datetime.now().strftime('%m%d_%H%M')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+        if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
+            # 실제 발주가 필요한 항목만 추출
+            df_5['최종발주량'] = df_5['권장발주량'] + df_5['추가발주수량']
+            order_ready = df_5[df_5['최종발주량'] > 0].copy()
+            
+            if not order_ready.empty:
+                # 저장용 데이터 구성 (공급쳐상품명 포함)
+                order_ready['공급쳐상품명'] = order_ready[v_item]
+                save_data = order_ready[[item, option, '공급쳐상품명', '최종발주량']]
+                
+                if save_history_to_gsheet(save_data, log_type="발주"):
+                    st.success("✅ 구글 시트에 발주 내역이 저장되었습니다!")
+                    st.rerun()
+            else:
+                st.warning("발주할 수량이 없습니다.")
+
+        # 엑셀(CSV) 다운로드 버튼
+        csv_data = df_display_5[actual_cols_5].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        b2.download_button(
+            label="📥 현재 리스트 엑셀 다운로드",
+            data=csv_data,
+            file_name=f"발주서_{datetime.now().strftime('%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
 
         
 # --- [6단계: 히스토리 조회 - 공급쳐 상품명 대응] ---
