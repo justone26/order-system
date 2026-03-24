@@ -85,21 +85,34 @@ with tab1:
         spreadsheet = get_sheet()
         if spreadsheet:
             try:
-                # 이름 대신 '첫 번째 탭'을 무조건 가져오도록 수정
-                sheet = spreadsheet.get_worksheet(0) 
+                sheet = spreadsheet.get_worksheet(0) # 첫 번째 탭 가져오기
                 data = sheet.get_all_records()
+                
                 if data:
-                    st.session_state.df_raw = pd.DataFrame(data)
+                    df_tmp = pd.DataFrame(data)
+                    
+                    # 🔥 [핵심] 중복 열 이름 방어 로직
+                    # 구글 시트 열 이름에 공백이 있거나 중복이 있으면 에러가 나므로 정리합니다.
+                    new_cols = []
+                    for i, col in enumerate(df_tmp.columns):
+                        col_name = str(col).strip() # 앞뒤 공백 제거
+                        if col_name in new_cols or col_name == "":
+                            new_cols.append(f"{col_name}_{i}") # 중복이면 번호 붙이기
+                        else:
+                            new_cols.append(col_name)
+                    df_tmp.columns = new_cols
+                    
+                    st.session_state.df_raw = df_tmp.copy()
                     st.session_state.analyzed = False
-                    st.success(f"✅ {len(st.session_state.df_raw)}개 항목 로드 완료!")
+                    st.success(f"✅ {len(df_tmp)}개 항목 로드 완료!")
                     st.rerun()
                 else:
-                    st.warning("⚠️ 시트 내용이 비어있습니다. (첫 줄 헤더 확인 필요)")
+                    st.warning("⚠️ 시트 내용이 비어있습니다. 첫 줄에 제목(헤더)이 있는지 확인해 주세요.")
             except Exception as e:
-                st.error(f"❌ 시트 읽기 오류: {e}")
+                st.error(f"❌ 데이터를 읽는 중 오류 발생: {e}")
         else:
-            st.error("❌ 시트 연결 실패! (Secrets 설정 또는 공유 권한 확인)")
-
+            st.error("❌ 시트 연결 실패! 구글 시트 '공유' 설정에 서비스 계정 이메일이 있는지 확인해 주세요.")
+            
     if uploaded_file:
         if 'df_raw' not in st.session_state or st.session_state.get('last_fn') != uploaded_file.name:
             df_new = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
