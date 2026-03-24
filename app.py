@@ -237,18 +237,18 @@ with tab1:
         st.divider()
         st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
         
-        # 1. 데이터 복사 및 세션 초기화
+        # 1. 데이터 복사 및 세션 초기화 (수치 보존용)
         df_work = st.session_state.df_raw.copy()
         if "리오더입고수량" not in st.session_state.df_raw.columns:
             st.session_state.df_raw["리오더입고수량"] = 0
 
-        # 2. 필터 및 검색 UI (화면 상단 고정)
+        # 2. 상단 필터 및 검색 UI
         f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
-        search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4_input")
+        search_q = f_c1.text_input("🔍 상품명 검색 (엔터)", key="search_v4_input")
         filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_v4_select")
         hist_date_4 = f_c3.date_input("🗓️ 입고 기록 확인 날짜", datetime.now(), key="date_v4_input")
 
-        # 3. 과거 입고 기록 매핑 로직 (기존 로직 복구)
+        # 3. 고유 키 생성 및 과거 입고 기록 매핑
         def simple_key(n): return str(n).strip().replace(" ", "").upper() if not pd.isna(n) else ""
         df_work['unique_key'] = df_work[item].apply(simple_key) + df_work[option].apply(simple_key)
         
@@ -266,40 +266,70 @@ with tab1:
                     df_work['과거 리오더입고'] = df_work['unique_key'].map(in_map).fillna(0).astype(int)
             except: pass
 
-        # 4. 판매량 및 발주량 계산
+        # 4. 판매량 및 권장발주량 실시간 계산
         v7 = safe_num(df_work[t7day]); v3 = safe_num(df_work[t3day])
         df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
         df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (safe_num(df_work[avail]) + safe_num(df_work['리오더 수량']))).clip(lower=0).astype(int)
 
-        # 5. 필터 적용
+        # 5. 검색 및 품절 필터 적용
         if filter_m == "정상만": df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
         elif filter_m == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
         if search_q: df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
 
+        # 보여줄 컬럼 설정
         valid_cols = [sold_out, vendor, v_item, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량"]
 
-        # 💡 [화면 고정 핵심] 폼을 사용하여 입력 중 상단 이동 차단
+        # 💡 [핵심] st.form을 사용하여 입력 중 화면 튐 방지
         with st.form("form_step_4"):
+            # 에디터 배치
             edited_v4 = st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4_final", hide_index=True)
-            submit_v4 = st.form_submit_button("💾 4단계 변경사항 저장 (수정 후 반드시 클릭)", use_container_width=True)
+            
+            # 저장 버튼
+            submit_v4 = st.form_submit_button("💾 4단계 변경사항 저장 (입고 차감 반영)", use_container_width=True, type="primary")
             
             if submit_v4:
+                # 수정된 데이터 추출
                 edits = edited_v4.get("edited_rows", {})
-                for r_idx_str, change in edits.items():
-                    orig_idx = df_work.index[int(r_idx_str)]
-                    if "리오더 수량" in change:
-                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
-                    if "리오더입고수량" in change:
-                        new_in = int(change["리오더입고수량"])
-                        old_in = st.session_state.df_raw.at[orig_idx, "리오더입고수량"]
-                        if new_in > old_in:
-                            diff = new_in - old_in
-                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, int(st.session_state.df_raw.at[orig_idx, "리오더 수량"]) - diff)
-                            save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], diff]], columns=['상품명', '옵션', '수량']), log_type="입고")
-                        st.session_state.df_raw.at[orig_idx, "리오더입고수량"] = new_in
-                save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
-                st.success("✅ 4단계 저장 완료!")
-                st.rerun()
+                
+                if not edits:
+                    st.info("수정된 내용이 없습니다.")
+                else:
+                    for r_idx_str, change in edits.items():
+                        # 💡 [필독] 현재 필터링된 행의 위치를 통해 원본(df_raw)의 실제 인덱스를 찾음
+                        orig_idx = df_work.index[int(r_idx_str)]
+                        
+                        # A. 리오더 수량 직접 수정 시
+                        if "리오더 수량" in change:
+                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
+                        
+                        # B. 리오더입고수량 입력 시 -> 리오더 수량 차감 로직
+                        if "리오더입고수량" in change:
+                            new_in = int(change["리오더입고수량"])
+                            old_in = st.session_state.df_raw.at[orig_idx, "리오더입고수량"]
+                            
+                            # 기존 입력값보다 큰 숫자가 들어왔을 때만 차이만큼 뺌
+                            if new_in > old_in:
+                                diff = new_in - old_in
+                                current_re = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
+                                
+                                # 💡 실제 차감 실행
+                                st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_re - diff)
+                                
+                                # 입고 히스토리 저장용 데이터프레임 생성
+                                log_df = pd.DataFrame([[
+                                    st.session_state.df_raw.at[orig_idx, item], 
+                                    st.session_state.df_raw.at[orig_idx, option], 
+                                    diff
+                                ]], columns=['상품명', '옵션', '수량'])
+                                save_history_to_gsheet(log_df, log_type="입고")
+                            
+                            # 세션의 입고수량 업데이트
+                            st.session_state.df_raw.at[orig_idx, "리오더입고수량"] = new_in
+
+                    # 구글 시트에 최종 리오더 수량 동기화
+                    save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
+                    st.success("✅ 저장 및 입고 차감이 완료되었습니다!")
+                    st.rerun() # 변경된 숫자를 화면에 갱신
 
         # --- [5단계: 최종 발주 리스트 요약] ---
         st.divider()
