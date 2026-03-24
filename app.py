@@ -403,36 +403,45 @@ if not df_display_5.empty:
     csv_final = df_display_5[actual_cols_5].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
     b2.download_button(label="📥 엑셀 다운로드", data=csv_final, file_name=f"발주서_{datetime.now(KST).strftime('%m%d_%H%M')}.csv", use_container_width=True)
         
-# --- [6단계: 전체 히스토리 내역 - 달력 및 검색창 복구] ---
+# --- [6단계: 데이터 강제 출력 버전] ---
 st.divider()
 st.subheader("📜 6단계: 전체 히스토리 내역")
 
-# 1. 히스토리 데이터 로드
 df_hist_raw = load_history_from_gsheet()
+
+# 💡 [디버깅] 데이터가 들어오긴 하는지 숫자로 확인
+if df_hist_raw is not None:
+    st.caption(f"📢 시스템 확인: 구글 시트에서 총 {len(df_hist_raw)}건의 기록을 발견했습니다.")
+else:
+    st.error("🚨 시스템 확인: 구글 시트 연결 실패 또는 데이터 없음")
 
 if df_hist_raw is not None and not df_hist_raw.empty:
     df_hist = df_hist_raw.copy()
     
-    # 2. 📅 [복구] 상단 UI (달력 창)
+    # UI (달력 및 검색)
     h_c1, h_c2 = st.columns([1, 2])
-    h_date = h_c1.date_input("🗓️ 조회 날짜 선택", datetime.now(KST).date(), key="h_date_v6_final")
-    h_search = h_c2.text_input("🔍 상품명 검색", key="h_search_v6_final")
+    h_date = h_c1.date_input("🗓️ 조회 날짜 선택", datetime.now(KST).date(), key="h_date_debug")
+    h_search = h_c2.text_input("🔍 상품명 검색", key="h_search_debug")
 
-    # 3. 날짜 필터링
+    # 💡 [핵심] 날짜 필터링을 잠시 풀고 "전체 보기" 체크박스 추가
+    show_all = st.checkbox("날짜 상관없이 전체 기록 보기")
+
     if '저장시간' in df_hist.columns:
         df_hist['날짜_추출'] = pd.to_datetime(df_hist['저장시간'], errors='coerce').dt.date
-        df_filtered = df_hist[df_hist['날짜_추출'] == h_date].copy()
         
-        if h_search:
-            df_filtered = df_filtered[df_filtered['상품명'].astype(str).str.contains(h_search, case=False, na=False)]
-        
-        if not df_filtered.empty:
-            view_cols = ["저장시간", "상품명", "옵션", "가용재고", "리오더수량", "추가발주수량", "권장발주량"]
-            st.dataframe(df_filtered.rename(columns={'리오더수량_저장':'리오더수량','추가발주수량_저장':'추가발주수량','권장발주량_저장':'권장발주량'}), use_container_width=True, hide_index=True)
+        if show_all:
+            df_filtered = df_hist # 체크하면 필터링 안 함
         else:
-            st.info(f"📅 {h_date} 날짜에는 기록이 없습니다. (전체 기록: {len(df_hist)}건)")
+            df_filtered = df_hist[df_hist['날짜_추출'] == h_date].copy()
+            
+        if not df_filtered.empty:
+            # 리오더수량_저장 등 컬럼명이 다를 수 있으니 있는 것만 출력
+            st.dataframe(df_filtered, use_container_width=True, hide_index=True)
+        else:
+            st.warning(f"선택하신 {h_date}에 기록이 없습니다. '전체 기록 보기'를 눌러보세요.")
 else:
-    st.warning("📡 저장된 기록이 없습니다.")
+    st.warning("📡 구글 시트에 저장된 기록이 하나도 없습니다.")
+
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
