@@ -277,7 +277,7 @@ with tab1:
 
         valid_cols = [sold_out, vendor, v_item, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량"]
         
-        # 💡 [핵심] 실시간 저장 및 수치 유지 로직
+        # 💡 [핵심] 실시간 저장 및 수치 유지 로직 (st.rerun 제거 버전)
         def on_edit_4():
             changes = st.session_state["editor_v4"]["edited_rows"]
             for r_idx_str, change in changes.items():
@@ -293,15 +293,13 @@ with tab1:
                     if new_in_qty > old_in_qty:
                         diff = new_in_qty - old_in_qty
                         curr_reorder = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
-                        # 리오더 수량 차감 및 기록
                         st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr_reorder - diff)
                         save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], diff]], columns=['상품명', '옵션', '수량']), log_type="입고")
                     
-                    # 수치값을 0으로 만들지 않고 그대로 저장
                     st.session_state.df_raw.at[orig_idx, "리오더입고수량"] = new_in_qty
 
             save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
-            st.rerun()
+            # ✅ st.rerun()을 삭제했습니다. 스트림릿이 알아서 새로고침합니다.
 
         st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4", on_change=on_edit_4, hide_index=True)
 
