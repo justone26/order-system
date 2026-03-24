@@ -122,12 +122,12 @@ with tab1:
             st.session_state.last_filename = uploaded_file.name
             st.rerun()
 
-  if st.session_state.get('df_raw') is not None:
+    if st.session_state.get('df_raw') is not None:
         df_curr = st.session_state.df_raw
         cols = df_curr.columns.tolist()
-
+        
+        # 사장님 요청: 매핑 설정 양쪽 5개씩 정렬
         st.subheader("⚙️ 매핑 설정")
-        # 왼쪽 5개, 오른쪽 5개로 정렬
         col_left, col_right = st.columns(2)
         
         with col_left:
@@ -151,7 +151,7 @@ with tab1:
         if st.button("📊 분석 실행", width='stretch'):
             st.session_state.analyzed = True
             st.rerun()
-
+            
     if st.session_state.get('analyzed'):
         st.divider()
         df_all = st.session_state.df_raw.copy()
