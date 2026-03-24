@@ -125,19 +125,24 @@ with tab1:
     if st.session_state.get('df_raw') is not None:
         df_curr = st.session_state.df_raw
         cols = df_curr.columns.tolist()
-        st.subheader("⚙️ 매핑 설정")
-        c1, c2, c3 = st.columns(3)
-        sold_out = c1.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
-        vendor = c1.selectbox("공급처", cols, index=find_idx(cols, ['공급처']))
-        v_item = c1.selectbox("공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
-        item = c2.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
-        option = c2.selectbox("옵션", cols, index=find_idx(cols, ['옵션']))
-        reg_date = c2.selectbox("등록일", cols, index=find_idx(cols, ['등록일']))
-        stock = c3.selectbox("정상재고", cols, index=find_idx(cols, ['정상재고']))
-        avail = c3.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
-        t3day = c3.selectbox("3일 발주", cols, index=find_idx(cols, ['3일']))
-        t7day = c3.selectbox("7일 발주", cols, index=find_idx(cols, ['7일', '1주']))
+       st.subheader("⚙️ 매핑 설정")
+        # 왼쪽 5개, 오른쪽 5개로 정렬
+        col_left, col_right = st.columns(2)
+        
+        with col_left:
+            sold_out = st.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
+            vendor = st.selectbox("공급처", cols, index=find_idx(cols, ['공급처']))
+            v_item = st.selectbox("공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
+            item = st.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
+            option = st.selectbox("옵션", cols, index=find_idx(cols, ['옵션']))
 
+        with col_right:
+            reg_date = st.selectbox("등록일", cols, index=find_idx(cols, ['등록일']))
+            stock = st.selectbox("정상재고", cols, index=find_idx(cols, ['정상재고']))
+            avail = st.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
+            t3day = st.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
+            t7day = st.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
+            
         st.subheader("🚀 분석 설정")
         l1, l2 = st.columns(2)
         lt = l1.number_input("리드타임 (일)", value=10)
