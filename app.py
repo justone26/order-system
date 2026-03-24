@@ -125,9 +125,9 @@ with tab1:
         df_curr = st.session_state.df_raw
         cols = df_curr.columns.tolist()
 
-        # --- 1단계: 매핑 설정 ---
-        st.subheader("⚙️ 1단계: 매핑 설정")
-        c1, c2 = st.columns(2)
+
+        st.subheader("⚙️ 매핑 설정")
+              c1, c2 = st.columns(2)
         sold_out = c1.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
         vendor = c1.selectbox("공급처", cols, index=find_idx(cols, ['공급처']))
         item = c1.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
