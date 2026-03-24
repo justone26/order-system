@@ -6,15 +6,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 import time
 
 # --- [1. 기본 설정 및 함수] ---
-def get_sheet():
-    try:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        return client.open_by_key("1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg")
-    except: return None
-
 def find_idx(cols, keywords):
     for k in keywords:
         for i, c in enumerate(cols):
@@ -30,7 +21,7 @@ st.title("🏭 저스트원 통합 재고 관리 시스템")
 
 # --- [3. 1단계: 데이터 로드] ---
 st.subheader("📂 1단계: 데이터 불러오기")
-up_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'], key="main_up")
+up_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'], key="main_up_v3")
 
 if up_file:
     if st.session_state.get('last_fn') != up_file.name:
@@ -48,18 +39,19 @@ if st.session_state.get('df_raw') is not None:
     st.subheader("⚙️ 2단계: 매핑 설정")
     c_l, c_r = st.columns(2)
     with c_l:
-        sold_out = st.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
-        vendor = st.selectbox("공급처", cols, index=find_idx(cols, ['공급처']))
-        v_item = st.selectbox("공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
-        item = st.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
-        option = st.selectbox("옵션", cols, index=find_idx(cols, ['옵션']))
+        sold_out = st.selectbox("1. 품절 여부", cols, index=find_idx(cols, ['품절']))
+        vendor = st.selectbox("2. 공급처", cols, index=find_idx(cols, ['공급처']))
+        v_item = st.selectbox("3. 공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
+        item = st.selectbox("4. 상품명", cols, index=find_idx(cols, ['상품명']))
+        option = st.selectbox("5. 옵션", cols, index=find_idx(cols, ['옵션']))
     with c_r:
-        reg_date = st.selectbox("등록일", cols, index=find_idx(cols, ['등록일']))
-        stock = st.selectbox("정상재고", cols, index=find_idx(cols, ['정상재고']))
-        avail = st.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
-        t3day = st.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
-        t7day = st.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
+        reg_date = st.selectbox("6. 등록일", cols, index=find_idx(cols, ['등록일']))
+        stock = st.selectbox("7. 정상재고", cols, index=find_idx(cols, ['정상재고']))
+        avail = st.selectbox("8. 가용재고", cols, index=find_idx(cols, ['가용재고']))
+        t3day = st.selectbox("9. 3일 발주합계", cols, index=find_idx(cols, ['3일']))
+        t7day = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
+    st.write("---")
     lt = st.number_input("리드타임 (일)", value=7)
     ss = st.number_input("안전재고 (일 수)", value=3)
     
@@ -67,31 +59,41 @@ if st.session_state.get('df_raw') is not None:
         st.session_state.analyzed = True
         st.rerun()
 
-    # --- [5. 3단계: 분석 및 계산 (에러 발생 구간 방어)] ---
+    # --- [5. 3단계: 분석 및 계산 (에러 발생 구간 - IF문 안으로 수납)] ---
     if st.session_state.get('analyzed'):
         st.divider()
         st.subheader("📊 3단계: 분석 결과")
         
-        # 여기서부터 변수들을 사용해야 NameError가 안 납니다.
+        # 데이터 복사
         df_work = st.session_state.df_raw.copy()
         
-        # 숫자 변환
-        num_targets = [stock, avail, t3day, t7day]
+        # 리오더 수량 초기화 (없으면 생성)
+        if "리오더 수량" not in df_work.columns:
+            df_work["리오더 수량"] = 0
+
+        # ★ 에러가 났던 구간: 모든 변수 사용 로직은 반드시 이 IF문 안에 있어야 합니다. ★
+        # 숫자 데이터 변환
+        num_targets = [stock, avail, t3day, t7day, "리오더 수량"]
         for c in num_targets:
             df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
         
-        # 리오더 수량 처리
-        if "리오더 수량" not in df_work.columns:
-            df_work["리오더 수량"] = 0
-        else:
-            df_work["리오더 수량"] = pd.to_numeric(df_work["리오더 수량"], errors='coerce').fillna(0).astype(int)
-
-        # 에러가 났던 Line 104 계산 로직
+        # 97번 줄 에러 방지용 계산 로직
         df_work['일판매량'] = (df_work[t7day] / 7).round(1)
         df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
         
-        # 결과 출력
-        st.data_editor(df_work, use_container_width=True, hide_index=True)
+        # 상태 표시
+        def get_status(r):
+            total = r[avail] + r['리오더 수량']
+            if r['일판매량'] > 0:
+                if total < (r['일판매량'] * 3): return "🚨 긴급"
+                if total < (r['일판매량'] * 5): return "⚠️ 주의"
+            return "✅ 정상"
+        
+        df_work['상태'] = df_work.apply(get_status, axis=1)
+        
+        # 결과 출력 (필요한 컬럼만 깔끔하게)
+        disp_cols = ["상태", item, option, vendor, stock, avail, "리오더 수량", "일판매량", "권장발주량"]
+        st.data_editor(df_work[disp_cols], use_container_width=True, hide_index=True)
 
 # 2. [계산식] 일판매량 반올림 및 권장발주량
 v7 = df_work[t7day]
