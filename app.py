@@ -347,7 +347,8 @@ if st.session_state.get('analyzed'):
 # --- [6단계: 기록 통합 조회 - KeyError 방어 강화] ---
         st.divider()
         st.subheader("📜 6단계: 제작 상품 입고 및 발주 히스토리")
-        
+        past_hist = load_history_from_gsheet() 
+    
         c6_1, c6_2 = st.columns(2)
         start_d = c6_1.date_input("📅 조회 시작일", datetime.now() - timedelta(days=7), key="s_date_v6")
         end_d = c6_2.date_input("📅 조회 종료일", datetime.now(), key="e_date_v6")
