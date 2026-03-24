@@ -85,6 +85,7 @@ if 'analyzed' not in st.session_state:
 tab1, tab2 = st.tabs(["📊 제작 상품 관리", "📜 히스토리 조회"])
 
 with tab1:
+    # --- 0단계: 업로드 및 6단계(데이터 로드) ---
     c_up1, c_up2 = st.columns([3, 1])
     uploaded_file = c_up1.file_uploader("엑셀 파일을 올려주세요", type=['xlsx', 'xls', 'csv'])
     
@@ -94,11 +95,11 @@ with tab1:
             gs_df = pd.DataFrame(sheet.get_all_records())
             if not gs_df.empty:
                 st.session_state.df_raw = gs_df.rename(columns={'상품명': '기존상품명', '옵션': '기존옵션'})
-                st.success("데이터 로드 완료")
+                st.success("이전 리오더 데이터를 불러왔습니다.")
             else:
-                st.warning("데이터 없음")
+                st.warning("데이터가 비어있습니다.")
         except:
-            st.error("연결 오류")
+            st.error("연결 실패")
 
     if uploaded_file:
         if 'df_raw' not in st.session_state or st.session_state.get('last_filename') != uploaded_file.name:
