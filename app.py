@@ -237,99 +237,84 @@ with tab1:
         st.divider()
         st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
         
-        # 1. 데이터 복사 및 세션 초기화 (수치 보존용)
+        # 1. 원본 데이터 세션 초기화
+        if "df_raw" not in st.session_state:
+            st.error("데이터가 로드되지 않았습니다. 1단계부터 진행해주세요.")
+            st.stop()
+
+        # 화면 표시용 복사본 (필터링용)
         df_work = st.session_state.df_raw.copy()
+        
+        # 리오더입고수량 컬럼 없으면 생성
         if "리오더입고수량" not in st.session_state.df_raw.columns:
             st.session_state.df_raw["리오더입고수량"] = 0
 
-        # 2. 상단 필터 및 검색 UI
+        # 2. 필터 UI
         f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
-        search_q = f_c1.text_input("🔍 상품명 검색 (엔터)", key="search_v4_input")
+        search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4_input")
         filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_v4_select")
-        hist_date_4 = f_c3.date_input("🗓️ 입고 기록 확인 날짜", datetime.now(), key="date_v4_input")
+        hist_date_4 = f_c3.date_input("🗓️ 입고 기록 날짜", datetime.now(), key="date_v4_input")
 
-        # 3. 고유 키 생성 및 과거 입고 기록 매핑
-        def simple_key(n): return str(n).strip().replace(" ", "").upper() if not pd.isna(n) else ""
-        df_work['unique_key'] = df_work[item].apply(simple_key) + df_work[option].apply(simple_key)
-        
-        past_hist = load_history_from_gsheet()
-        df_work['과거 리오더입고'] = 0
-        df_work['리오더입고수량'] = st.session_state.df_raw['리오더입고수량']
-        
-        if not past_hist.empty and '저장시간' in past_hist.columns:
-            try:
-                past_hist['날짜_only'] = pd.to_datetime(past_hist['저장시간']).dt.date
-                t_hist = past_hist[(past_hist['날짜_only'] == hist_date_4) & (past_hist['구분'] == "입고")].copy()
-                if not t_hist.empty:
-                    t_hist['k_tmp'] = t_hist['상품명'].apply(simple_key) + t_hist['옵션'].apply(simple_key)
-                    in_map = t_hist.groupby('k_tmp')['수량'].sum().to_dict()
-                    df_work['과거 리오더입고'] = df_work['unique_key'].map(in_map).fillna(0).astype(int)
-            except: pass
-
-        # 4. 판매량 및 권장발주량 실시간 계산
+        # 3. 계산 로직 (판매량 등)
         v7 = safe_num(df_work[t7day]); v3 = safe_num(df_work[t3day])
         df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
         df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (safe_num(df_work[avail]) + safe_num(df_work['리오더 수량']))).clip(lower=0).astype(int)
 
-        # 5. 검색 및 품절 필터 적용
+        # 필터 적용
         if filter_m == "정상만": df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
         elif filter_m == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
         if search_q: df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
 
-        # 보여줄 컬럼 설정
-        valid_cols = [sold_out, vendor, v_item, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량"]
+        valid_cols = [sold_out, vendor, v_item, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", "일판매량", "권장발주량"]
+        actual_display_cols = [c for c in valid_cols if c in df_work.columns]
 
-        # 💡 [핵심] st.form을 사용하여 입력 중 화면 튐 방지
-        with st.form("form_step_4"):
-            # 에디터 배치
-            edited_v4 = st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4_final", hide_index=True)
+        # 💡 [화면 고정 울타리]
+        with st.form("form_step_4_final"):
+            # 에디터 - 수정된 값은 st.session_state["editor_v4_final"]에 임시 저장됨
+            edited_v4 = st.data_editor(df_work[actual_display_cols], use_container_width=True, key="editor_v4_final", hide_index=True)
             
             # 저장 버튼
-            submit_v4 = st.form_submit_button("💾 4단계 변경사항 저장 (입고 차감 반영)", use_container_width=True, type="primary")
+            submit_v4 = st.form_submit_button("💾 4단계 변경사항 저장 (클릭 시 화면 갱신)", use_container_width=True, type="primary")
             
             if submit_v4:
-                # 수정된 데이터 추출
-                edits = edited_v4.get("edited_rows", {})
+                # 💡 [저장 로직 시작]
+                edits = st.session_state["editor_v4_final"].get("edited_rows", {})
                 
-                if not edits:
-                    st.info("수정된 내용이 없습니다.")
-                else:
+                if edits:
                     for r_idx_str, change in edits.items():
-                        # 💡 [필독] 현재 필터링된 행의 위치를 통해 원본(df_raw)의 실제 인덱스를 찾음
+                        # 화면상 인덱스를 원본 데이터의 인덱스로 변환
                         orig_idx = df_work.index[int(r_idx_str)]
                         
-                        # A. 리오더 수량 직접 수정 시
+                        # A. 리오더 수량 직접 수정
                         if "리오더 수량" in change:
                             st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
                         
-                        # B. 리오더입고수량 입력 시 -> 리오더 수량 차감 로직
+                        # B. 리오더 입고 시 차감 로직
                         if "리오더입고수량" in change:
                             new_in = int(change["리오더입고수량"])
                             old_in = st.session_state.df_raw.at[orig_idx, "리오더입고수량"]
                             
-                            # 기존 입력값보다 큰 숫자가 들어왔을 때만 차이만큼 뺌
                             if new_in > old_in:
                                 diff = new_in - old_in
                                 current_re = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
-                                
-                                # 💡 실제 차감 실행
+                                # 리오더 수량에서 뺀 값을 원본에 저장
                                 st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_re - diff)
                                 
-                                # 입고 히스토리 저장용 데이터프레임 생성
-                                log_df = pd.DataFrame([[
-                                    st.session_state.df_raw.at[orig_idx, item], 
-                                    st.session_state.df_raw.at[orig_idx, option], 
-                                    diff
-                                ]], columns=['상품명', '옵션', '수량'])
+                                # 히스토리 기록
+                                log_df = pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], diff]], columns=['상품명', '옵션', '수량'])
                                 save_history_to_gsheet(log_df, log_type="입고")
                             
-                            # 세션의 입고수량 업데이트
+                            # 입고수량 업데이트
                             st.session_state.df_raw.at[orig_idx, "리오더입고수량"] = new_in
-
-                    # 구글 시트에 최종 리오더 수량 동기화
+                    
+                    # 모든 수정이 끝난 후 구글 시트 파일 저장
                     save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
-                    st.success("✅ 저장 및 입고 차감이 완료되었습니다!")
-                    st.rerun() # 변경된 숫자를 화면에 갱신
+                    
+                    st.success("✅ 저장이 완료되었습니다. 화면을 갱신합니다.")
+                    # 💡 [필살기] 강제로 전체 페이지를 다시 읽어서 바뀐 숫자를 보여줌
+                    st.rerun()
+                else:
+                    st.info("수정된 데이터가 없습니다.")
 
         # --- [5단계: 최종 발주 리스트 요약] ---
         st.divider()
