@@ -321,27 +321,29 @@ with tab1:
                     st.success("✅ 저장 완료! 리오더 수량이 갱신되고 입고수량은 초기화되었습니다.")
                     st.rerun()
                     
-# --- [5단계: 최종 발주 리스트 요약 - 기능 풀세트] ---
+# --- [5단계: 최종 발주 리스트 요약 - 모든 로직 포함] ---
         st.divider()
         st.subheader("📋 5단계: 최종 발주 리스트 요약")
         
-        # 1. 데이터 및 세션 초기화 (4단계 결과 동기화)
+        # 1. [누락방지] 데이터 동기화 및 세션 관리
         if 'add_order_dict' not in st.session_state: 
             st.session_state.add_order_dict = {}
 
+        # 4단계에서 입고 처리가 반영된 최신 df_raw를 가져옵니다.
         to_order = st.session_state.df_raw.copy()
         
-        # 추가발주수량 매핑
+        # 사장님이 입력하신 추가발주수량 매핑
         to_order['추가발주수량'] = to_order.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
         
-        # 2. [핵심 로직] 실시간 상태 및 권장발주량 계산
+        # 2. [핵심 로직] 판매량 분석 및 실시간 상태 판별
+        # safe_num으로 에러 방지하며 판매량 계산
         v7_f = safe_num(to_order[t7day]); v3_f = safe_num(to_order[t3day])
         to_order['일판매량'] = (v7_f / 7 if v7_f.sum() > 0 else v3_f / 3).round(0).astype(int)
         
-        # 권장발주량 계산
+        # 권장발주량 = (일판매량 * (리드타임+안전재고)) - (가용재고 + 리오더수량)
         to_order['권장발주량'] = ((to_order['일판매량'] * (lt + ss)) - (safe_num(to_order[avail]) + safe_num(to_order['리오더 수량']))).clip(lower=0).astype(int)
         
-        # 재고 상태 판별 함수
+        # 재고 상태 판별 (사진 속 🚨긴급/⚠️주의 등)
         def get_final_status(r):
             ts = safe_num(r[avail]) + safe_num(r['리오더 수량'])
             daily = r['일판매량']
@@ -353,13 +355,13 @@ with tab1:
         to_order['상태'] = to_order.apply(get_final_status, axis=1)
         to_order = to_order.sort_values(by='상태')
 
-        # 3. [UI] 사장님 사진 속 3단 구성 (상태필터/검색/날짜)
+        # 3. [UI] 사장님 사진 속 3단 구성 (상태필터 | 상품명 검색 | 기록 확인 날짜)
         c5_1, c5_2, c5_3 = st.columns([1.5, 1.5, 1])
-        s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 전체보기"], index=0, key="v5_final_filter")
-        search_q_v5 = c5_2.text_input("🔍 상품명 검색", key="v5_final_search")
-        hist_date_5 = c5_3.date_input("🗓️ 기록 확인 날짜", datetime.now(), key="v5_final_date")
+        s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 전체보기"], index=0, key="v5_filter_complete")
+        search_q_v5 = c5_2.text_input("🔍 상품명 검색", key="v5_search_complete")
+        hist_date_5 = c5_3.date_input("🗓️ 기록 확인 날짜", datetime.now(), key="v5_date_complete")
         
-        # 필터링 적용
+        # 필터링 및 검색 적용
         if s_filter == "🚨긴급 + ⚠️주의 우선": 
             to_order = to_order[to_order['상태'].isin(["🚨 긴급", "⚠️ 주의"]) | (to_order['권장발주량'] > 0)]
         elif s_filter == "🚨 긴급만 보기": 
@@ -368,93 +370,82 @@ with tab1:
         if search_q_v5:
             to_order = to_order[to_order[item].astype(str).str.contains(search_q_v5, case=False, na=False)]
 
-        # 4. 표시 컬럼 및 에디터 폼
+        # 4. 표시 컬럼 설정 및 데이터 에디터
+        # 사장님 요청에 맞춰 '공급쳐 상품명' 칸을 포함하도록 구성
         disp_final = ["상태", item, option, vendor, avail, "리오더 수량", "추가발주수량", "권장발주량"]
         actual_cols = [col for col in disp_final if col in to_order.columns]
 
-        with st.form("form_step_5_complete"):
-            edited_v5 = st.data_editor(to_order[actual_cols], use_container_width=True, key="editor_v5_complete", hide_index=True)
+        with st.form("form_step_5_complete_v2"):
+            edited_v5 = st.data_editor(to_order[actual_cols], use_container_width=True, key="editor_v5_complete_v2", hide_index=True)
             submit_v5 = st.form_submit_button("✅ 추가발주수량 확정 및 화면 갱신", use_container_width=True, type="primary")
             
             if submit_v5:
-                edits_v5 = st.session_state["editor_v5_complete"].get("edited_rows", {})
+                # 변경된 수량 저장
+                edits_v5 = st.session_state["editor_v5_complete_v2"].get("edited_rows", {})
                 if edits_v5:
                     for r_idx_str, change in edits_v5.items():
                         orig_idx = to_order.index[int(r_idx_str)]
                         if "추가발주수량" in change:
                             st.session_state.add_order_dict[orig_idx] = int(change["추가발주수량"])
-                    st.success("✅ 수치가 반영되었습니다.")
+                    st.success("✅ 추가 발주 수량이 시스템에 반영되었습니다.")
                     st.rerun()
 
         st.write("---")
         b1, b2 = st.columns(2)
         
-        # 5. [핵심 저장] 6단계와 칸을 맞추기 위한 정밀 저장 로직
-        if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-            # 최종 발주량 = 권장 + 추가
+        # 5. [저장 로직] 6단계에서 '공급쳐 상품명' 칸에 정확히 나오도록 저장
+        if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, key="final_save_btn_v5"):
+            # 최종 발주량 합산
             to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
             order_final = to_order[to_order['최종발주량'] > 0].copy()
             
             if not order_final.empty:
-                # 🎯 6단계 표의 빈칸을 채우기 위해 더미 데이터 생성
-                order_final['공급처상품명'] = "" 
+                # 🎯 6단계 표 제목과 일치하도록 컬럼명 생성 ('공급쳐 상품명' 수정 반영)
+                order_final['공급쳐 상품명'] = "" 
                 order_final['추가 리오더'] = order_final['추가발주수량'] 
                 order_final['권장 발주량'] = order_final['권장발주량']   
                 
-                # 저장 순서 (매우 중요): 상품명, 옵션, 공급처상품명, 최종발주량(수량), 추가 리오더, 권장 발주량
-                save_data = order_final[[item, option, '공급처상품명', '최종발주량', '추가 리오더', '권장 발주량']]
+                # 저장 순서 고정: 상품명, 옵션, 공급쳐 상품명, 최종발주량(수량), 추가 리오더, 권장 발주량
+                save_data = order_final[[item, option, '공급쳐 상품명', '최종발주량', '추가 리오더', '권장 발주량']]
                 
                 if save_history_to_gsheet(save_data, log_type="발주"):
-                    st.success("✅ [발주/추가/권장] 모든 데이터가 정확한 칸에 저장되었습니다!")
+                    st.success("✅ 모든 데이터가 '공급쳐 상품명' 칸을 포함하여 안전하게 저장되었습니다.")
                     st.rerun()
             else:
-                st.warning("발주할 항목이 없습니다.")
+                st.warning("발주 수량이 입력된 항목이 없습니다.")
 
-        # CSV 다운로드
+        # 현재 표 엑셀 다운로드
         csv_data = to_order[actual_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        b2.download_button("📥 현재 리스트 엑셀(CSV) 다운로드", csv_data, f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+        b2.download_button("📥 현재 리스트 엑셀(CSV) 다운로드", csv_data, file_name=f"발주_리스트_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
         
-# --- [6단계: 제작 상품 입고 및 발주 히스토리] ---
-        st.divider()
-        st.subheader("📜 6단계: 제작 상품 입고 및 발주 히스토리")
-
-        col_h1, col_h2 = st.columns(2)
-        start_date = col_h1.date_input("시작 날짜", datetime.now(), key="h_start_all")
-        end_date = col_h2.date_input("종료 날짜", datetime.now(), key="h_end_all")
-
+# --- [6단계: 히스토리 조회 - 공급쳐 상품명 대응] ---
         if st.button("🔍 히스토리 조회하기", use_container_width=True, type="secondary"):
             raw_h = load_history_from_gsheet()
-            
             if not raw_h.empty:
                 raw_h['저장시간'] = pd.to_datetime(raw_h['저장시간'], errors='coerce')
                 raw_h['pure_date'] = raw_h['저장시간'].dt.date
                 f_df = raw_h[(raw_h['pure_date'] >= start_date) & (raw_h['pure_date'] <= end_date)].copy()
 
                 if not f_df.empty:
-                    # 💡 시트 컬럼명 -> 표 제목으로 매칭
+                    # 데이터 이름 매칭
                     if '최종발주량' in f_df.columns: f_df['리오더 수량'] = f_df['최종발주량']
                     elif '수량' in f_df.columns: f_df['리오더 수량'] = f_df['수량']
                     
-                    # 없는 칸은 0이나 빈칸으로 보충
-                    for col in ['추가 리오더', '권장 발주량', '공급처상품명']:
+                    # 🎯 '공급쳐 상품명' 등 누락된 칸 보충
+                    for col in ['공급쳐 상품명', '추가 리오더', '권장 발주량']:
                         if col not in f_df.columns: f_df[col] = 0 if '량' in col else ""
 
-                    # 🎯 사진과 100% 동일한 순서 고정
-                    final_order = ['저장시간', '구분', '상품명', '옵션', '공급처상품명', '리오더 수량', '추가 리오더', '권장 발주량']
+                    # 순서 고정
+                    final_order = ['저장시간', '구분', '상품명', '옵션', '공급쳐 상품명', '리오더 수량', '추가 리오더', '권장 발주량']
                     actual_view = [c for c in final_order if c in f_df.columns]
                     show_df = f_df[actual_view].sort_values(by='저장시간', ascending=False)
 
-                    st.success(f"✅ 총 {len(show_df)}건의 기록을 성공적으로 불러왔습니다.")
+                    st.success("✅ 조회가 완료되었습니다.")
                     st.dataframe(show_df, use_container_width=True, hide_index=True)
                     
-                    # 엑셀 다운로드
                     csv_res = show_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button("📥 조회 결과 엑셀 다운로드", csv_res, f"히스토리_조회.csv", use_container_width=True)
-                else:
-                    st.warning("선택한 날짜에 저장된 기록이 없습니다.")
-            else:
-                st.error("불러올 수 있는 히스토리가 없습니다.")
-
+                    st.download_button("📥 엑셀 다운로드", csv_res, f"히스토리.csv", use_container_width=True)
+                    
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
