@@ -22,11 +22,14 @@ def get_sheet():
 
 def load_history_from_gsheet():
     try:
-        spreadsheet = get_sheet()
-        hist_sheet = spreadsheet.worksheet("history")
-        data = hist_sheet.get_all_records()
-        return pd.DataFrame(data)
-    except: return pd.DataFrame()
+        # worksheet 이름을 실제 사장님 구글 시트 탭 이름("발주기록")으로 정확히 맞춤
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        df = conn.read(worksheet="발주기록", ttl=0) # ttl=0이 있어야 실시간으로 반영됩니다!
+        return df
+    except Exception as e:
+        # 에러가 나면 화면에 표시 (원인 파악용)
+        st.error(f"❌ 시트 읽기 실패: {e}")
+        return pd.DataFrame()
 
 def make_match_key(name, opt):
     return str(name).strip().replace(" ", "").upper() + str(opt).strip().replace(" ", "").upper()
@@ -407,40 +410,42 @@ if not df_display_5.empty:
 st.divider()
 st.subheader("📜 6단계: 전체 히스토리 내역")
 
+# 1. 🔄 강제 새로고침 버튼 (데이터가 안 나올 때 누르는 용도)
+if st.button("🔄 구글 시트 데이터 실시간 동기화", use_container_width=True):
+    st.cache_data.clear() # 이전 기억(캐시)을 싹 지움
+    st.rerun()
+
+# 2. 데이터 불러오기
 df_hist_raw = load_history_from_gsheet()
 
-# 💡 [디버깅] 데이터가 들어오긴 하는지 숫자로 확인
-if df_hist_raw is not None:
-    st.caption(f"📢 시스템 확인: 구글 시트에서 총 {len(df_hist_raw)}건의 기록을 발견했습니다.")
-else:
-    st.error("🚨 시스템 확인: 구글 시트 연결 실패 또는 데이터 없음")
-
+# 데이터 확인용 메시지 (개발자 모드)
 if df_hist_raw is not None and not df_hist_raw.empty:
     df_hist = df_hist_raw.copy()
     
-    # UI (달력 및 검색)
+    # 상단 UI (달력 및 검색)
     h_c1, h_c2 = st.columns([1, 2])
-    h_date = h_c1.date_input("🗓️ 조회 날짜 선택", datetime.now(KST).date(), key="h_date_debug")
-    h_search = h_c2.text_input("🔍 상품명 검색", key="h_search_debug")
+    h_date = h_c1.date_input("🗓️ 조회 날짜 선택", datetime.now(KST).date(), key="h_date_v6_final")
+    h_search = h_c2.text_input("🔍 상품명 검색", key="h_search_v6_final")
 
-    # 💡 [핵심] 날짜 필터링을 잠시 풀고 "전체 보기" 체크박스 추가
-    show_all = st.checkbox("날짜 상관없이 전체 기록 보기")
-
+    # 날짜 필터링
     if '저장시간' in df_hist.columns:
         df_hist['날짜_추출'] = pd.to_datetime(df_hist['저장시간'], errors='coerce').dt.date
+        df_filtered = df_hist[df_hist['날짜_추출'] == h_date].copy()
         
-        if show_all:
-            df_filtered = df_hist # 체크하면 필터링 안 함
-        else:
-            df_filtered = df_hist[df_hist['날짜_추출'] == h_date].copy()
-            
+        if h_search:
+            df_filtered = df_filtered[df_filtered['상품명'].astype(str).str.contains(h_search, case=False, na=False)]
+        
         if not df_filtered.empty:
-            # 리오더수량_저장 등 컬럼명이 다를 수 있으니 있는 것만 출력
-            st.dataframe(df_filtered, use_container_width=True, hide_index=True)
+            # 출력할 컬럼 정리 (사장님 시트 헤더에 맞춰 자동 매핑)
+            view_cols = ["저장시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장발주량"]
+            actual_view = [c for c in view_cols if c in df_filtered.columns]
+            st.dataframe(df_filtered[actual_view].sort_values(by='저장시간', ascending=False), use_container_width=True, hide_index=True)
         else:
-            st.warning(f"선택하신 {h_date}에 기록이 없습니다. '전체 기록 보기'를 눌러보세요.")
+            st.info(f"📅 {h_date} 날짜에는 기록이 없습니다. (전체 기록: {len(df_hist)}건)")
+    else:
+        st.warning("⚠️ 시트에 '저장시간' 컬럼이 보이지 않습니다. 헤더를 확인해 주세요.")
 else:
-    st.warning("📡 구글 시트에 저장된 기록이 하나도 없습니다.")
+    st.warning("📡 구글 시트에 저장된 기록이 하나도 없습니다. 5단계에서 저장을 먼저 진행해 주세요.")
 
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
