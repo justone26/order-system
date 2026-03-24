@@ -230,12 +230,10 @@ if st.session_state.get('analyzed'):
         def simple_key(n): return str(n).strip().replace(" ", "").upper() if not pd.isna(n) else ""
         df_work['unique_key'] = df_work[item].apply(simple_key) + df_work[option].apply(simple_key)
 
-        # 과거 기록 로드 (KeyError 방지 로직 추가)
         past_hist = load_history_from_gsheet()
         df_work['과거 리오더입고'] = 0
         df_work['리오더입고수량'] = 0
         
-        # ✅ 시트에 '구분'과 '저장시간' 열이 확실히 있는지 체크
         if not past_hist.empty and '저장시간' in past_hist.columns and '구분' in past_hist.columns:
             try:
                 past_hist['날짜_only'] = pd.to_datetime(past_hist['저장시간']).dt.date
@@ -245,7 +243,7 @@ if st.session_state.get('analyzed'):
                     in_map = t_hist.groupby('k_tmp')['수량'].sum().to_dict()
                     df_work['과거 리오더입고'] = df_work['unique_key'].map(in_map).fillna(0).astype(int)
             except:
-                pass # 날짜 변환 에러 시 조용히 넘어감
+                pass
 
         v7 = safe_num(df_work[t7day]); v3 = safe_num(df_work[t3day])
         df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
@@ -272,15 +270,8 @@ if st.session_state.get('analyzed'):
             save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
             st.rerun()
 
-        # ✅ 왼쪽 정렬 적용
-        st.data_editor(
-            df_work[valid_cols], 
-            use_container_width=True, 
-            key="editor_v4", 
-            on_change=on_edit_4, 
-            hide_index=True,
-            column_config={col: st.column_config.Column(alignment="left") for col in valid_cols}
-        )
+        # ✅ 에러가 났던 column_config를 제거하고 기본 data_editor로 복구했습니다.
+        st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4", on_change=on_edit_4, hide_index=True)
 
         # --- [5단계: 최종 발주 리스트 요약] ---
         st.divider()
@@ -321,15 +312,8 @@ if st.session_state.get('analyzed'):
             save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
             st.rerun()
 
-        # ✅ 왼쪽 정렬 적용
-        st.data_editor(
-            to_order[disp_final], 
-            use_container_width=True, 
-            key="editor_v5", 
-            on_change=on_edit_5, 
-            hide_index=True,
-            column_config={col: st.column_config.Column(alignment="left") for col in disp_final}
-        )
+        # ✅ 에러가 났던 정렬 기능을 제거했습니다.
+        st.data_editor(to_order[disp_final], use_container_width=True, key="editor_v5", on_change=on_edit_5, hide_index=True)
 
         b1, b2 = st.columns(2)
         if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
