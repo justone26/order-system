@@ -446,7 +446,6 @@ with tab1:
                     csv_res = show_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
                     st.download_button("📥 엑셀 다운로드", csv_res, f"히스토리.csv", use_container_width=True)
 
-
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
     st.subheader("🌙 동대문 사입 및 미납 관리")
