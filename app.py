@@ -409,72 +409,57 @@ with tab1:
         )
 
         
-# --- [6단계: 전체 히스토리 내역 - 수량 및 구분값 복구 버전] ---
+# --- [6단계: 전체 히스토리 내역 - 원상복구 및 수치값 고정 버전] ---
         st.divider()
         st.subheader("📜 6단계: 전체 히스토리 내역")
 
+        # 1. 구글 시트에서 데이터 로드
         df_hist = load_history_from_gsheet()
 
         if not df_hist.empty:
-            # 1. 💡 [명칭 매핑] 시트에 저장된 다양한 컬럼명을 사장님 전용 명칭으로 통일
-            # 'Log Type'이나 '구분값' 등을 모두 '구분'으로 통일
-            if 'Log Type' in df_hist.columns:
-                df_hist = df_hist.rename(columns={'Log Type': '구분'})
-            
-            # '수량' 데이터가 '수치'나 '수량' 등으로 되어있을 경우 대응
-            if '수량' not in df_hist.columns and '수치' in df_hist.columns:
-                df_hist = df_hist.rename(columns={'수치': '수량'})
-            
-            # '공급쳐상품명' 매핑 (v_item 등에서 가져오기)
-            if '공급쳐상품명' not in df_hist.columns:
-                for col in ['공급쳐 상품명', 'v_item', '공급처상품명']:
-                    if col in df_hist.columns:
-                        df_hist = df_hist.rename(columns={col: '공급쳐상품명'})
-                        break
-            
-            # 없는 컬럼은 빈 값으로라도 생성해서 에러 방지
-            for essential in ["구분", "공급쳐상품명", "수량"]:
-                if essential not in df_hist.columns: df_hist[essential] = ""
+            # 💡 [데이터 보정] 시트의 컬럼명이 무엇이든 사장님 표에 맞게 이름 변경
+            rename_map = {
+                'Log Type': '구분', 
+                '수치': '수량', 
+                '최종발주량': '수량',
+                'v_item': '공급쳐상품명',
+                '공급쳐 상품명': '공급쳐상품명'
+            }
+            df_hist = df_hist.rename(columns=rename_map)
 
-            # 2. 상단 필터 UI
-            h_c1, h_c2, h_c3 = st.columns([1, 1, 2])
-            h_type = h_c1.selectbox("📝 구분 필터", ["전체", "입고", "발주"], index=0, key="h_type_select")
-            h_date = h_c2.date_input("🗓️ 날짜 선택", datetime.now(), key="h_date_select")
-            h_search = h_c3.text_input("🔍 상품명 검색", key="h_search_input")
+            # 필수 컬럼이 없을 경우를 대비한 빈칸 처리
+            for col in ["저장시간", "구분", "상품명", "옵션", "공급쳐상품명", "수량"]:
+                if col not in df_hist.columns: df_hist[col] = ""
 
-            # 3. 데이터 필터링
-            if '저장시간' in df_hist.columns:
-                df_hist['날짜_tmp'] = pd.to_datetime(df_hist['저장시간']).dt.date
-                df_hist = df_hist[df_hist['날짜_tmp'] == h_date]
+            # 2. [검색 기능만 유지] 너무 많을 때 찾기 편하시라고 검색창만 남겨뒀습니다.
+            h_search = st.text_input("🔍 상품명으로 내역 검색", placeholder="검색어를 입력하면 실시간으로 필터링됩니다.", key="h_search_simple")
 
-            if h_type != "전체":
-                df_hist = df_hist[df_hist['구분'] == h_type]
-
+            # 검색어 적용
             if h_search:
                 df_hist = df_hist[df_hist['상품명'].astype(str).str.contains(h_search, case=False, na=False)]
 
-            # 4. 🔥 [순서 및 엑셀 출력 설정] 사장님이 요청하신 수치값 포함
-            # 저장시간, 구분, 상품명, 옵션, 공급쳐상품명, 수량
-            final_hist_view = ["저장시간", "구분", "상품명", "옵션", "공급쳐상품명", "수량"]
-            actual_view = [c for c in final_hist_view if c in df_hist.columns]
+            # 3. 🔥 [순서 고정] 저장시간, 구분, 상품명, 옵션, 공급쳐상품명, 수량
+            final_view_cols = ["저장시간", "구분", "상품명", "옵션", "공급쳐상품명", "수량"]
+            actual_view = [c for c in final_view_cols if c in df_hist.columns]
 
-            if not df_hist.empty:
-                # 화면 출력 (최신순 정렬)
-                st.dataframe(df_hist[actual_view].sort_values(by='저장시간', ascending=False), use_container_width=True, hide_index=True)
-                
-                # 📥 엑셀(CSV) 다운로드 - '수량'과 '구분'이 반드시 포함되도록 actual_view 사용
-                csv_output = df_hist[actual_view].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                st.download_button(
-                    label=f"📥 {h_date} {h_type} 내역 엑셀 다운로드",
-                    data=csv_output,
-                    file_name=f"히스토리_{h_date}_{h_type}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-            else:
-                st.info("해당 조건의 기록이 없습니다.")
+            # 4. 전체 데이터 출력 (최신순)
+            st.dataframe(
+                df_hist[actual_view].sort_values(by='저장시간', ascending=False), 
+                use_container_width=True, 
+                hide_index=True
+            )
+
+            # 5. 📥 엑셀(CSV) 다운로드 버튼
+            csv_hist = df_hist[actual_view].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button(
+                label="📥 히스토리 전체 내역 엑셀 다운로드",
+                data=csv_hist,
+                file_name=f"전체히스토리_{datetime.now().strftime('%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
         else:
-            st.warning("저장된 히스토리가 없습니다.")
+            st.warning("저장된 히스토리 기록이 없습니다. 5단계에서 '기록 저장' 버튼을 먼저 눌러주세요.")
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
