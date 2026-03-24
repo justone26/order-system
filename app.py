@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime, timedelta, timezone
+
+# 한국 시간(KST) 설정 (UTC+9)
+KST = timezone(timedelta(hours=9))
 
 # --- [1. 기본 함수 설정] ---
 def get_sheet():
@@ -378,52 +381,56 @@ with tab1:
                     st.success("✅ 리오더 수량이 갱신되었습니다.")
                     st.rerun()
 
-        st.write("---")
-  # --- 5단계 하단: 버튼 2개 (저장 & 엑셀다운로드) ---
+    # --- [5단계 하단: 저장 및 엑셀 버튼 최종 교체분] ---
         st.write("---")
         b1, b2 = st.columns(2)
         
-        # 1. 구글 시트 저장 버튼
+        # 1. 구글 시트 저장 버튼 (한국 시간 및 모든 수치 포함)
         if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
             # 발주 대상 추출 (권장발주량이나 추가발주수량이 있는 항목)
             order_ready = df_5[(df_5['권장발주량'] > 0) | (df_5['추가발주수량'] > 0)].copy()
             
             if not order_ready.empty:
-                # 💡 [데이터 매핑] 6단계에서 보여줄 모든 수치를 칸별로 생성
+                # 💡 [시간 설정] 상단에 설정한 KST 기준으로 한국 시간 생성
+                now_kst = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+                
+                # 💡 [데이터 매핑] 6단계에서 보여줄 8가지 항목을 정확히 매칭
+                order_ready['저장시간'] = now_kst
                 order_ready['공급쳐상품명'] = order_ready[v_item]
                 order_ready['가용재고'] = order_ready[avail]
                 
-                # 띄어쓰기 에러 방지를 위해 변수명을 정확히 매칭합니다.
+                # 띄어쓰기 에러(KeyError) 방지를 위해 변수명을 정확히 매칭합니다.
+                # (사장님 소스의 컬럼명에 따라 '리오더 수량' 또는 '리오더수량' 확인 필요)
                 order_ready['리오더수량_저장'] = order_ready['리오더 수량'] 
                 order_ready['추가발주수량_저장'] = order_ready['추가발주수량']
                 order_ready['권장발주수량_저장'] = order_ready['권장발주량']
                 
-                # 저장용 데이터 구성
+                # 저장용 데이터 최종 구성 (순서대로)
                 save_data = order_ready[[
-                    item, option, '공급쳐상품명', 
+                    '저장시간', item, option, '공급쳐상품명', 
                     '가용재고', '리오더수량_저장', '추가발주수량_저장', '권장발주수량_저장'
                 ]]
                 
-                # 시트 제목 깔끔하게 변경
+                # 6단계 표 제목과 똑같이 이름 변경
                 save_data.columns = [
-                    "상품명", "옵션", "공급쳐상품명", 
+                    "저장시간", "상품명", "옵션", "공급쳐상품명", 
                     "가용재고", "리오더수량", "추가발주수량", "권장발주수량"
                 ]
                 
+                # 구글 시트 저장 실행
                 if save_history_to_gsheet(save_data, log_type="발주"):
-                    st.success(f"✅ 모든 데이터({len(order_ready)}건) 저장 완료! 6단계로 가보세요.")
+                    st.success(f"✅ 한국 시간({now_kst})으로 모든 데이터가 저장되었습니다!")
                     st.rerun()
             else:
                 st.warning("발주할 수량이 있는 상품이 없습니다.")
 
-        # 2. 📥 [복구] 엑셀 다운로드 버튼
-        # 현재 화면에 보이는 8개 컬럼 그대로 다운로드합니다.
+        # 2. 📥 엑셀 다운로드 버튼 (현재 화면 기준)
         if not df_display_5.empty:
             csv_final = df_display_5[actual_cols_5].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             b2.download_button(
                 label="📥 현재 리스트 엑셀 다운로드",
                 data=csv_final,
-                file_name=f"최종발주서_{datetime.now().strftime('%m%d_%H%M')}.csv",
+                file_name=f"최종발주서_{datetime.now(KST).strftime('%m%d_%H%M')}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
