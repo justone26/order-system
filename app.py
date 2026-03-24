@@ -242,49 +242,136 @@ with tab1:
         csv_v5 = to_order.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         b2.download_button("📥 엑셀(CSV) 다운로드", data=csv_v5, file_name=f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
 
-        # --- [6단계: 기록 통합 조회] ---
+# --- [6단계: 기록 통합 조회 - KeyError 방어 강화] ---
         st.divider()
         st.subheader("📜 6단계: 제작 상품 입고 및 발주 히스토리")
+        
         c6_1, c6_2 = st.columns(2)
-        start_d = c6_1.date_input("📅 조회 시작일", datetime.now() - timedelta(days=7))
-        end_d = c6_2.date_input("📅 조회 종료일", datetime.now())
+        start_d = c6_1.date_input("📅 조회 시작일", datetime.now() - timedelta(days=7), key="s_date_v6")
+        end_d = c6_2.date_input("📅 조회 종료일", datetime.now(), key="e_date_v6")
 
         if not past_hist.empty:
-            past_hist['날짜_dt'] = pd.to_datetime(past_hist['저장시간']).dt.date
-            df_h = past_hist[(past_hist['날짜_dt'] >= start_d) & (past_hist['날짜_dt'] <= end_d)].copy()
-            
-            t_in, t_out = st.tabs(["📥 입고 완료 내역", "📤 발주 진행 내역"])
-            with t_in:
-                in_df = df_h[df_h['구분'] == "입고"]
-                st.dataframe(in_df[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
-                if not in_df.empty:
-                    st.table(in_df.groupby(['상품명', '옵션'])['수량'].sum().reset_index())
-            with t_out:
-                out_df = df_h[df_h['구분'] == "발주"]
-                st.dataframe(out_df[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
-                if not out_df.empty:
-                    st.table(out_df.groupby(['상품명', '옵션'])['수량'].sum().reset_index())
+            # 1. 날짜 변환 및 필터링
+            if '저장시간' in past_hist.columns:
+                past_hist['날짜_dt'] = pd.to_datetime(past_hist['저장시간'], errors='coerce').dt.date
+                df_h = past_hist[(past_hist['날짜_dt'] >= start_d) & (past_hist['날짜_dt'] <= end_d)].copy()
+                
+                # 2. '구분' 열 존재 여부 체크 (에러 방지 핵심)
+                if '구분' not in df_h.columns:
+                    st.info("💡 히스토리 시트에 '구분' 항목이 없습니다. 데이터를 먼저 저장해 주세요.")
+                else:
+                    t_in, t_out = st.tabs(["📥 입고 완료 내역", "📤 발주 진행 내역"])
+                    
+                    with t_in:
+                        in_df = df_h[df_h['구분'] == "입고"]
+                        if not in_df.empty:
+                            st.dataframe(in_df[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
+                            # 합계 계산 시 컬럼 체크
+                            sum_cols = [c for c in ['상품명', '옵션', '수량'] if c in in_df.columns]
+                            st.markdown("##### 📊 품목별 입고 합계")
+                            st.table(in_df.groupby(['상품명', '옵션'])['수량'].sum().reset_index())
+                        else:
+                            st.write("선택한 기간에 '입고' 내역이 없습니다.")
+                            
+                    with t_out:
+                        out_df = df_h[df_h['구분'] == "발주"]
+                        if not out_df.empty:
+                            st.dataframe(out_df[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
+                            st.markdown("##### 📊 품목별 발주 합계")
+                            st.table(out_df.groupby(['상품명', '옵션'])['수량'].sum().reset_index())
+                        else:
+                            st.write("선택한 기간에 '발주' 내역이 없습니다.")
+            else:
+                st.warning("⚠️ 히스토리 시트에 '저장시간' 열이 없습니다.")
+        else:
+            st.info("💡 아직 구글 시트에 누적된 기록이 없습니다. 먼저 '발주 기록 저장'이나 '입고'를 진행해 주세요.")
 
-# --- [탭 2: 동대문 상품 관리 (원본 로직 유지)] ---
+# --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
-    st.subheader("🌙 동대문 사입 가중율 관리")
-    d_file = st.file_uploader("동대문 리스트 업로드", type=['xlsx', 'xls', 'csv'], key="d_up")
-    if d_file:
-        if "df_dong" not in st.session_state:
-            df = pd.read_excel(d_file) if d_file.name.endswith(('.xlsx', '.xls')) else pd.read_csv(d_file)
-            df['판매수량'] = (safe_num(df.get('정상재고', 0)) - safe_num(df.get('가용재고', 0))).clip(lower=0)
+    st.subheader("🌙 동대문 사입 및 미납 관리")
+
+    dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'xls', 'csv'], key="dong_tab_upload")
+
+    if dong_file:
+        # 파일이 새로 올라왔을 때만 데이터 처리
+        if "last_file_name" not in st.session_state or st.session_state.last_file_name != dong_file.name:
+            # 엑셀/CSV 구분해서 읽기
+            if dong_file.name.endswith(('.xlsx', '.xls')):
+                df = pd.read_excel(dong_file)
+            else:
+                df = pd.read_csv(dong_file)
+            
+            df.columns = df.columns.str.strip()
+            
+            # 필수 컬럼 체크 및 생성
+            required_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '판매수량', '발주수량', '가중율', '3일판매']
+            for col in required_cols:
+                if col not in df.columns:
+                    if col in ['선택', '품절', '상품명', '공급처', '공급처상품명']:
+                        df[col] = ""
+                    else:
+                        df[col] = 0
+            
+            # 숫자형 변환
+            for col in ['정상재고', '가용재고', '3일판매']:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+            # 동대문 전용 발주 로직 적용
+            df['판매수량'] = (df['정상재고'] - df['가용재고']).clip(lower=0)
+            # 판매량에 따른 가중율 (10개 이상 2배, 6개 이상 1.5배 등)
             df['가중율'] = df['판매수량'].apply(lambda n: 2.0 if n >= 10 else (1.5 if n >= 6 else (1.2 if n >= 3 else 1.0)))
             df['발주수량'] = (df['판매수량'] * df['가중율']).astype(int)
-            df['선택'] = False
-            st.session_state.df_dong = df
+            
+            st.session_state.df_dong_current = df[required_cols]
+            st.session_state.last_file_name = dong_file.name
 
-        if "df_dong" in st.session_state:
-            c1, c2 = st.columns([1, 1])
-            add_v = c1.number_input("➕ 더할 수량", value=1)
-            if c2.button("🚀 선택 상품 수량 더하기"):
-                for i, row in ed_dong.iterrows():
-                    if row['선택']: st.session_state.df_dong.at[i, '발주수량'] += add_v
+        # 화면 출력 부분
+        if "df_dong_current" in st.session_state:
+            df_display = st.session_state.df_dong_current.copy()
+            
+            # 검색 기능
+            search_query = st.text_input("🔍 상품명 검색 (사입)")
+            if search_query:
+                df_display = df_display[df_display['상품명'].astype(str).str.contains(search_query, case=False, na=False)]
+            
+            # 데이터 에디터 (선택 및 수량 수정 가능)
+            df_display['선택'] = df_display['선택'].apply(lambda x: True if x is True or x == "True" else False)
+            
+            edited_df = st.data_editor(
+                df_display, 
+                use_container_width=True, 
+                key="dong_editor",
+                column_config={
+                    "선택": st.column_config.CheckboxColumn("선택", default=False),
+                    "발주수량": st.column_config.NumberColumn("발주수량", min_value=0)
+                },
+                hide_index=True
+            )
+            
+            st.divider()
+            
+            # 하단 컨트롤러
+            c1, c2, c3 = st.columns([1, 1, 1])
+            add_val = c1.number_input("➕ 추가 수량", value=1, min_value=1, key="dong_add_val")
+            
+            if c2.button("🚀 선택 상품 수량 더하기", use_container_width=True):
+                # 에디터에서 선택된 인덱스 찾기
+                # 실제 세션 데이터에 반영
+                for i, row in edited_df.iterrows():
+                    if row['선택']:
+                        # 원본 데이터의 인덱스를 찾아 업데이트
+                        st.session_state.df_dong_current.at[i, '발주수량'] += add_val
+                st.success(f"선택 항목에 {add_val}개씩 추가되었습니다.")
                 st.rerun()
-
-            ed_dong = st.data_editor(st.session_state.df_dong, use_container_width=True, key="ed_dong", 
-                                     column_config={"선택": st.column_config.CheckboxColumn("선택", default=False)}, hide_index=True)
+            
+            # 다운로드 버튼
+            csv_dong = edited_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            c3.download_button(
+                label="📥 사입 리스트 다운로드 (CSV)", 
+                data=csv_dong, 
+                file_name=f"동대문사입_{datetime.now().strftime('%m%d')}.csv", 
+                mime="text/csv",
+                use_container_width=True
+            )
+    else:
+        st.info("💡 동대문 발주용 엑셀 파일을 업로드해주세요.")
