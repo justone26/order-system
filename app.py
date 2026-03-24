@@ -21,7 +21,7 @@ st.title("🏭 저스트원 통합 재고 관리 시스템")
 
 # --- [3. 1단계: 데이터 로드] ---
 st.subheader("📂 1단계: 데이터 불러오기")
-up_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'], key="main_up_v3")
+up_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'], key="main_up_final")
 
 if up_file:
     if st.session_state.get('last_fn') != up_file.name:
@@ -31,12 +31,12 @@ if up_file:
         st.session_state.last_fn = up_file.name
         st.session_state.analyzed = False
 
-# --- [4. 2단계: 매핑 설정 (10개 항목)] ---
+# --- [4. 2단계: 매핑 설정 (10개 항목 완벽 복구)] ---
 if st.session_state.get('df_raw') is not None:
     cols = st.session_state.df_raw.columns.tolist()
     
     st.divider()
-    st.subheader("⚙️ 2단계: 매핑 설정")
+    st.subheader("⚙️ 2단계: 매핑 및 분석 조건 설정")
     c_l, c_r = st.columns(2)
     with c_l:
         sold_out = st.selectbox("1. 품절 여부", cols, index=find_idx(cols, ['품절']))
@@ -59,7 +59,7 @@ if st.session_state.get('df_raw') is not None:
         st.session_state.analyzed = True
         st.rerun()
 
-    # --- [5. 3단계: 분석 및 계산 (에러 발생 구간 - IF문 안으로 수납)] ---
+    # --- [5. 3단계: 분석 및 계산 (에러 발생 구간 - IF문 안으로 격리)] ---
     if st.session_state.get('analyzed'):
         st.divider()
         st.subheader("📊 3단계: 분석 결과")
@@ -67,21 +67,22 @@ if st.session_state.get('df_raw') is not None:
         # 데이터 복사
         df_work = st.session_state.df_raw.copy()
         
-        # 리오더 수량 초기화 (없으면 생성)
+        # 리오더 수량 기본값 설정 (없으면 0으로 생성)
         if "리오더 수량" not in df_work.columns:
             df_work["리오더 수량"] = 0
 
-        # ★ 에러가 났던 구간: 모든 변수 사용 로직은 반드시 이 IF문 안에 있어야 합니다. ★
-        # 숫자 데이터 변환
+        # ★ 핵심 해결책: 모든 변수 사용 로직을 이 IF문 안에 넣어서 NameError 방지 ★
+        # 숫자 데이터로 변환 (에러 방지용)
         num_targets = [stock, avail, t3day, t7day, "리오더 수량"]
         for c in num_targets:
-            df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
+            if c in df_work.columns:
+                df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
         
-        # 97번 줄 에러 방지용 계산 로직
+        # 99번 줄 에러 방지용 계산 로직
         df_work['일판매량'] = (df_work[t7day] / 7).round(1)
         df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
         
-        # 상태 표시
+        # 상태 표시 로직
         def get_status(r):
             total = r[avail] + r['리오더 수량']
             if r['일판매량'] > 0:
@@ -91,9 +92,9 @@ if st.session_state.get('df_raw') is not None:
         
         df_work['상태'] = df_work.apply(get_status, axis=1)
         
-        # 결과 출력 (필요한 컬럼만 깔끔하게)
-        disp_cols = ["상태", item, option, vendor, stock, avail, "리오더 수량", "일판매량", "권장발주량"]
-        st.data_editor(df_work[disp_cols], use_container_width=True, hide_index=True)
+        # 사장님이 보기 편하게 컬럼 순서 정리
+        final_disp = ["상태", item, option, vendor, stock, avail, "리오더 수량", "일판매량", "권장발주량", sold_out]
+        st.data_editor(df_work[final_disp], use_container_width=True, hide_index=True)
 
 # 2. [계산식] 일판매량 반올림 및 권장발주량
 v7 = df_work[t7day]
