@@ -286,9 +286,8 @@ if st.session_state.get('analyzed'):
                         st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr - in_qty)
                         save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], in_qty]], columns=['상품명', '옵션', '수량']), log_type="입고")
             save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
-            st.rerun()
+            # ✅ st.rerun() 제거 완료 (에러 방지)
 
-        # ✅ 에러가 났던 column_config를 제거하고 기본 data_editor로 복구했습니다.
         st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4", on_change=on_edit_4, hide_index=True)
 
         # --- [5단계: 최종 발주 리스트 요약] ---
@@ -328,9 +327,8 @@ if st.session_state.get('analyzed'):
                     if add_qty > 0:
                         st.session_state.df_raw.at[orig_idx, "리오더 수량"] += add_qty
             save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
-            st.rerun()
+            # ✅ st.rerun() 제거 완료 (에러 방지)
 
-        # ✅ 에러가 났던 정렬 기능을 제거했습니다.
         st.data_editor(to_order[disp_final], use_container_width=True, key="editor_v5", on_change=on_edit_5, hide_index=True)
 
         b1, b2 = st.columns(2)
@@ -339,11 +337,18 @@ if st.session_state.get('analyzed'):
             if not order_final.empty:
                 if save_history_to_gsheet(order_final[[item, option, '권장발주량']], log_type="발주"):
                     st.success("✅ 발주 내역 저장 완료!")
+                    # 버튼 클릭 시에만 리런하여 6단계를 갱신합니다.
+                    st.rerun() 
             else: st.warning("발주할 항목이 없습니다.")
 
         csv_v5 = to_order.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         b2.download_button("📥 엑셀(CSV) 다운로드", data=csv_v5, file_name=f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
 
+        # --- [6단계: 기록 통합 조회] ---
+        # 💡 사장님, 여기가 핵심입니다! 6단계 시작 전에 최신 데이터를 강제로 읽어옵니다.
+        st.divider()
+        st.subheader("📜 6단계: 제작 상품 입고 및 발주 히스토리")
+        past_hist = load_history_from_gsheet() # 최신화!
 # --- [6단계: 기록 통합 조회 - KeyError 방어 강화] ---
         st.divider()
         st.subheader("📜 6단계: 제작 상품 입고 및 발주 히스토리")
