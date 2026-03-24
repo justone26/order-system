@@ -409,33 +409,61 @@ with tab1:
         )
 
         
-# --- [6단계: 히스토리 조회 - 공급쳐 상품명 대응] ---
-        if st.button("🔍 히스토리 조회하기", use_container_width=True, type="secondary"):
-            raw_h = load_history_from_gsheet()
-            if not raw_h.empty:
-                raw_h['저장시간'] = pd.to_datetime(raw_h['저장시간'], errors='coerce')
-                raw_h['pure_date'] = raw_h['저장시간'].dt.date
-                f_df = raw_h[(raw_h['pure_date'] >= start_date) & (raw_h['pure_date'] <= end_date)].copy()
+# --- [6단계: 전체 히스토리 내역 및 기록 관리] ---
+        st.divider()
+        st.subheader("📜 6단계: 전체 히스토리 내역")
 
-                if not f_df.empty:
-                    # 데이터 이름 매칭
-                    if '최종발주량' in f_df.columns: f_df['리오더 수량'] = f_df['최종발주량']
-                    elif '수량' in f_df.columns: f_df['리오더 수량'] = f_df['수량']
-                    
-                    # 🎯 '공급쳐 상품명' 등 누락된 칸 보충
-                    for col in ['공급쳐 상품명', '추가 리오더', '권장 발주량']:
-                        if col not in f_df.columns: f_df[col] = 0 if '량' in col else ""
+        # 1. 히스토리 데이터 로드
+        df_hist = load_history_from_gsheet()
 
-                    # 순서 고정
-                    final_order = ['저장시간', '구분', '상품명', '옵션', '공급쳐 상품명', '리오더 수량', '추가 리오더', '권장 발주량']
-                    actual_view = [c for c in final_order if c in f_df.columns]
-                    show_df = f_df[actual_view].sort_values(by='저장시간', ascending=False)
+        if not df_hist.empty:
+            # 💡 [컬럼명 정리] 'Log Type'을 '구분'으로, 'v_item'이나 '공급쳐상품명'을 통일
+            if 'Log Type' in df_hist.columns:
+                df_hist = df_hist.rename(columns={'Log Type': '구분'})
+            
+            # 사장님 요청 명칭으로 통일 ('공급쳐상품명')
+            if '공급쳐상품명' not in df_hist.columns:
+                if 'v_item' in df_hist.columns:
+                    df_hist = df_hist.rename(columns={'v_item': '공급쳐상품명'})
+                else:
+                    df_hist['공급쳐상품명'] = ""
 
-                    st.success("✅ 조회가 완료되었습니다.")
-                    st.dataframe(show_df, use_container_width=True, hide_index=True)
-                    
-                    csv_res = show_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button("📥 엑셀 다운로드", csv_res, f"히스토리.csv", use_container_width=True)
+            # 2. 상단 필터 UI
+            h_c1, h_c2, h_c3 = st.columns([1, 1, 2])
+            h_type = h_c1.selectbox("📝 구분 필터", ["전체", "입고", "발주"], index=0)
+            h_date = h_c2.date_input("🗓️ 날짜 선택", datetime.now())
+            h_search = h_c3.text_input("🔍 히스토리 상품명 검색", placeholder="상품명을 입력하세요")
+
+            # 3. 데이터 필터링 로직
+            # 날짜 필터 (저장시간 기준)
+            if '저장시간' in df_hist.columns:
+                df_hist['날짜'] = pd.to_datetime(df_hist['저장시간']).dt.date
+                df_hist = df_hist[df_hist['날짜'] == h_date]
+
+            # 구분(입고/발주) 필터
+            if h_type != "전체" and '구분' in df_hist.columns:
+                df_hist = df_hist[df_hist['구분'] == h_type]
+
+            # 검색어 필터
+            if h_search:
+                df_hist = df_hist[df_hist['상품명'].astype(str).str.contains(h_search, case=False, na=False)]
+
+            # 4. 🔥 [순서 정리] 사장님이 보기 편한 순서로 배치
+            # 저장시간, 구분, 상품명, 옵션, 공급쳐상품명, 수량
+            hist_display_cols = ["저장시간", "구분", "상품명", "옵션", "공급쳐상품명", "수량"]
+            # 최종적으로 시트에 있는 컬럼만 선별
+            actual_hist_cols = [c for c in hist_display_cols if c in df_hist.columns]
+
+            if not df_hist.empty:
+                st.dataframe(df_hist[actual_hist_cols].sort_values(by='저장시간', ascending=False), use_container_width=True, hide_index=True)
+                
+                # 히스토리 엑셀 다운로드
+                csv_hist = df_hist[actual_hist_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                st.download_button("📥 히스토리 내역 다운로드", csv_hist, f"히스토리_{h_date}.csv", use_container_width=True)
+            else:
+                st.info(f"📅 {h_date}에 해당하는 기록이 없습니다.")
+        else:
+            st.warning("아직 저장된 히스토리 기록이 없습니다.")
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
