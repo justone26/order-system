@@ -321,110 +321,97 @@ with tab1:
                     st.success("✅ 저장 완료! 리오더 수량이 갱신되고 입고수량은 초기화되었습니다.")
                     st.rerun()
                     
-# --- [5단계: 최종 발주 리스트 요약 - 전체 기능 복구 버전] ---
+# --- [5단계: 최종 발주 리스트 요약 - 명칭 정밀 수정본] ---
         st.divider()
         st.subheader("📋 5단계: 최종 발주 리스트 요약")
         
-        # 1. 추가발주수량 저장용 세션 관리 (누락 방지)
         if 'add_order_dict' not in st.session_state: 
             st.session_state.add_order_dict = {}
 
-        # 4단계(입고) 결과가 반영된 최신 데이터 전체를 가져옵니다.
+        # 4단계 결과 반영된 전체 데이터 가져오기
         to_order = st.session_state.df_raw.copy()
 
-        # 💡 [버그 차단] 16,000장 오류 방지를 위한 숫자형 강제 변환
-        calc_cols = [avail, '리오더 수량', t7day, t3day]
-        for c in calc_cols:
+        # 💡 [데이터 보정] 숫자형 변환 (16,000장 오류 방지)
+        num_cols = [avail, '리오더 수량', t7day, t3day]
+        for c in num_cols:
             if c in to_order.columns:
                 to_order[c] = pd.to_numeric(to_order[c], errors='coerce').fillna(0).astype(int)
 
-        # 2. [핵심 로직] 실시간 판매량 분석 및 권장발주량 계산
-        v7_val = to_order[t7day]
-        v3_val = to_order[t3day]
-        
-        # 일판매량 계산 (7일 우선, 데이터 없으면 3일 기준)
+        # 실시간 계산 로적
+        v7_val = to_order[t7day]; v3_val = to_order[t3day]
         to_order['일판매량'] = (v7_val / 7 if v7_val.sum() > 0 else v3_val / 3).round(0).astype(int)
-        
-        # 권장발주량 = (일판매량 * 확보일수) - (가용재고 + 현재 리오더수량)
         to_order['권장발주량'] = ((to_order['일판매량'] * (lt + ss)) - (to_order[avail] + to_order['리오더 수량'])).clip(lower=0).astype(int)
-        
-        # 사장님이 에디터에서 수정한 추가발주수량 반영
         to_order['추가발주수량'] = to_order.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
 
-        # 재고 상태 판별 (사진 속 🚨긴급 / ⚠️주의 / ✅정상)
         def get_final_status(r):
-            stock_sum = r[avail] + r['리오더 수량']
-            daily = r['일판매량']
-            if daily > 0:
-                if stock_sum < (daily * 3): return "🚨 긴급"
-                if stock_sum < (daily * 5): return "⚠️ 주의"
+            stock = r[avail] + r['리오더 수량']
+            if r['일판매량'] > 0:
+                if stock < (r['일판매량'] * 3): return "🚨 긴급"
+                if stock < (r['일판매량'] * 5): return "⚠️ 주의"
             return "✅ 정상"
         to_order['상태'] = to_order.apply(get_final_status, axis=1)
 
-        # 3. [UI] 사장님 사진 속 3단 구성 (상태필터 | 전체 상품명 검색 | 기록 확인 날짜)
+        # 3. [UI] 검색 및 필터링
         c5_1, c5_2, c5_3 = st.columns([1.5, 1.5, 1])
-        search_q_v5 = c5_2.text_input("🔍 전체 상품명 검색 (입력 시 상태필터 무시)", key="v5_full_search")
-        s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 전체보기"], index=0)
+        # 💡 검색창: 이제 전체 상품에서 검색됩니다.
+        search_q_v5 = c5_2.text_input("🔍 전체 상품명 검색", key="v5_final_global_search")
+        s_filter = c5_1.selectbox("🎯 상태 필터 (검색 시 무시)", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 전체보기"], index=0)
         hist_date_5 = c5_3.date_input("🗓️ 기록 확인 날짜", datetime.now())
 
-        # 4. 🔥 [지능형 필터링] 검색어가 있으면 전체 검색, 없으면 필터 적용
+        # 검색 로직 우선 적용
         if search_q_v5:
-            # 검색어가 있으면 상태(✅정상 포함) 상관없이 전체 상품에서 검색
             to_order = to_order[to_order[item].astype(str).str.contains(search_q_v5, case=False, na=False)]
         else:
-            # 검색어가 없을 때만 사용자가 선택한 필터 적용
             if s_filter == "🚨긴급 + ⚠️주의 우선": 
                 to_order = to_order[to_order['상태'].isin(["🚨 긴급", "⚠️ 주의"]) | (to_order['권장발주량'] > 0)]
             elif s_filter == "🚨 긴급만 보기": 
                 to_order = to_order[to_order['상태'] == "🚨 긴급"]
-            
+        
         to_order = to_order.sort_values(by='상태')
 
-        # 5. 데이터 에디터 (수량 입력창)
+        # 4. 데이터 에디터 출력
+        # 💡 표시 컬럼에 '공급처상품명' 반영 확인
         disp_cols = ["상태", item, option, vendor, avail, "리오더 수량", "추가발주수량", "권장발주량"]
         actual_view = [c for c in disp_cols if c in to_order.columns]
 
-        with st.form("form_step_5_full_restore"):
-            # hide_index=True로 사진처럼 깔끔하게 출력
-            edited_v5 = st.data_editor(to_order[actual_view], use_container_width=True, key="editor_v5_full", hide_index=True)
-            
-            if st.form_submit_button("✅ 추가발주수량 확정 및 화면 갱신", use_container_width=True, type="primary"):
-                edits = st.session_state["editor_v5_full"].get("edited_rows", {})
+        with st.form("form_step_5_final_fix"):
+            edited_v5 = st.data_editor(to_order[actual_view], use_container_width=True, key="editor_v5_final_fix", hide_index=True)
+            if st.form_submit_button("✅ 수량 확정 및 화면 갱신", use_container_width=True, type="primary"):
+                edits = st.session_state["editor_v5_final_fix"].get("edited_rows", {})
                 if edits:
                     for r_idx_str, change in edits.items():
-                        # 현재 화면의 행 번호를 실제 데이터의 인덱스로 매칭
                         real_idx = to_order.index[int(r_idx_str)]
                         if "추가발주수량" in change:
                             st.session_state.add_order_dict[real_idx] = int(change["추가발주수량"])
-                    st.success("✅ 수치가 반영되었습니다.")
+                    st.success("✅ 수치가 시스템에 반영되었습니다.")
                     st.rerun()
 
         st.write("---")
         b1, b2 = st.columns(2)
         
-        # 6. [저장 로직] 6단계에서 '공급쳐 상품명' 칸에 숫자 안 밀리게 저장
+        # 5. [저장 로직] '공급처상품명' 정확히 기록
         if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
             to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
-            order_save = to_order[to_order['최종발주량'] > 0].copy()
+            order_ready = to_order[to_order['최종발주량'] > 0].copy()
             
-            if not order_save.empty:
-                # 🎯 사장님 요청 '공급쳐 상품명' 필드 생성 및 칸 맞춤
-                order_save['공급쳐 상품명'] = "" 
-                order_save['추가 리오더'] = order_save['추가발주수량'] 
-                order_save['권장 발주량'] = order_save['권장발주량']   
+            if not order_ready.empty:
+                # 🎯 사장님 요청: '공급처상품명' (오타 수정 완료)
+                order_ready['공급처상품명'] = "" 
+                order_ready['추가 리오더'] = order_ready['추가발주수량'] 
+                order_ready['권장 발주량'] = order_ready['권장발주량']   
                 
-                # 시트 저장 순서 고정 (매우 중요)
-                save_final = order_save[[item, option, '공급쳐 상품명', '최종발주량', '추가 리오더', '권장 발주량']]
+                # 시트 저장 순서 고정
+                save_data = order_ready[[item, option, '공급처상품명', '최종발주량', '추가 리오더', '권장 발주량']]
                 
-                if save_history_to_gsheet(save_final, log_type="발주"):
-                    st.success("✅ 모든 데이터가 칸에 맞춰 저장되었습니다!")
+                if save_history_to_gsheet(save_data, log_type="발주"):
+                    st.success("✅ '공급처상품명' 칸을 맞춰 데이터가 정확히 저장되었습니다!")
                     st.rerun()
             else:
                 st.warning("발주할 항목이 없습니다.")
 
-        # 현재 필터링된 결과 엑셀 다운로드
-        csv_res = to_order[actual_view].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        b2.download_button("📥 현재 리스트 엑셀 다운로드", csv_res, f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+        csv_download = to_order[actual_view].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        b2.download_button("📥 엑셀(CSV) 다운로드", csv_download, f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+
         
 # --- [6단계: 히스토리 조회 - 공급쳐 상품명 대응] ---
         if st.button("🔍 히스토리 조회하기", use_container_width=True, type="secondary"):
