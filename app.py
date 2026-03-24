@@ -82,14 +82,23 @@ with tab1:
     uploaded_file = st.file_uploader("엑셀 파일을 올려주세요", type=['xlsx', 'xls', 'csv'], key="t1_up")
     
     if st.button("📂 구글 시트 데이터 로드", use_container_width=True):
-        try:
-            sheet = get_sheet().sheet1
-            gs_df = pd.DataFrame(sheet.get_all_records())
-            if not gs_df.empty:
-                st.session_state.df_raw = gs_df.copy()
-                st.session_state.analyzed = False
-                st.rerun()
-        except: st.error("시트 연결 실패")
+        spreadsheet = get_sheet()
+        if spreadsheet:
+            try:
+                # 이름 대신 '첫 번째 탭'을 무조건 가져오도록 수정
+                sheet = spreadsheet.get_worksheet(0) 
+                data = sheet.get_all_records()
+                if data:
+                    st.session_state.df_raw = pd.DataFrame(data)
+                    st.session_state.analyzed = False
+                    st.success(f"✅ {len(st.session_state.df_raw)}개 항목 로드 완료!")
+                    st.rerun()
+                else:
+                    st.warning("⚠️ 시트 내용이 비어있습니다. (첫 줄 헤더 확인 필요)")
+            except Exception as e:
+                st.error(f"❌ 시트 읽기 오류: {e}")
+        else:
+            st.error("❌ 시트 연결 실패! (Secrets 설정 또는 공유 권한 확인)")
 
     if uploaded_file:
         if 'df_raw' not in st.session_state or st.session_state.get('last_fn') != uploaded_file.name:
