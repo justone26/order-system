@@ -94,16 +94,34 @@ def save_reorder_data(new_work_df):
 def save_history_to_gsheet(df, log_type="입고"):
     try:
         spreadsheet = get_sheet()
-        try: hist_sheet = spreadsheet.worksheet("history")
+        if not spreadsheet: return False
+        
+        # history 시트 가져오기 또는 생성
+        try:
+            hist_sheet = spreadsheet.worksheet("history")
         except:
             hist_sheet = spreadsheet.add_worksheet(title="history", rows="1000", cols="20")
             hist_sheet.append_row(["저장시간", "구분", "상품명", "옵션", "수량"])
+        
+        # 현재 시간 생성
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        rows_to_add = [[now_str, log_type] + [str(x) for x in row] for row in df.values.tolist()]
-        hist_sheet.append_rows(rows_to_add)
-        return True
-    except: return False
+        
+        # 저장할 데이터 구성 (사장님 시트 양식: 저장시간, 구분, 상품명, 옵션, 수량)
+        # df에는 보통 [상품명, 옵션, 수량]만 넘어오므로 앞에 시간과 구분을 붙여줍니다.
+        rows_to_add = []
+        for row in df.values.tolist():
+            rows_to_add.append([now_str, log_type] + [str(x) for x in row])
+        
+        if rows_to_add:
+            hist_sheet.append_rows(rows_to_add)
+            return True
+        return False
+    except Exception as e:
+        # 에러 발생 시 화면에 표시 (사장님 확인용)
+        st.error(f"히스토리 저장 실패: {e}")
+        return False
 
+# 아래 두 개는 사장님 기존 코드 그대로 쓰셔도 완벽합니다!
 def find_idx(cols, target_keywords):
     for keyword in target_keywords:
         for i, col in enumerate(cols):
