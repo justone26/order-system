@@ -303,9 +303,6 @@ with tab1:
 
         st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4", on_change=on_edit_4, hide_index=True)
 
-# (4단계 data_editor 바로 아랫줄부터 시작입니다)
-        st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4", on_change=on_edit_4, hide_index=True)
-
         # --- [5단계: 최종 발주 리스트 요약] ---
         st.divider()
         st.subheader("📋 5단계: 최종 발주 리스트 요약")
@@ -368,11 +365,6 @@ with tab1:
         csv_v5 = to_order.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         b2.download_button("📥 엑셀(CSV) 다운로드", data=csv_v5, file_name=f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
 
-        # --- [6단계: 기록 통합 조회] ---
-        # 💡 사장님, 여기가 핵심입니다! 6단계 시작 전에 최신 데이터를 강제로 읽어옵니다.
-        st.divider()
-        st.subheader("📜 6단계: 제작 상품 입고 및 발주 히스토리")
-        past_hist = load_history_from_gsheet() # 최신화!
 # --- [6단계: 기록 통합 조회 - KeyError 방어 강화] ---
         st.divider()
         st.subheader("📜 6단계: 제작 상품 입고 및 발주 히스토리")
