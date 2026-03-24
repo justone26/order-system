@@ -62,7 +62,7 @@ def save_reorder_data(new_work_df):
             
             # 이미 시트에 있는 상품이면? -> '리오더 수량'만 업데이트
             if target_key in gs_df['match_key'].values:
-                gs_df.loc[gs_df['match_key'] == target_key, '리오더 수량'] = row['리오더 수량']
+                gs_df.loc[gs_df['match_key'] == target_key, '리오더 수량'] += row['리오더 수량']
             # 처음 보는 상품(다른 업체 등)이면? -> 아래에 새로 추가
             else:
                 # 필요한 컬럼만 추출해서 합치기
