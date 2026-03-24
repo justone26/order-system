@@ -303,15 +303,28 @@ with tab1:
 
         st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4", on_change=on_edit_4, hide_index=True)
 
+# (4단계 data_editor 바로 아랫줄부터 시작입니다)
+        st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4", on_change=on_edit_4, hide_index=True)
+
         # --- [5단계: 최종 발주 리스트 요약] ---
         st.divider()
         st.subheader("📋 5단계: 최종 발주 리스트 요약")
+        
+        # 💡 [핵심] 4단계에서 수정된 최신 데이터를 5단계용으로 다시 가져옵니다.
+        df_final_sync = st.session_state.df_raw.copy()
+        
         c5_1, c5_2 = st.columns([2, 1])
         s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 정상 포함 전체보기"], index=0, key="s_filter_v5")
         hist_date_5 = c5_2.date_input("🗓️ 입고 기록 확인 날짜 (연동)", value=hist_date_4, key="date_v5")
 
-        to_order = df_work.copy()
+        # 최신화된 데이터를 사용하여 실시간 계산
+        to_order = df_final_sync.copy()
         to_order['추가발주수량'] = 0 
+        
+        # 일판매량 및 권장발주량 재계산 (4단계와 데이터 일치시킴)
+        v7_f = safe_num(to_order[t7day]); v3_f = safe_num(to_order[t3day])
+        to_order['일판매량'] = (v7_f / 7 if v7_f.sum() > 0 else v3_f / 3).round(0).astype(int)
+        to_order['권장발주량'] = ((to_order['일판매량'] * (lt + ss)) - (safe_num(to_order[avail]) + safe_num(to_order['리오더 수량']))).clip(lower=0).astype(int)
         
         def get_final_status(r):
             total_stock = safe_num(r[avail]) + safe_num(r['리오더 수량'])
@@ -340,7 +353,6 @@ with tab1:
                     if add_qty > 0:
                         st.session_state.df_raw.at[orig_idx, "리오더 수량"] += add_qty
             save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
-            # ✅ st.rerun() 제거 완료 (에러 방지)
 
         st.data_editor(to_order[disp_final], use_container_width=True, key="editor_v5", on_change=on_edit_5, hide_index=True)
 
@@ -350,7 +362,6 @@ with tab1:
             if not order_final.empty:
                 if save_history_to_gsheet(order_final[[item, option, '권장발주량']], log_type="발주"):
                     st.success("✅ 발주 내역 저장 완료!")
-                    # 버튼 클릭 시에만 리런하여 6단계를 갱신합니다.
                     st.rerun() 
             else: st.warning("발주할 항목이 없습니다.")
 
