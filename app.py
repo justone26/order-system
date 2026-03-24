@@ -316,18 +316,18 @@ with tab1:
                 else:
                     st.info("수정된 데이터가 없습니다.")
 
-# --- [5단계: 최종 발주 리스트 요약 - 검색 기능 추가 버전] ---
+# --- [5단계: 최종 발주 리스트 요약 - 검색 및 기록조회 복구 버전] ---
         st.divider()
         st.subheader("📋 5단계: 최종 발주 리스트 요약")
         
-        # 1. 세션 주머니 확인 (추가발주수량 저장용)
+        # 1. 세션 및 데이터 초기화
         if 'add_order_dict' not in st.session_state: 
             st.session_state.add_order_dict = {}
 
-        # 2. 데이터 동기화 및 계산
         to_order = st.session_state.df_raw.copy()
         to_order['추가발주수량'] = to_order.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
         
+        # 실시간 계산 로직
         v7_f = safe_num(to_order[t7day]); v3_f = safe_num(to_order[t3day])
         to_order['일판매량'] = (v7_f / 7 if v7_f.sum() > 0 else v3_f / 3).round(0).astype(int)
         to_order['권장발주량'] = ((to_order['일판매량'] * (lt + ss)) - (safe_num(to_order[avail]) + safe_num(to_order['리오더 수량']))).clip(lower=0).astype(int)
@@ -342,27 +342,38 @@ with tab1:
         to_order['상태'] = to_order.apply(get_final_status, axis=1)
         to_order = to_order.sort_values(by='상태')
 
-        # 💡 [3. 필터 및 검색 UI 추가]
-        c5_1, c5_2 = st.columns([1, 1]) # 5:5 비율로 나눔
+        # 💡 [2. 필터, 검색, 날짜 선택 UI]
+        c5_1, c5_2, c5_3 = st.columns([1.5, 1.5, 1])
         s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 전체보기"], index=0, key="s_filter_v5_final")
-        search_q_v5 = c5_2.text_input("🔍 5단계 상품명 검색", key="search_v5_input") # 사장님이 요청하신 검색창
-        
-        # 필터링 로직 적용
+        search_q_v5 = c5_2.text_input("🔍 상품명 검색", key="search_v5_input")
+        hist_date_5 = c5_3.date_input("🗓️ 기록 확인 날짜", datetime.now(), key="date_v5_input")
+
+        # 💡 [3. 입고 기록 조회 버튼 복구]
+        if st.button("📂 선택 날짜 입고 기록 조회 (5단계)", use_container_width=True):
+            past_hist = load_history_from_gsheet()
+            if not past_hist.empty and '저장시간' in past_hist.columns:
+                past_hist['날짜_only'] = pd.to_datetime(past_hist['저장시간']).dt.date
+                daily_log = past_hist[(past_hist['날짜_only'] == hist_date_5) & (past_hist['구분'] == "입고")]
+                
+                if not daily_log.empty:
+                    st.info(f"📅 {hist_date_5} 입고 내역입니다.")
+                    st.dataframe(daily_log[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
+                else:
+                    st.warning(f"📅 {hist_date_5}에는 입고 내역이 없습니다.")
+
+        # 필터링 및 검색 적용
         if s_filter == "🚨긴급 + ⚠️주의 우선": 
             to_order = to_order[to_order['상태'].isin(["🚨 긴급", "⚠️ 주의"]) | (to_order['권장발주량'] > 0)]
         elif s_filter == "🚨 긴급만 보기": 
             to_order = to_order[to_order['상태'] == "🚨 긴급"]
-            
-        # 💡 상품명 검색어 적용
         if search_q_v5:
             to_order = to_order[to_order[item].astype(str).str.contains(search_q_v5, case=False, na=False)]
 
-        # 4. 표시할 컬럼 설정
+        # 4. 표시 컬럼 및 에디터 폼
         disp_final = ["상태", item, option, vendor, avail, "리오더 수량", "추가발주수량", "권장발주량"]
         actual_cols = [col for col in disp_final if col in to_order.columns]
 
-        # 5. 화면 고정 폼
-        with st.form("form_step_5_with_search"):
+        with st.form("form_step_5_final_v2"):
             edited_v5 = st.data_editor(to_order[actual_cols], use_container_width=True, key="editor_v5_final", hide_index=True)
             submit_v5 = st.form_submit_button("✅ 추가발주수량 확정 및 화면 갱신", use_container_width=True, type="primary")
             
@@ -370,16 +381,13 @@ with tab1:
                 edits_v5 = st.session_state["editor_v5_final"].get("edited_rows", {})
                 if edits_v5:
                     for r_idx_str, change in edits_v5.items():
-                        orig_idx = to_order.index[int(r_idx_str)] # 필터링된 상태에서도 정확한 위치 찾기
+                        orig_idx = to_order.index[int(r_idx_str)]
                         if "추가발주수량" in change:
                             st.session_state.add_order_dict[orig_idx] = int(change["추가발주수량"])
-                    
                     st.success("✅ 수치가 반영되었습니다.")
-                    st.rerun() # 새로고침해서 검색 결과 유지하며 수치 반영
-                else:
-                    st.info("수정된 내용이 없습니다.")
+                    st.rerun()
 
-        # 6. 하단 저장 및 다운로드
+        # 5. 하단 저장 및 다운로드
         st.write("---")
         b1, b2 = st.columns(2)
         if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, key="final_save_btn"):
@@ -389,24 +397,10 @@ with tab1:
                 if save_history_to_gsheet(order_final[[item, option, '최종발주량']], log_type="발주"):
                     st.success("✅ 저장 완료!")
                     st.rerun()
-            else:
-                st.warning("발주할 항목이 없습니다.")
-
-        csv_data = to_order[actual_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        b2.download_button("📥 엑셀(CSV) 다운로드", data=csv_data, file_name=f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True, key="csv_down_btn")
-        # 6. 최종 버튼 및 다운로드
-        b1, b2 = st.columns(2)
-        if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, key="final_save_btn", type="primary"):
-            to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
-            order_final = to_order[to_order['최종발주량'] > 0].copy()
-            if not order_final.empty:
-                if save_history_to_gsheet(order_final[[item, option, '최종발주량']], log_type="발주"):
-                    st.success("✅ 저장 완료!")
-                    st.rerun()
             else: st.warning("발주할 항목이 없습니다.")
 
         csv_data = to_order[actual_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        b2.download_button("📥 엑셀(CSV) 다운로드", data=csv_data, file_name=f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True, key="csv_down_btn")
+        b2.download_button("📥 엑셀(CSV) 다운로드", data=csv_data, file_name=f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
         
 # --- [6단계: 기록 통합 조회 - KeyError 방어 강화] ---
         st.divider()
