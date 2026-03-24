@@ -28,13 +28,13 @@ def get_sheet():
         st.error(f"구글 시트 연결 실패: {e}")
         return None
 
-# gspread 방식으로 히스토리 불러오기
+# 💡 [수정완료] gspread 방식으로 history 탭에서 데이터 불러오기
 def load_history_from_gsheet():
     try:
         sh = get_sheet()
         if sh:
-            # 🚨 실제 구글 시트 하단 탭 이름이 '발주기록'인지 확인 필수!
-            ws = sh.worksheet("발주기록") 
+            # 🚨 사진 속 이름인 'history'로 변경했습니다.
+            ws = sh.worksheet("history") 
             data = ws.get_all_records()
             return pd.DataFrame(data)
         return pd.DataFrame()
@@ -42,12 +42,13 @@ def load_history_from_gsheet():
         st.error(f"❌ 히스토리 불러오기 실패: {e}")
         return pd.DataFrame()
 
-# gspread 방식으로 데이터 저장하기
+# 💡 [수정완료] gspread 방식으로 history 탭에 데이터 저장하기
 def save_history_to_gsheet(df, log_type="발주"):
     try:
         sh = get_sheet()
         if sh:
-            ws = sh.worksheet("발주기록")
+            # 🚨 여기도 'history'로 변경했습니다.
+            ws = sh.worksheet("history")
             # 데이터프레임을 리스트로 변환하여 시트 맨 아래 추가
             ws.append_rows(df.values.tolist())
             return True
