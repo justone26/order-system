@@ -127,7 +127,7 @@ with tab1:
     if st.session_state.get('df_raw') is not None:
         df_curr = st.session_state.df_raw
         cols = df_curr.columns.tolist()
-        
+
         # --- 1단계: 매핑 설정 ---
         st.subheader("⚙️ 1단계: 매핑 설정")
         c1, c2 = st.columns(2)
