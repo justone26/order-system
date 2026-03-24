@@ -29,20 +29,64 @@ def make_match_key(name, opt):
 def save_reorder_data(new_work_df):
     try:
         spreadsheet = get_sheet()
+        if not spreadsheet: return False
+        
         sheet = spreadsheet.sheet1
-        gs_data = pd.DataFrame(sheet.get_all_records())
-        new_work_df['k_tmp'] = new_work_df.apply(lambda r: make_match_key(r['상품명'], r['옵션']), axis=1)
-        if gs_data.empty:
-            final_df = new_work_df.drop(columns=['k_tmp'])
+        
+        # 1. 구글 시트에 이미 있는 데이터 전체 읽어오기
+        raw_gs_data = sheet.get_all_records()
+        if raw_gs_data:
+            gs_df = pd.DataFrame(raw_gs_data)
         else:
-            gs_data['k_tmp'] = gs_data.apply(lambda r: make_match_key(r['상품명'], r['옵션']), axis=1)
-            old_others = gs_data[~gs_data['k_tmp'].isin(new_work_df['k_tmp'])].copy()
-            final_df = pd.concat([old_others, new_work_df], ignore_index=True)
-            final_df = final_df.drop(columns=['k_tmp'])
+            # 시트가 비어있을 경우 기본 틀 생성
+            gs_df = pd.DataFrame(columns=['상품명', '옵션', '리오더 수량'])
+
+        # 2. 비교를 위한 '매칭 키' 생성 함수
+        def make_key(df_in):
+            # 상품명과 옵션을 합쳐서 고유한 열쇠를 만듭니다 (공백/대소문자 무시)
+            return df_in['상품명'].astype(str).str.strip().str.replace(" ", "").str.upper() + \
+                   df_in['옵션'].astype(str).str.strip().str.replace(" ", "").str.upper()
+
+        # 기존 데이터에 키 추가
+        if not gs_df.empty:
+            gs_df['match_key'] = make_key(gs_df)
+        else:
+            gs_df['match_key'] = ""
+
+        # 새로 들어온 데이터(엑셀 등)에 키 추가
+        new_work_df['match_key'] = make_key(new_work_df)
+
+        # 3. 데이터 병합 (Upsert 로직)
+        for _, row in new_work_df.iterrows():
+            target_key = row['match_key']
+            
+            # 이미 시트에 있는 상품이면? -> '리오더 수량'만 업데이트
+            if target_key in gs_df['match_key'].values:
+                gs_df.loc[gs_df['match_key'] == target_key, '리오더 수량'] = row['리오더 수량']
+            # 처음 보는 상품(다른 업체 등)이면? -> 아래에 새로 추가
+            else:
+                # 필요한 컬럼만 추출해서 합치기
+                new_item = pd.DataFrame([{
+                    '상품명': row['상품명'],
+                    '옵션': row['옵션'],
+                    '리오더 수량': row['리오더 수량']
+                }])
+                gs_df = pd.concat([gs_df, new_item], ignore_index=True)
+
+        # 4. 불필요한 키 삭제 및 정리
+        final_df = gs_df.drop(columns=['match_key'], errors='ignore').fillna(0)
+        
+        # 중복된 행이 혹시 생기면 마지막 것만 남기기 (안전장치)
+        final_df = final_df.drop_duplicates(subset=['상품명', '옵션'], keep='last')
+
+        # 5. 시트 최종 업데이트
         sheet.clear()
-        sheet.update([final_df.columns.values.tolist()] + final_df.fillna(0).values.tolist())
+        # 헤더 포함 전체 데이터 쓰기
+        sheet.update([final_df.columns.values.tolist()] + final_df.values.tolist())
         return True
-    except: return False
+    except Exception as e:
+        st.error(f"⚠️ 데이터 누적 저장 중 오류 발생: {e}")
+        return False
 
 def save_history_to_gsheet(df, log_type="입고"):
     try:
