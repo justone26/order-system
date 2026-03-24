@@ -237,7 +237,7 @@ with tab1:
         st.divider()
         st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
         
-        # 1. 원본 데이터 복사 및 입고수량 칸 생성 (값이 유지되도록 세션에 저장)
+        # 1. 데이터 복사 및 입고수량 칸 생성 (세션 활용으로 수치 유지)
         df_work = st.session_state.df_raw.copy()
         if "리오더입고수량" not in st.session_state.df_raw.columns:
             st.session_state.df_raw["리오더입고수량"] = 0
@@ -250,11 +250,10 @@ with tab1:
         def simple_key(n): return str(n).strip().replace(" ", "").upper() if not pd.isna(n) else ""
         df_work['unique_key'] = df_work[item].apply(simple_key) + df_work[option].apply(simple_key)
 
+        # 과거 기록 매핑
         past_hist = load_history_from_gsheet()
         df_work['과거 리오더입고'] = 0
-        
-        # 💡 [핵심] 입고 수량 수치가 화면에 유지되도록 세션 데이터를 연결
-        df_work['리오더입고수량'] = st.session_state.df_raw['리오더입고수량']
+        df_work['리오더입고수량'] = st.session_state.df_raw['리오더입고수량'] # 세션값 연결
         
         if not past_hist.empty and '저장시간' in past_hist.columns and '구분' in past_hist.columns:
             try:
@@ -267,64 +266,54 @@ with tab1:
             except:
                 pass
 
+        # 판매량 및 발주량 계산
         v7 = safe_num(df_work[t7day]); v3 = safe_num(df_work[t3day])
         df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
         df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (safe_num(df_work[avail]) + safe_num(df_work['리오더 수량']))).clip(lower=0).astype(int)
 
+        # 필터 적용
         if filter_m == "정상만": df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
         elif filter_m == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
         if search_q: df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
 
         valid_cols = [sold_out, vendor, v_item, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량"]
         
-        # 💡 [핵심] 실시간 저장 및 수치 유지 로직 (st.rerun 제거 버전)
         def on_edit_4():
             changes = st.session_state["editor_v4"]["edited_rows"]
             for r_idx_str, change in changes.items():
                 orig_idx = df_work.index[int(r_idx_str)]
-                
                 if "리오더 수량" in change:
                     st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
-                
                 if "리오더입고수량" in change:
-                    new_in_qty = int(change["리오더입고수량"])
-                    old_in_qty = st.session_state.df_raw.at[orig_idx, "리오더입고수량"]
-                    
-                    if new_in_qty > old_in_qty:
-                        diff = new_in_qty - old_in_qty
-                        curr_reorder = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
-                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr_reorder - diff)
+                    new_in = int(change["리오더입고수량"])
+                    old_in = st.session_state.df_raw.at[orig_idx, "리오더입고수량"]
+                    if new_in > old_in:
+                        diff = new_in - old_in
+                        curr = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
+                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr - diff)
                         save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], diff]], columns=['상품명', '옵션', '수량']), log_type="입고")
-                    
-                    st.session_state.df_raw.at[orig_idx, "리오더입고수량"] = new_in_qty
-
+                    st.session_state.df_raw.at[orig_idx, "리오더입고수량"] = new_in
             save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
-            # ✅ st.rerun()을 삭제했습니다. 스트림릿이 알아서 새로고침합니다.
+            # 💡 st.rerun() 제거하여 화면 튀는 현상 방지
 
         st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4", on_change=on_edit_4, hide_index=True)
 
-# --- [5단계: 최종 발주 리스트 요약 - 수치 유지 및 엑셀 연동 버전] ---
+        # --- [5단계: 최종 발주 리스트 요약] ---
         st.divider()
         st.subheader("📋 5단계: 최종 발주 리스트 요약")
         
-        # 1. 4단계 데이터 가져오기
+        # 4단계 수정사항이 즉시 반영된 최신 데이터 동기화
         df_final_sync = st.session_state.df_raw.copy()
-        
-        # 💡 [핵심] 추가발주수량이 세션에 없으면 새로 만듭니다. (값 유지용)
-        if 'add_order_dict' not in st.session_state:
-            st.session_state.add_order_dict = {} # {인덱스: 수량} 형태로 저장
+        if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
 
         c5_1, c5_2 = st.columns([2, 1])
         s_filter = c5_1.selectbox("🎯 상태 필터", ["🚨긴급 + ⚠️주의 우선", "🚨 긴급만 보기", "✅ 정상 포함 전체보기"], index=0, key="s_filter_v5")
         hist_date_5 = c5_2.date_input("🗓️ 입고 기록 확인 날짜 (연동)", value=hist_date_4, key="date_v5")
 
         to_order = df_final_sync.copy()
-        
-        # 💡 [핵심] 세션에 저장된 추가발주수량을 데이터프레임에 매핑합니다.
-        to_order['unique_idx'] = to_order.index # 고유 인덱스 활용
+        to_order['unique_idx'] = to_order.index
         to_order['추가발주수량'] = to_order['unique_idx'].map(st.session_state.add_order_dict).fillna(0).astype(int)
 
-        # 재계산 로직 (기존과 동일)
         v7_f = safe_num(to_order[t7day]); v3_f = safe_num(to_order[t3day])
         to_order['일판매량'] = (v7_f / 7 if v7_f.sum() > 0 else v3_f / 3).round(0).astype(int)
         to_order['권장발주량'] = ((to_order['일판매량'] * (lt + ss)) - (safe_num(to_order[avail]) + safe_num(to_order['리오더 수량']))).clip(lower=0).astype(int)
@@ -348,38 +337,29 @@ with tab1:
         disp_final = ["상태", item, option, vendor, avail, "리오더 수량", "추가발주수량", "권장발주량"]
         actual_cols = [c for c in disp_final if c in to_order.columns]
         
-        # 💡 [핵심] 5단계 편집 시 값을 세션에 저장하는 콜백
         def on_edit_5():
             edits = st.session_state["editor_v5"]["edited_rows"]
             for r_idx_str, change in edits.items():
                 orig_idx = to_order.index[int(r_idx_str)]
                 if "추가발주수량" in change:
-                    new_val = int(change["추가발주수량"])
-                    # 1. 세션 딕셔너리에 저장 (화면 유지용)
-                    st.session_state.add_order_dict[orig_idx] = new_val
-                    
-                    # 2. 실제 리오더 수량에도 반영 (선택사항: 원본 데이터를 바꾸고 싶을 때만)
-                    # st.session_state.df_raw.at[orig_idx, "리오더 수량"] += (new_val - 기존값) 로직이 필요할 수 있음
+                    st.session_state.add_order_dict[orig_idx] = int(change["추가발주수량"])
+            # 💡 st.rerun() 제거로 위치 고정
 
         st.data_editor(to_order[actual_cols], use_container_width=True, key="editor_v5", on_change=on_edit_5, hide_index=True)
 
         b1, b2 = st.columns(2)
         if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, type="primary"):
-            # 권장발주량 + 추가발주수량이 있는 것들 저장
             to_order['최종발주량'] = to_order['권장발주량'] + to_order['추가발주수량']
             order_final = to_order[to_order['최종발주량'] > 0].copy()
             if not order_final.empty:
                 if save_history_to_gsheet(order_final[[item, option, '최종발주량']], log_type="발주"):
                     st.success("✅ 발주 내역 저장 완료!")
-                    # 저장 후에는 추가발주수량 초기화 여부 결정 (보통은 비웁니다)
-                    # st.session_state.add_order_dict = {} 
-                    st.rerun()
+                    st.rerun() # 저장 후엔 기록 갱신을 위해 리런
             else: st.warning("발주할 항목이 없습니다.")
 
-        # 💡 [개선] 이제 다운로드 받는 CSV에 사장님이 입력한 '추가발주수량'이 포함됩니다!
         csv_v5 = to_order[actual_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         b2.download_button("📥 엑셀(CSV) 다운로드", data=csv_v5, file_name=f"발주서_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
-
+        
 # --- [6단계: 기록 통합 조회 - KeyError 방어 강화] ---
         st.divider()
         st.subheader("📜 6단계: 제작 상품 입고 및 발주 히스토리")
