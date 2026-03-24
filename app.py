@@ -70,7 +70,9 @@ def find_idx(cols, target_keywords):
 
 def safe_num(val):
     res = pd.to_numeric(val, errors='coerce')
-    return res.fillna(0) if hasattr(res, 'fillna') else (0 if pd.isna(res) else res)
+    if isinstance(res, pd.Series):
+        return res.fillna(0)
+    return 0 if pd.isna(res) else res
 
 st.set_page_config(layout="wide", page_title="제작상품 재고관리")
 st.title("🏭 제작 상품 재고 관리 시스템")
@@ -86,7 +88,7 @@ with tab1:
     uploaded_file = st.file_uploader("엑셀 파일을 올려주세요", type=['xlsx', 'xls', 'csv'])
     
     c_btn, _ = st.columns([1, 4])
-    if c_btn.button("📂 6단계: 이전 데이터 로드", use_container_width=True):
+    if c_btn.button("📂 6단계: 이전 데이터 로드", width='stretch'):
         try:
             sheet = get_sheet().sheet1
             gs_df = pd.DataFrame(sheet.get_all_records())
@@ -143,7 +145,7 @@ with tab1:
         l1, l2 = st.columns(2)
         lt = l1.number_input("리드타임 (일)", value=10)
         ss = l2.number_input("안전재고 (일 수)", value=7)
-        if st.button("📊 분석 실행", use_container_width=True):
+        if st.button("📊 분석 실행", width='stretch'):
             st.session_state.analyzed = True
             st.rerun()
 
@@ -151,6 +153,12 @@ with tab1:
         st.divider()
         st.subheader("📝 재고 관리 및 입고 처리")
         df_all = st.session_state.df_raw.copy()
+        
+        # 에러 방지용 데이터 타입 강제 변환
+        df_all[v_item] = df_all[v_item].astype(str)
+        df_all[item] = df_all[item].astype(str)
+        df_all[option] = df_all[option].astype(str)
+        
         df_all['unique_key'] = df_all.apply(lambda r: make_match_key(r[item], r[option]), axis=1)
         f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
         search_q = f_c1.text_input("🔍 상품명 검색")
@@ -183,9 +191,8 @@ with tab1:
         if search_q:
             df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
         
-        # 공급처 상품명과 등록일을 테이블에 추가
         disp4 = [reg_date, sold_out, vendor, v_item, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량", "unique_key"]
-        edited4 = st.data_editor(df_work[disp4], use_container_width=True, hide_index=True, key="ed4", column_config={"unique_key": None})
+        edited4 = st.data_editor(df_work[disp4], width='stretch', hide_index=True, key="ed4", column_config={"unique_key": None})
         
         if st.button("💾 리오더/입고 데이터 저장"):
             for _, row in edited4.iterrows():
@@ -224,15 +231,14 @@ with tab1:
         df_final['sort_order'] = df_final['상태'].map(stat_order)
         df_final = df_final.sort_values(by=['sort_order', item]).drop(columns=['sort_order'])
         
-        # 요약 테이블에도 추가 정보 반영
         disp5 = ["상태", reg_date, item, option, v_item, vendor, avail, "리오더 수량", "추가 리오더", "과거 리오더입고", "권장발주량", "최종발주량", "unique_key"]
-        edited5 = st.data_editor(df_final[disp5], use_container_width=True, hide_index=True, key="ed5", column_config={"unique_key": None})
+        edited5 = st.data_editor(df_final[disp5], width='stretch', hide_index=True, key="ed5", column_config={"unique_key": None})
         
         for _, row in edited5.iterrows():
             st.session_state.extra_order_dict[row["unique_key"]] = int(row["추가 리오더"])
             
         c_btn1, c_btn2 = st.columns(2)
-        if c_btn1.button("📄 발주 기록 저장", use_container_width=True):
+        if c_btn1.button("📄 발주 기록 저장", width='stretch'):
             order_data = edited5[edited5['최종발주량'] > 0]
             if not order_data.empty:
                 save_history_to_gsheet(order_data[[item, option, '최종발주량']].rename(columns={item:'상품명', option:'옵션', '최종발주량':'수량'}), "발주")
@@ -242,8 +248,8 @@ with tab1:
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_final[disp5[:-1]].to_excel(writer, index=False, sheet_name='발주리스트')
         excel_data = output.getvalue()
-        c_btn2.download_button(label="📥 엑셀 다운로드", data=excel_data, file_name=f"OrderList_{datetime.now().strftime('%m%d_%H%M')}.xlsx", mime="application/vnd.ms-excel", use_container_width=True)
+        c_btn2.download_button(label="📥 엑셀 다운로드", data=excel_data, file_name=f"OrderList_{datetime.now().strftime('%m%d_%H%M')}.xlsx", mime="application/vnd.ms-excel", width='stretch')
 
 with tab2:
     st.subheader("📜 히스토리")
-    st.dataframe(load_history_from_gsheet().sort_values(by="저장시간", ascending=False), use_container_width=True)
+    st.dataframe(load_history_from_gsheet().sort_values(by="저장시간", ascending=False), width='stretch')
