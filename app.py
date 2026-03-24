@@ -83,7 +83,7 @@ if "extra_order_dict" not in st.session_state:
 if 'analyzed' not in st.session_state:
     st.session_state.analyzed = False
 
-tab1, tab2 = st.tabs(["📊 제작 상품 관리", "📜 히스토리 조회"])
+tab1, tab2 = st.tabs(["✂️ 제작 상품 관리", "🌙 동대문 상품 관리"])
 
 with tab1:
     uploaded_file = st.file_uploader("엑셀 파일을 올려주세요", type=['xlsx', 'xls', 'csv'])
