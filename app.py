@@ -5,6 +5,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import io
 
+# 1. 구글 시트 연결 함수
 def get_sheet():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
@@ -16,9 +17,11 @@ def get_sheet():
     except:
         return None
 
+# 2. 매칭 키 생성 (공백 제거 및 대문자화)
 def make_match_key(name, opt):
     return str(name).strip().replace(" ", "").upper() + str(opt).strip().replace(" ", "").upper()
 
+# 3. 구글 시트에 리오더 수량 업데이트
 def save_reorder_data(new_work_df):
     try:
         spreadsheet = get_sheet()
@@ -38,6 +41,7 @@ def save_reorder_data(new_work_df):
     except:
         return False
 
+# 4. 히스토리 저장
 def save_history_to_gsheet(df, log_type="발주"):
     try:
         spreadsheet = get_sheet()
@@ -53,6 +57,7 @@ def save_history_to_gsheet(df, log_type="발주"):
     except:
         return False
 
+# 5. 히스토리 로드
 def load_history_from_gsheet():
     try:
         spreadsheet = get_sheet()
@@ -62,19 +67,22 @@ def load_history_from_gsheet():
     except:
         return pd.DataFrame(columns=["저장시간", "구분", "상품명", "옵션", "수량"])
 
+# 6. 컬럼 인덱스 자동 찾기
 def find_idx(cols, target_keywords):
     for keyword in target_keywords:
         for i, col in enumerate(cols):
             if keyword in str(col): return i
     return 0
 
+# 7. 숫자 안전 변환
 def safe_num(val):
     res = pd.to_numeric(val, errors='coerce')
     if isinstance(res, pd.Series):
         return res.fillna(0)
     return 0 if pd.isna(res) else res
 
-st.set_page_config(layout="wide", page_title="제작상품 재고관리")
+# 메인 UI 설정
+st.set_page_config(layout="wide", page_title="저스트원 재고관리")
 st.title("🏭 제작 상품 재고 관리 시스템")
 
 if "extra_order_dict" not in st.session_state:
@@ -88,7 +96,7 @@ with tab1:
     uploaded_file = st.file_uploader("엑셀 파일을 올려주세요", type=['xlsx', 'xls', 'csv'])
     
     c_btn, _ = st.columns([1, 4])
-    if c_btn.button("📂 6단계: 이전 데이터 로드", width='stretch'):
+    if c_btn.button("📂 이전 데이터 로드", width='stretch'):
         try:
             sheet = get_sheet().sheet1
             gs_df = pd.DataFrame(sheet.get_all_records())
@@ -154,11 +162,10 @@ with tab1:
         st.subheader("📝 재고 관리 및 입고 처리")
         df_all = st.session_state.df_raw.copy()
         
-        # 에러 방지용 데이터 타입 강제 변환
-        df_all[v_item] = df_all[v_item].astype(str)
-        df_all[item] = df_all[item].astype(str)
-        df_all[option] = df_all[option].astype(str)
-        
+        # 텍스트 형식 강제 지정 (에러 방지)
+        for col in [v_item, item, option]:
+            df_all[col] = df_all[col].astype(str)
+            
         df_all['unique_key'] = df_all.apply(lambda r: make_match_key(r[item], r[option]), axis=1)
         f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
         search_q = f_c1.text_input("🔍 상품명 검색")
@@ -194,7 +201,7 @@ with tab1:
         disp4 = [reg_date, sold_out, vendor, v_item, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량", "unique_key"]
         edited4 = st.data_editor(df_work[disp4], width='stretch', hide_index=True, key="ed4", column_config={"unique_key": None})
         
-        if st.button("💾 리오더/입고 데이터 저장"):
+        if st.button("💾 데이터 저장"):
             for _, row in edited4.iterrows():
                 target_key = row["unique_key"]
                 idx_list = st.session_state.df_raw[st.session_state.df_raw.apply(lambda r: make_match_key(r[item], r[option]), axis=1) == target_key].index
@@ -248,7 +255,7 @@ with tab1:
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_final[disp5[:-1]].to_excel(writer, index=False, sheet_name='발주리스트')
         excel_data = output.getvalue()
-        c_btn2.download_button(label="📥 엑셀 다운로드", data=excel_data, file_name=f"OrderList_{datetime.now().strftime('%m%d_%H%M')}.xlsx", mime="application/vnd.ms-excel", width='stretch')
+        c_btn2.download_button(label="📥 엑셀 다운로드", data=excel_data, file_name=f"Order_{datetime.now().strftime('%m%d_%H%M')}.xlsx", mime="application/vnd.ms-excel", width='stretch')
 
 with tab2:
     st.subheader("📜 히스토리")
