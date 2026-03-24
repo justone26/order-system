@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import io
 
 # --- [1. 공통 함수 및 구글 시트 로직] ---
 def get_sheet():
@@ -11,54 +12,36 @@ def get_sheet():
         scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        # 사장님 시트 ID
         spreadsheet_key = "1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg"
         return client.open_by_key(spreadsheet_key)
     except:
         return None
 
 def make_match_key(name, opt):
-    """상품명과 옵션에서 공백을 제거하고 대문자로 통일하여 고유 키 생성"""
-    return str(name).replace(" ", "").upper() + str(opt).replace(" ", "").upper()
+    return str(name).strip().replace(" ", "").upper() + str(opt).strip().replace(" ", "").upper()
 
 def save_reorder_data(new_work_df):
-    """[핵심] 기존 타 업체 데이터를 유지하면서 현재 작업중인 데이터만 업데이트/추가 저장"""
     try:
         spreadsheet = get_sheet()
         sheet = spreadsheet.sheet1
-        
-        # 1. 시트에 있는 기존 데이터 전체 로드
         gs_data = pd.DataFrame(sheet.get_all_records())
-        
-        # 2. 작업 중인 데이터 전처리 (저장용 컬럼명 통일)
-        # 4단계에서 넘어온 데이터는 '상품명', '옵션', '리오더 수량' 컬럼을 가짐
         new_work_df['k_tmp'] = new_work_df.apply(lambda r: make_match_key(r['상품명'], r['옵션']), axis=1)
-        
         if gs_data.empty:
             final_df = new_work_df.drop(columns=['k_tmp'])
         else:
             gs_data['k_tmp'] = gs_data.apply(lambda r: make_match_key(r['상품명'], r['옵션']), axis=1)
-            
-            # 3. [중요] 기존 시트 데이터 중 현재 작업 중인 상품이 '아닌' 것들(타 업체)만 추출
             old_others = gs_data[~gs_data['k_tmp'].isin(new_work_df['k_tmp'])].copy()
-            
-            # 4. 타 업체 데이터 + 현재 업데이트된 데이터 합치기
             final_df = pd.concat([old_others, new_work_df], ignore_index=True)
             final_df = final_df.drop(columns=['k_tmp'])
-
-        # 5. 시트 업데이트 (기존 내용 지우고 합쳐진 최종본 쓰기)
         sheet.clear()
         sheet.update([final_df.columns.values.tolist()] + final_df.fillna(0).values.tolist())
         return True
-    except Exception as e:
-        st.error(f"저장 중 오류 발생: {e}")
-        return False
+    except: return False
 
 def save_history_to_gsheet(df, log_type="발주"):
     try:
         spreadsheet = get_sheet()
-        try:
-            hist_sheet = spreadsheet.worksheet("history")
+        try: hist_sheet = spreadsheet.worksheet("history")
         except:
             hist_sheet = spreadsheet.add_worksheet(title="history", rows="1000", cols="20")
             hist_sheet.append_row(["저장시간", "구분", "상품명", "옵션", "수량"])
@@ -72,9 +55,9 @@ def load_history_from_gsheet():
     try:
         spreadsheet = get_sheet()
         hist_sheet = spreadsheet.worksheet("history")
-        df = pd.DataFrame(hist_sheet.get_all_records())
-        return df
-    except: return pd.DataFrame()
+        data = hist_sheet.get_all_records()
+        return pd.DataFrame(data) if data else pd.DataFrame(columns=["저장시간", "구분", "상품명", "옵션", "수량"])
+    except: return pd.DataFrame(columns=["저장시간", "구분", "상품명", "옵션", "수량"])
 
 def find_idx(cols, target_keywords):
     for keyword in target_keywords:
@@ -82,57 +65,55 @@ def find_idx(cols, target_keywords):
             if keyword in str(col): return i
     return 0
 
+def safe_num(val):
+    res = pd.to_numeric(val, errors='coerce')
+    return res.fillna(0) if hasattr(res, 'fillna') else (0 if pd.isna(res) else res)
+
 # --- [2. 앱 설정 및 세션 초기화] ---
-st.set_page_config(layout="wide", page_title="재고 관리 시스템")
-st.title("📦 통합 재고 관리 시스템")
+st.set_page_config(layout="wide", page_title="제작상품 재고관리")
+st.title("🏭 제작 상품 재고 관리 시스템")
 
 if "extra_order_dict" not in st.session_state: st.session_state.extra_order_dict = {}
 if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 
-tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
+tab1, tab2 = st.tabs(["📊 제작 상품 관리", "📜 히스토리 조회"])
 
-# --- [제작 상품 관리 탭] ---
 with tab1:
-    st.subheader("📁 데이터 업로드 (제작상품)")
-    if st.button("🔄 데이터 초기화"):
-        for key in ['df_raw', 'analyzed', 'last_filename']:
-            if key in st.session_state: del st.session_state[key]
-        st.rerun()
+    # --- 0단계: 업로드 및 6단계 기능 ---
+    c_up1, c_up2 = st.columns([3, 1])
+    uploaded_file = c_up1.file_uploader("엑셀 파일을 올려주세요", type=['xlsx', 'xls', 'csv'])
+    
+    if c_up2.button("🔄 6단계: 이전 리오더 데이터 불러오기", use_container_width=True):
+        try:
+            sheet = get_sheet().sheet1
+            gs_df = pd.DataFrame(sheet.get_all_records())
+            if not gs_df.empty:
+                st.session_state.df_raw = gs_df.rename(columns={'상품명': '기존상품명', '옵션': '기존옵션'})
+                st.success("데이터를 성공적으로 불러왔습니다.")
+            else: st.warning("데이터가 비어있습니다.")
+        except: st.error("시트 연결에 실패했습니다.")
 
-    uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="prod_upload")
-
-    if uploaded_file is not None:
-        # 파일이 새로 올라왔을 때만 실행
+    if uploaded_file:
         if 'df_raw' not in st.session_state or st.session_state.get('last_filename') != uploaded_file.name:
             df_new = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
             df_new.columns = df_new.columns.str.strip()
-            df_new = df_new.loc[:, ~df_new.columns.duplicated()] 
-            
             try:
-                # 구글 시트에서 기존 데이터 매핑
                 sheet = get_sheet().sheet1
-                gs_data = pd.DataFrame(sheet.get_all_records())
-                
-                # 업로드된 파일의 상품명/옵션 컬럼 찾기
-                t_item = next((c for c in df_new.columns if '상품명' in c), df_new.columns[0])
-                t_opt = next((c for c in df_new.columns if '옵션' in c), df_new.columns[1])
-                
-                if not gs_data.empty and '리오더 수량' in gs_data.columns:
+                gs_df = pd.DataFrame(sheet.get_all_records())
+                if not gs_df.empty and '리오더 수량' in gs_df.columns:
+                    t_item = next((c for c in df_new.columns if '상품명' in c), df_new.columns[0])
+                    t_opt = next((c for c in df_new.columns if '옵션' in c), df_new.columns[1])
                     df_new['k_tmp'] = df_new.apply(lambda r: make_match_key(r[t_item], r[t_opt]), axis=1)
-                    gs_data['k_tmp'] = gs_data.apply(lambda r: make_match_key(r['상품명'], r['옵션']), axis=1)
-                    reorder_map = gs_data.set_index('k_tmp')['리오더 수량'].to_dict()
-                    df_new['리오더 수량'] = df_new['k_tmp'].map(reorder_map).fillna(0).astype(int)
+                    gs_df['k_tmp'] = gs_df.apply(lambda r: make_match_key(r['상품명'], r['옵션']), axis=1)
+                    rmap = gs_df.set_index('k_tmp')['리오더 수량'].to_dict()
+                    df_new['리오더 수량'] = df_new['k_tmp'].map(rmap).fillna(0).astype(int)
                     df_new.drop(columns=['k_tmp'], inplace=True)
-                else:
-                    df_new['리오더 수량'] = 0
-            except:
-                df_new['리오더 수량'] = 0
-                
+                else: df_new['리오더 수량'] = 0
+            except: df_new['리오더 수량'] = 0
             st.session_state.df_raw = df_new
             st.session_state.last_filename = uploaded_file.name
             st.rerun()
 
-    # 데이터가 로드된 후 매핑 설정 화면 표시
     if st.session_state.get('df_raw') is not None:
         df_curr = st.session_state.df_raw
         cols = df_curr.columns.tolist()
