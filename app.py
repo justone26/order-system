@@ -1,159 +1,104 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import time
 
-# --- [1. 기본 함수 설정] ---
+# --- [1. 기본 설정 및 함수] ---
 def get_sheet():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
         scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        spreadsheet_key = "1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg"
-        return client.open_by_key(spreadsheet_key)
+        return client.open_by_key("1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg")
     except: return None
 
-def load_history_from_gsheet():
-    try:
-        spreadsheet = get_sheet()
-        hist_sheet = spreadsheet.worksheet("history")
-        data = hist_sheet.get_all_records()
-        return pd.DataFrame(data)
-    except: return pd.DataFrame()
-
-def make_match_key(name, opt):
-    return str(name).strip().replace(" ", "").upper() + str(opt).strip().replace(" ", "").upper()
-
-def save_reorder_data(new_work_df):
-    try:
-        spreadsheet = get_sheet()
-        sheet = spreadsheet.sheet1
-        gs_data = pd.DataFrame(sheet.get_all_records())
-        new_work_df['k_tmp'] = new_work_df.apply(lambda r: make_match_key(r['상품명'], r['옵션']), axis=1)
-        if gs_data.empty:
-            final_df = new_work_df.drop(columns=['k_tmp'])
-        else:
-            gs_data['k_tmp'] = gs_data.apply(lambda r: make_match_key(r['상품명'], r['옵션']), axis=1)
-            old_others = gs_data[~gs_data['k_tmp'].isin(new_work_df['k_tmp'])].copy()
-            final_df = pd.concat([old_others, new_work_df], ignore_index=True)
-            final_df = final_df.drop(columns=['k_tmp'])
-        sheet.clear()
-        sheet.update([final_df.columns.values.tolist()] + final_df.fillna(0).values.tolist())
-        return True
-    except: return False
-
-def save_history_to_gsheet(df, log_type="입고"):
-    try:
-        spreadsheet = get_sheet()
-        try: hist_sheet = spreadsheet.worksheet("history")
-        except:
-            hist_sheet = spreadsheet.add_worksheet(title="history", rows="1000", cols="20")
-            hist_sheet.append_row(["저장시간", "구분", "상품명", "옵션", "수량"])
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        rows_to_add = [[now_str, log_type] + [str(x) for x in row] for row in df.values.tolist()]
-        hist_sheet.append_rows(rows_to_add)
-        return True
-    except: return False
-
-def find_idx(cols, target_keywords):
-    for keyword in target_keywords:
-        for i, col in enumerate(cols):
-            if keyword in str(col): return i
+def find_idx(cols, keywords):
+    for k in keywords:
+        for i, c in enumerate(cols):
+            if k in str(c): return i
     return 0
 
-def safe_num(val):
-    res = pd.to_numeric(val, errors='coerce')
-    if isinstance(res, pd.Series): return res.fillna(0)
-    return 0 if pd.isna(res) else res
+# --- [2. 앱 상태 초기화] ---
+if 'df_raw' not in st.session_state: st.session_state.df_raw = None
+if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 
-# --- [2. 앱 초기 설정] ---
 st.set_page_config(layout="wide", page_title="저스트원 재고관리")
 st.title("🏭 저스트원 통합 재고 관리 시스템")
 
-if "extra_order_dict" not in st.session_state: st.session_state.extra_order_dict = {}
-if 'analyzed' not in st.session_state: st.session_state.analyzed = False
+# --- [3. 1단계: 데이터 로드] ---
+st.subheader("📂 1단계: 데이터 불러오기")
+up_file = st.file_uploader("엑셀/CSV 업로드", type=['xlsx', 'xls', 'csv'], key="main_upload")
 
-tab1, tab2 = st.tabs(["✂️ 제작 상품 관리", "🌙 동대문 상품 관리"])
+if up_file:
+    # 파일이 새로 올라오면 상태 초기화
+    if st.session_state.get('last_filename') != up_file.name:
+        st.session_state.df_raw = pd.read_excel(up_file) if not up_file.name.endswith('.csv') else pd.read_csv(up_file)
+        st.session_state.df_raw.columns = st.session_state.df_raw.columns.str.strip()
+        st.session_state.last_filename = up_file.name
+        st.session_state.analyzed = False
 
-# --- [탭 1: 제작 상품 관리] ---
-with tab1:
-    uploaded_file = st.file_uploader("엑셀 파일을 올려주세요", type=['xlsx', 'xls', 'csv'], key="t1_up")
+# --- [4. 2단계: 10개 항목 매핑 및 조건 설정] ---
+if st.session_state.get('df_raw') is not None:
+    df_curr = st.session_state.df_raw
+    cols = df_curr.columns.tolist()
     
-    if st.button("📂 구글 시트 데이터 로드", use_container_width=True):
-        try:
-            sheet = get_sheet().sheet1
-            gs_df = pd.DataFrame(sheet.get_all_records())
-            if not gs_df.empty:
-                st.session_state.df_raw = gs_df.copy()
-                st.session_state.analyzed = False
-                st.rerun()
-        except: st.error("시트 연결 실패")
-
-    if uploaded_file:
-        if 'df_raw' not in st.session_state or st.session_state.get('last_fn') != uploaded_file.name:
-            df_new = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
-            df_new.columns = df_new.columns.str.strip()
-            # 리오더 수량 매핑
-            try:
-                sheet = get_sheet().sheet1
-                gs_df = pd.DataFrame(sheet.get_all_records())
-                if not gs_df.empty and '리오더 수량' in gs_df.columns:
-                    t_item = next((c for c in df_new.columns if '상품명' in c), df_new.columns[0])
-                    t_opt = next((c for c in df_new.columns if '옵션' in c), df_new.columns[1])
-                    df_new['k_tmp'] = df_new.apply(lambda r: make_match_key(r[t_item], r[t_opt]), axis=1)
-                    gs_df['k_tmp'] = gs_df.apply(lambda r: make_match_key(r['상품명'], r['옵션']), axis=1)
-                    rmap = gs_df.set_index('k_tmp')['리오더 수량'].to_dict()
-                    df_new['리오더 수량'] = df_new['k_tmp'].map(rmap).fillna(0).astype(int)
-                    df_new.drop(columns=['k_tmp'], inplace=True)
-                else: df_new['리오더 수량'] = 0
-            except: df_new['리오더 수량'] = 0
-            st.session_state.df_raw = df_new
-            st.session_state.last_fn = uploaded_file.name
-            st.session_state.analyzed = False
-            st.rerun()
-
-    if st.session_state.get('df_raw') is not None:
-        df_curr = st.session_state.df_raw
-        cols = df_curr.columns.tolist()
-        
-        st.subheader("⚙️ 3단계: 매핑 설정")
-        c_l, c_r = st.columns(2)
-        with c_l:
-            sold_out = st.selectbox("품절 여부", cols, index=find_idx(cols, ['품절']))
-            vendor = st.selectbox("공급처", cols, index=find_idx(cols, ['공급처']))
-            v_item = st.selectbox("공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
-            item = st.selectbox("상품명", cols, index=find_idx(cols, ['상품명']))
-            option = st.selectbox("옵션", cols, index=find_idx(cols, ['옵션']))
-        with c_r:
-            reg_date = st.selectbox("등록일", cols, index=find_idx(cols, ['등록일']))
-            stock = st.selectbox("정상재고", cols, index=find_idx(cols, ['정상재고']))
-            avail = st.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
-            t3day = st.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
-            t7day = st.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
-
-        lt = st.number_input("리드타임 (일)", value=7)
-        ss = st.number_input("안전재고 (일 수)", value=3)
-        if st.button("📊 분석 실행", use_container_width=True):
-            st.session_state.analyzed = True
-            st.rerun()
-            
-if st.session_state.get('analyzed'):
-    # 데이터가 정말로 로드되었는지 최종 확인 (방어막)
-    if st.session_state.get('df_raw') is None:
-        st.warning("⚠️ 먼저 상단에서 데이터를 로드해 주세요.")
-        st.stop() # 데이터 없으면 아래 로직 실행 안 하고 멈춤
-
-    # --- [4단계: 데이터 편집 및 재고 관리] ---
     st.divider()
-    st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
-    df_work = st.session_state.df_raw.copy() # 이제 안전하게 복사됩니다!
+    st.subheader("⚙️ 2단계: 매핑 설정 (10개 항목)")
+    c_l, c_r = st.columns(2)
     
-num_cols = [stock, avail, "리오더 수량", t7day, t3day]
-for c in num_cols:
-    if c in df_work.columns:
-        df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
+    with c_l:
+        # 왼쪽 5개 항목
+        sold_out = st.selectbox("1. 품절 여부", cols, index=find_idx(cols, ['품절']))
+        vendor = st.selectbox("2. 공급처", cols, index=find_idx(cols, ['공급처']))
+        v_item = st.selectbox("3. 공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
+        item = st.selectbox("4. 상품명", cols, index=find_idx(cols, ['상품명']))
+        option = st.selectbox("5. 옵션", cols, index=find_idx(cols, ['옵션']))
+        
+    with c_r:
+        # 오른쪽 5개 항목
+        reg_date = st.selectbox("6. 등록일", cols, index=find_idx(cols, ['등록일']))
+        stock = st.selectbox("7. 정상재고", cols, index=find_idx(cols, ['정상재고']))
+        avail = st.selectbox("8. 가용재고", cols, index=find_idx(cols, ['가용재고']))
+        t3day = st.selectbox("9. 3일 발주합계", cols, index=find_idx(cols, ['3일']))
+        t7day = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
+
+    st.write("---")
+    st.subheader("⏳ 분석 조건 설정")
+    lt = st.number_input("리드타임 (일)", value=7)
+    ss = st.number_input("안전재고 (일 수)", value=3)
+    
+    if st.button("📊 분석 실행", use_container_width=True, type="primary"):
+        st.session_state.analyzed = True
+        st.rerun()
+
+    # --- [5. 3단계: 분석 결과 출력] ---
+    # ★ 이 부분이 'if st.session_state.get('analyzed'):' 안으로 들어가야 에러가 안 납니다.
+    if st.session_state.get('analyzed'):
+        st.divider()
+        st.subheader("📊 3단계: 분석 결과 및 재고 관리")
+        
+        # 데이터 안전 복사
+        df_work = st.session_state.df_raw.copy()
+        
+        # 숫자 컬럼 변환 로직 (리오더 수량 포함)
+        if "리오더 수량" not in df_work.columns:
+            df_work["리오더 수량"] = 0
+            
+        target_nums = [stock, avail, t3day, t7day, "리오더 수량"]
+        for c in target_nums:
+            if c in df_work.columns:
+                df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
+
+        # 권장 발주량 및 일판매량 계산
+        df_work['일판매량'] = (df_work[t7day] / 7).round(1)
+        df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
+
+        # 필요한 컬럼만 보기 좋게 정리해서 출력
+        display_cols = [sold_out, vendor, item, option, stock, avail, "리오더 수량", "일판매량", "권장발주량"]
+        st.data_editor(df_work[display_cols], use_container_width=True, hide_index=True)
 
 # 2. [계산식] 일판매량 반올림 및 권장발주량
 v7 = df_work[t7day]
