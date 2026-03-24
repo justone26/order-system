@@ -125,8 +125,7 @@ with tab1:
     if st.session_state.get('df_raw') is not None:
         df_curr = st.session_state.df_raw
         cols = df_curr.columns.tolist()
-       st.subheader("⚙️ 매핑 설정")
-        # 왼쪽 5개, 오른쪽 5개로 정렬
+      st.subheader("⚙️ 매핑 설정")
         col_left, col_right = st.columns(2)
         
         with col_left:
@@ -141,8 +140,7 @@ with tab1:
             stock = st.selectbox("정상재고", cols, index=find_idx(cols, ['정상재고']))
             avail = st.selectbox("가용재고", cols, index=find_idx(cols, ['가용재고']))
             t3day = st.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
-            t7day = st.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
-            
+            t7day = st.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))            
         st.subheader("🚀 분석 설정")
         l1, l2 = st.columns(2)
         lt = l1.number_input("리드타임 (일)", value=10)
