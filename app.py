@@ -233,12 +233,14 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
             
-if st.session_state.get('analyzed'):
-        # --- [4단계: 데이터 편집 및 재고 관리] ---
+# --- [4단계: 데이터 편집 및 재고 관리] ---
         st.divider()
         st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
         
+        # 1. 원본 데이터 복사 및 입고수량 칸 생성 (값이 유지되도록 세션에 저장)
         df_work = st.session_state.df_raw.copy()
+        if "리오더입고수량" not in st.session_state.df_raw.columns:
+            st.session_state.df_raw["리오더입고수량"] = 0
 
         f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
         search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4")
@@ -250,7 +252,9 @@ if st.session_state.get('analyzed'):
 
         past_hist = load_history_from_gsheet()
         df_work['과거 리오더입고'] = 0
-        df_work['리오더입고수량'] = 0
+        
+        # 💡 [핵심] 입고 수량 수치가 화면에 유지되도록 세션 데이터를 연결
+        df_work['리오더입고수량'] = st.session_state.df_raw['리오더입고수량']
         
         if not past_hist.empty and '저장시간' in past_hist.columns and '구분' in past_hist.columns:
             try:
@@ -273,20 +277,31 @@ if st.session_state.get('analyzed'):
 
         valid_cols = [sold_out, vendor, v_item, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량"]
         
+        # 💡 [핵심] 실시간 저장 및 수치 유지 로직
         def on_edit_4():
             changes = st.session_state["editor_v4"]["edited_rows"]
             for r_idx_str, change in changes.items():
                 orig_idx = df_work.index[int(r_idx_str)]
+                
                 if "리오더 수량" in change:
                     st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
+                
                 if "리오더입고수량" in change:
-                    in_qty = int(change["리오더입고수량"])
-                    if in_qty > 0:
-                        curr = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
-                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr - in_qty)
-                        save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], in_qty]], columns=['상품명', '옵션', '수량']), log_type="입고")
+                    new_in_qty = int(change["리오더입고수량"])
+                    old_in_qty = st.session_state.df_raw.at[orig_idx, "리오더입고수량"]
+                    
+                    if new_in_qty > old_in_qty:
+                        diff = new_in_qty - old_in_qty
+                        curr_reorder = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
+                        # 리오더 수량 차감 및 기록
+                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr_reorder - diff)
+                        save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], diff]], columns=['상품명', '옵션', '수량']), log_type="입고")
+                    
+                    # 수치값을 0으로 만들지 않고 그대로 저장
+                    st.session_state.df_raw.at[orig_idx, "리오더입고수량"] = new_in_qty
+
             save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
-            # ✅ st.rerun() 제거 완료 (에러 방지)
+            st.rerun()
 
         st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4", on_change=on_edit_4, hide_index=True)
 
