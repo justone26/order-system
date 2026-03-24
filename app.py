@@ -55,7 +55,10 @@ def save_reorder_data(new_work_df):
 
         # 새로 들어온 데이터(엑셀 등)에 키 추가
         new_work_df['match_key'] = make_key(new_work_df)
-
+        
+        if not gs_df.empty:
+            gs_df['리오더 수량'] = pd.to_numeric(gs_df['리오더 수량'], errors='coerce').fillna(0)
+        
         # 3. 데이터 병합 (Upsert 로직)
         for _, row in new_work_df.iterrows():
             target_key = row['match_key']
