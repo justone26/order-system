@@ -186,44 +186,48 @@ tab1, tab2 = st.tabs(["✂️ 제작 상품 관리", "🌙 동대문 상품 관�
 with tab1:
     uploaded_file = st.file_uploader("엑셀 파일을 올려주세요", type=['xlsx', 'xls', 'csv'], key="t1_up")
     
-    if st.button("📂 구글 시트 데이터 로드", use_container_width=True):
-        spreadsheet = get_sheet()
-        if spreadsheet:
-            try:
-                # 1. 첫 번째 워크시트 선택
+  # --- 구글 시트 데이터 로드 버튼 수정본 ---
+if st.button("📂 구글 시트 데이터 로드", use_container_width=True):
+    spreadsheet = get_sheet()
+    if spreadsheet:
+        try:
+            with st.spinner('📡 시트 데이터를 불러오는 중...'):
+                # 1. 첫 번째 워크시트(시트1) 선택
                 sheet = spreadsheet.get_worksheet(0)
                 
-                # 2. 🔥 중요: get_all_records() 대신 get_all_values() 사용 후 직접 처리
-                # 이 방식이 헤더와 데이터를 가장 확실하게 구분합니다.
+                # 2. 데이터 가져오기
                 raw_data = sheet.get_all_values()
                 
                 if len(raw_data) > 1:
-                    # 첫 줄을 컬럼명으로, 나머지를 데이터로 분리
-                    header = [str(h).strip() for h in raw_data[0]] # 공백 제거
+                    # 헤더(첫 줄)와 내용 분리
+                    header = [str(h).strip() for h in raw_data[0]]
                     content = raw_data[1:]
                     
+                    # 데이터프레임 생성
                     df_tmp = pd.DataFrame(content, columns=header)
                     
-                    # 3. 열 이름 중복 방지 (Streamlit 에러 방어)
+                    # 3. 열 이름 중복 및 공백 방지
                     new_cols = []
                     for i, col in enumerate(df_tmp.columns):
-                        if not col or col in new_cols:
-                            new_cols.append(f"열_{i}") # 이름 없거나 중복이면 강제 부여
+                        if not col or str(col).strip() == "" or col in new_cols:
+                            new_cols.append(f"열_{i}")
                         else:
                             new_cols.append(col)
                     df_tmp.columns = new_cols
                     
-                    # 4. 세션에 저장
+                    # 🌟 [핵심] 세션 상태 초기화 및 저장
                     st.session_state.df_raw = df_tmp.copy()
-                    st.session_state.analyzed = False
-                    st.success(f"✅ {len(df_tmp)}개 항목의 열 이름을 성공적으로 가져왔습니다!")
-                    st.rerun()
+                    st.session_state.analyzed = True # 분석 완료 상태로 변경
+                    
+                    st.success(f"✅ {len(df_tmp)}건의 데이터를 불러왔습니다!")
+                    time.sleep(1)
+                    st.rerun() # 👈 화면을 새로 그려서 파란 창을 없앱니다.
                 else:
-                    st.warning("⚠️ 시트에 데이터가 부족합니다. 최소한 제목줄과 데이터 한 줄은 있어야 합니다.")
-            except Exception as e:
-                st.error(f"❌ 데이터 로드 중 오류: {e}")
-        else:
-            st.error("❌ 시트 연결 실패! 공유 권한을 확인해 주세요.")
+                    st.warning("⚠️ 시트에 데이터가 없습니다. 제목줄과 내용을 확인해 주세요.")
+        except Exception as e:
+            st.error(f"❌ 데이터 로드 중 오류 발생: {e}")
+    else:
+        st.error("❌ 시트 연결 실패! spreadsheet_key나 GCP 권한을 확인하세요.")
             
     if uploaded_file:
         if 'df_raw' not in st.session_state or st.session_state.get('last_fn') != uploaded_file.name:
