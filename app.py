@@ -85,33 +85,40 @@ with tab1:
         spreadsheet = get_sheet()
         if spreadsheet:
             try:
-                sheet = spreadsheet.get_worksheet(0) # 첫 번째 탭 가져오기
-                data = sheet.get_all_records()
+                # 1. 첫 번째 워크시트 선택
+                sheet = spreadsheet.get_worksheet(0)
                 
-                if data:
-                    df_tmp = pd.DataFrame(data)
+                # 2. 🔥 중요: get_all_records() 대신 get_all_values() 사용 후 직접 처리
+                # 이 방식이 헤더와 데이터를 가장 확실하게 구분합니다.
+                raw_data = sheet.get_all_values()
+                
+                if len(raw_data) > 1:
+                    # 첫 줄을 컬럼명으로, 나머지를 데이터로 분리
+                    header = [str(h).strip() for h in raw_data[0]] # 공백 제거
+                    content = raw_data[1:]
                     
-                    # 🔥 [핵심] 중복 열 이름 방어 로직
-                    # 구글 시트 열 이름에 공백이 있거나 중복이 있으면 에러가 나므로 정리합니다.
+                    df_tmp = pd.DataFrame(content, columns=header)
+                    
+                    # 3. 열 이름 중복 방지 (Streamlit 에러 방어)
                     new_cols = []
                     for i, col in enumerate(df_tmp.columns):
-                        col_name = str(col).strip() # 앞뒤 공백 제거
-                        if col_name in new_cols or col_name == "":
-                            new_cols.append(f"{col_name}_{i}") # 중복이면 번호 붙이기
+                        if not col or col in new_cols:
+                            new_cols.append(f"열_{i}") # 이름 없거나 중복이면 강제 부여
                         else:
-                            new_cols.append(col_name)
+                            new_cols.append(col)
                     df_tmp.columns = new_cols
                     
+                    # 4. 세션에 저장
                     st.session_state.df_raw = df_tmp.copy()
                     st.session_state.analyzed = False
-                    st.success(f"✅ {len(df_tmp)}개 항목 로드 완료!")
+                    st.success(f"✅ {len(df_tmp)}개 항목의 열 이름을 성공적으로 가져왔습니다!")
                     st.rerun()
                 else:
-                    st.warning("⚠️ 시트 내용이 비어있습니다. 첫 줄에 제목(헤더)이 있는지 확인해 주세요.")
+                    st.warning("⚠️ 시트에 데이터가 부족합니다. 최소한 제목줄과 데이터 한 줄은 있어야 합니다.")
             except Exception as e:
-                st.error(f"❌ 데이터를 읽는 중 오류 발생: {e}")
+                st.error(f"❌ 데이터 로드 중 오류: {e}")
         else:
-            st.error("❌ 시트 연결 실패! 구글 시트 '공유' 설정에 서비스 계정 이메일이 있는지 확인해 주세요.")
+            st.error("❌ 시트 연결 실패! 공유 권한을 확인해 주세요.")
             
     if uploaded_file:
         if 'df_raw' not in st.session_state or st.session_state.get('last_fn') != uploaded_file.name:
