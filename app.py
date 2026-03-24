@@ -380,25 +380,36 @@ with tab1:
 
         st.write("---")
         # 5. 🔥 [복구] 버튼 2개 (저장 & 엑셀다운로드)
+        # --- 5단계 하단: 저장 및 엑셀 버튼 부분 ---
         b1, b2 = st.columns(2)
         
         if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-            # 실제 발주가 필요한 항목만 추출
-            df_5['최종발주량'] = df_5['권장발주량'] + df_5['추가발주수량']
-            order_ready = df_5[df_5['최종발주량'] > 0].copy()
+            # 1. 발주 대상 추출 (권장발주량이나 추가발주수량이 있는 항목)
+            order_ready = df_5[(df_5['권장발주량'] > 0) | (df_5['추가발주수량'] > 0)].copy()
             
             if not order_ready.empty:
-                # 저장용 데이터 구성 (공급쳐상품명 포함)
+                # 2. 💡 [핵심] 6단계에서 보여줄 모든 수치를 각각의 컬럼(칸)으로 만듭니다.
                 order_ready['공급쳐상품명'] = order_ready[v_item]
-                save_data = order_ready[[item, option, '공급쳐상품명', '최종발주량']]
+                order_ready['가용재고'] = order_ready[avail]
+                # '리오더 수량' 변수명이 다를 수 있으니 확인 후 매핑
+                order_ready['리오더수량'] = order_ready['리오더수량'] 
+                order_ready['추가발주수량'] = order_ready['추가발주수량']
+                order_ready['권장발주수량'] = order_ready['권장발주량']
                 
+                # 3. 시트에 저장할 최종 컬럼 리스트 (이 이름들이 6단계 제목이 됩니다)
+                save_data = order_ready[[
+                    item, option, '공급쳐상품명', 
+                    '가용재고', '리오더수량', '추가발주수량', '권장발주수량'
+                ]]
+                
+                # 4. 저장 함수 호출
                 if save_history_to_gsheet(save_data, log_type="발주"):
-                    st.success("✅ 구글 시트에 발주 내역이 저장되었습니다!")
+                    st.success(f"✅ 모든 수치 데이터 {len(order_ready)}건이 저장되었습니다!")
                     st.rerun()
             else:
-                st.warning("발주할 수량이 없습니다.")
+                st.warning("발주할 수량이 있는 상품이 없습니다.")
 
-        # 엑셀(CSV) 다운로드 버튼
+        # 엑셀 다운로드 버튼 (현재 화면 기준)
         csv_data = df_display_5[actual_cols_5].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         b2.download_button(
             label="📥 현재 리스트 엑셀 다운로드",
@@ -407,7 +418,6 @@ with tab1:
             mime="text/csv",
             use_container_width=True
         )
-
         
 # --- [6단계: 전체 히스토리 내역 - 모든 수치 데이터 복구] ---
         st.divider()
