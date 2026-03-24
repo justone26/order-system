@@ -386,6 +386,92 @@ if st.session_state.get('analyzed'):
                 key="btn_full_dl"
             )
 
+# --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
-    st.subheader("📜 히스토리")
-    st.dataframe(load_history_from_gsheet().sort_values(by="저장시간", ascending=False), width='stretch')
+    st.subheader("🌙 동대문 사입 및 미납 관리")
+
+    dong_file = st.file_uploader("동대문 주문 리스트 업로드", type=['xlsx', 'xls', 'csv'], key="dong_tab_upload")
+
+    if dong_file:
+        # 파일이 새로 올라왔을 때만 데이터 처리
+        if "last_file_name" not in st.session_state or st.session_state.last_file_name != dong_file.name:
+            # 엑셀/CSV 구분해서 읽기
+            if dong_file.name.endswith(('.xlsx', '.xls')):
+                df = pd.read_excel(dong_file)
+            else:
+                df = pd.read_csv(dong_file)
+            
+            df.columns = df.columns.str.strip()
+            
+            # 필수 컬럼 체크 및 생성
+            required_cols = ['선택', '품절', '상품명', '공급처', '공급처상품명', '정상재고', '가용재고', '판매수량', '발주수량', '가중율', '3일판매']
+            for col in required_cols:
+                if col not in df.columns:
+                    if col in ['선택', '품절', '상품명', '공급처', '공급처상품명']:
+                        df[col] = ""
+                    else:
+                        df[col] = 0
+            
+            # 숫자형 변환
+            for col in ['정상재고', '가용재고', '3일판매']:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+            # 동대문 전용 발주 로직 적용
+            df['판매수량'] = (df['정상재고'] - df['가용재고']).clip(lower=0)
+            # 판매량에 따른 가중율 (10개 이상 2배, 6개 이상 1.5배 등)
+            df['가중율'] = df['판매수량'].apply(lambda n: 2.0 if n >= 10 else (1.5 if n >= 6 else (1.2 if n >= 3 else 1.0)))
+            df['발주수량'] = (df['판매수량'] * df['가중율']).astype(int)
+            
+            st.session_state.df_dong_current = df[required_cols]
+            st.session_state.last_file_name = dong_file.name
+
+        # 화면 출력 부분
+        if "df_dong_current" in st.session_state:
+            df_display = st.session_state.df_dong_current.copy()
+            
+            # 검색 기능
+            search_query = st.text_input("🔍 상품명 검색 (사입)")
+            if search_query:
+                df_display = df_display[df_display['상품명'].astype(str).str.contains(search_query, case=False, na=False)]
+            
+            # 데이터 에디터 (선택 및 수량 수정 가능)
+            df_display['선택'] = df_display['선택'].apply(lambda x: True if x is True or x == "True" else False)
+            
+            edited_df = st.data_editor(
+                df_display, 
+                use_container_width=True, 
+                key="dong_editor",
+                column_config={
+                    "선택": st.column_config.CheckboxColumn("선택", default=False),
+                    "발주수량": st.column_config.NumberColumn("발주수량", min_value=0)
+                },
+                hide_index=True
+            )
+            
+            st.divider()
+            
+            # 하단 컨트롤러
+            c1, c2, c3 = st.columns([1, 1, 1])
+            add_val = c1.number_input("➕ 추가 수량", value=1, min_value=1, key="dong_add_val")
+            
+            if c2.button("🚀 선택 상품 수량 더하기", use_container_width=True):
+                # 에디터에서 선택된 인덱스 찾기
+                # 실제 세션 데이터에 반영
+                for i, row in edited_df.iterrows():
+                    if row['선택']:
+                        # 원본 데이터의 인덱스를 찾아 업데이트
+                        st.session_state.df_dong_current.at[i, '발주수량'] += add_val
+                st.success(f"선택 항목에 {add_val}개씩 추가되었습니다.")
+                st.rerun()
+            
+            # 다운로드 버튼
+            csv_dong = edited_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            c3.download_button(
+                label="📥 사입 리스트 다운로드 (CSV)", 
+                data=csv_dong, 
+                file_name=f"동대문사입_{datetime.now().strftime('%m%d')}.csv", 
+                mime="text/csv",
+                use_container_width=True
+            )
+    else:
+        st.info("💡 동대문 발주용 엑셀 파일을 업로드해주세요.")
