@@ -396,50 +396,69 @@ with tab1:
         csv_data = to_order[actual_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         b2.download_button("📥 엑셀(CSV) 다운로드", data=csv_data, file_name=f"발주요약_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
         
-# --- [6단계: 기록 통합 조회 - KeyError 방어 강화] ---
+# --- [6단계: 제작 상품 입고 및 발주 히스토리 - 다운로드 추가] ---
         st.divider()
         st.subheader("📜 6단계: 제작 상품 입고 및 발주 히스토리")
-        past_hist = load_history_from_gsheet() 
-    
-        c6_1, c6_2 = st.columns(2)
-        start_d = c6_1.date_input("📅 조회 시작일", datetime.now() - timedelta(days=7), key="s_date_v6")
-        end_d = c6_2.date_input("📅 조회 종료일", datetime.now(), key="e_date_v6")
 
-        if not past_hist.empty:
-            # 1. 날짜 변환 및 필터링
-            if '저장시간' in past_hist.columns:
-                past_hist['날짜_dt'] = pd.to_datetime(past_hist['저장시간'], errors='coerce').dt.date
-                df_h = past_hist[(past_hist['날짜_dt'] >= start_d) & (past_hist['날짜_dt'] <= end_d)].copy()
+        # 1. 날짜 범위 선택 UI
+        col_h1, col_h2 = st.columns(2)
+        start_d = col_h1.date_input("시작 날짜", datetime.now(), key="hist_start_v2")
+        end_d = col_h2.date_input("종료 날짜", datetime.now(), key="hist_end_v2")
+
+        # 세션에 조회 결과를 임시 저장하여 버튼 클릭 시 사라지지 않게 함
+        if "filtered_h" not in st.session_state:
+            st.session_state.filtered_h = pd.DataFrame()
+
+        if st.button("🔍 히스토리 조회하기", use_container_width=True, type="secondary"):
+            with st.spinner("구글 시트에서 데이터를 가져오는 중..."):
+                h_df = load_history_from_gsheet()
                 
-                # 2. '구분' 열 존재 여부 체크 (에러 방지 핵심)
-                if '구분' not in df_h.columns:
-                    st.info("💡 히스토리 시트에 '구분' 항목이 없습니다. 데이터를 먼저 저장해 주세요.")
-                else:
-                    t_in, t_out = st.tabs(["📥 입고 완료 내역", "📤 발주 진행 내역"])
+                if not h_df.empty:
+                    # 날짜 보정 및 필터링
+                    h_df['저장시간'] = pd.to_datetime(h_df['저장시간'], errors='coerce')
+                    h_df['날짜_순수'] = h_df['저장시간'].dt.date
                     
-                    with t_in:
-                        in_df = df_h[df_h['구분'] == "입고"]
-                        if not in_df.empty:
-                            st.dataframe(in_df[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
-                            # 합계 계산 시 컬럼 체크
-                            sum_cols = [c for c in ['상품명', '옵션', '수량'] if c in in_df.columns]
-                            st.markdown("##### 📊 품목별 입고 합계")
-                            st.table(in_df.groupby(['상품명', '옵션'])['수량'].sum().reset_index())
-                        else:
-                            st.write("선택한 기간에 '입고' 내역이 없습니다.")
-                            
-                    with t_out:
-                        out_df = df_h[df_h['구분'] == "발주"]
-                        if not out_df.empty:
-                            st.dataframe(out_df[['저장시간', '상품명', '옵션', '수량']], use_container_width=True, hide_index=True)
-                            st.markdown("##### 📊 품목별 발주 합계")
-                            st.table(out_df.groupby(['상품명', '옵션'])['수량'].sum().reset_index())
-                        else:
-                            st.write("선택한 기간에 '발주' 내역이 없습니다.")
-            else:
-                st.warning("⚠️ 히스토리 시트에 '저장시간' 열이 없습니다.")
+                    mask = (h_df['날짜_순수'] >= start_d) & (h_df['날짜_순수'] <= end_d)
+                    st.session_state.filtered_h = h_df.loc[mask].copy()
+                else:
+                    st.session_state.filtered_h = pd.DataFrame()
+
+        # 2. 결과 표시 및 다운로드 버튼
+        if not st.session_state.filtered_h.empty:
+            df_res = st.session_state.filtered_h.copy()
+            st.success(f"✅ 총 {len(df_res)}개의 기록을 찾았습니다.")
+            
+            # 최신순 정렬 및 불필요 컬럼 제거
+            df_res = df_res.sort_values(by='저장시간', ascending=False)
+            display_df = df_res.drop(columns=['날짜_순수']) if '날짜_순수' in df_res.columns else df_res
+            
+            # 표 출력
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            
+            # 💡 [추가] 엑셀 다운로드 버튼
+            csv_hist = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button(
+                label="📥 조회 결과 엑셀(CSV) 다운로드",
+                data=csv_hist,
+                file_name=f"히스토리_{start_d}_{end_d}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
         else:
-            st.info("💡 아직 구글 시트에 누적된 기록이 없습니다. 먼저 '발주 기록 저장'이나 '입고'를 진행해 주세요.")
+            if "filtered_h" in st.session_state and st.session_state.filtered_h.empty:
+                st.info("조회 버튼을 눌러주세요. 해당 기간에 기록이 없으면 표시되지 않습니다.")
+
+        # 3. 요약 통계 (선택 사항)
+        if not st.session_state.filtered_h.empty:
+            st.divider()
+            sum_c1, sum_c2 = st.columns(2)
+            # '구분' 또는 'Log Type' 등 컬럼명 유연하게 대응
+            type_col = next((c for c in ['구분', 'Log Type', '유형'] if c in st.session_state.filtered_h.columns), None)
+            if type_col:
+                in_cnt = len(st.session_state.filtered_h[st.session_state.filtered_h[type_col] == "입고"])
+                out_cnt = len(st.session_state.filtered_h[st.session_state.filtered_h[type_col] == "발주"])
+                sum_c1.metric("입고 건수", f"{in_cnt}건")
+                sum_c2.metric("발주 건수", f"{out_cnt}건")
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
