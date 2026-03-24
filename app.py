@@ -9,7 +9,7 @@ import time  # 👈 이 줄을 꼭 추가해 주세요!
 # 한국 시간(KST) 설정 (UTC+9)
 KST = timezone(timedelta(hours=9))
 
-# --- [1. 기본 함수 설정 수정본] ---
+# --- [1. 구글 시트 연결 및 데이터 로드 함수] ---
 
 def get_sheet():
     try:
@@ -21,45 +21,51 @@ def get_sheet():
         ]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        # 사장님의 시트 고유 키값
         spreadsheet_key = "1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg"
         return client.open_by_key(spreadsheet_key)
     except Exception as e:
-        st.error(f"구글 시트 연결 실패: {e}")
+        st.error(f"🚨 구글 시트 연결 실패: {e}")
         return None
 
-# 💡 [수정완료] gspread 방식으로 history 탭에서 데이터 불러오기
+# 1-1. 메인 재고 데이터를 가져오는 함수 (첫 번째 탭: 시트1)
+def load_main_data():
+    try:
+        sh = get_sheet()
+        if sh:
+            # 보통 재고 데이터는 첫 번째 탭인 '시트1'에 있으므로 0번 인덱스 사용
+            ws = sh.get_worksheet(0) 
+            data = ws.get_all_records()
+            return pd.DataFrame(data)
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"🚨 메인 데이터 로드 실패: {e}")
+        return pd.DataFrame()
+
+# 1-2. 히스토리 기록을 가져오는 함수 (history 탭)
 def load_history_from_gsheet():
     try:
         sh = get_sheet()
         if sh:
-            # 🚨 사진 속 이름인 'history'로 변경했습니다.
             ws = sh.worksheet("history") 
             data = ws.get_all_records()
             return pd.DataFrame(data)
         return pd.DataFrame()
     except Exception as e:
-        st.error(f"❌ 히스토리 불러오기 실패: {e}")
+        # 에러가 나면 6단계에서만 표시됨
         return pd.DataFrame()
 
-# 💡 [수정완료] gspread 방식으로 history 탭에 데이터 저장하기
+# 1-3. 히스토리를 저장하는 함수 (history 탭)
 def save_history_to_gsheet(df, log_type="발주"):
     try:
         sh = get_sheet()
         if sh:
-            # 🚨 여기도 'history'로 변경했습니다.
             ws = sh.worksheet("history")
-            # 데이터프레임을 리스트로 변환하여 시트 맨 아래 추가
             ws.append_rows(df.values.tolist())
             return True
         return False
     except Exception as e:
-        st.error(f"❌ 저장 실패: {e}")
+        st.error(f"🚨 저장 실패: {e}")
         return False
-
-def make_match_key(name, opt):
-    return str(name).strip().replace(" ", "").upper() + str(opt).strip().replace(" ", "").upper()
-
 def save_reorder_data(new_work_df):
     try:
         spreadsheet = get_sheet()
