@@ -1,8 +1,8 @@
-streamlit
 pandas
+streamlit
 gspread
 oauth2client
+xlsxwriter
 openpyxl
-
 
 
