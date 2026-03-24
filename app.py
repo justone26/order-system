@@ -145,6 +145,7 @@ with tab1:
             t3day = st.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
             t7day = st.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
+        # --- 2~3단계: 분석 설정 ---
         st.subheader("🚀 분석 설정")
         l1, l2 = st.columns(2)
         lt = l1.number_input("리드타임 (일)", value=7)
