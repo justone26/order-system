@@ -396,69 +396,55 @@ with tab1:
         csv_data = to_order[actual_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         b2.download_button("📥 엑셀(CSV) 다운로드", data=csv_data, file_name=f"발주요약_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
         
-# --- [6단계: 제작 상품 입고 및 발주 히스토리 - 다운로드 추가] ---
+# --- [6단계: 히스토리 컬럼 위치 보정 버전] ---
         st.divider()
         st.subheader("📜 6단계: 제작 상품 입고 및 발주 히스토리")
 
         # 1. 날짜 범위 선택 UI
         col_h1, col_h2 = st.columns(2)
-        start_d = col_h1.date_input("시작 날짜", datetime.now(), key="hist_start_v2")
-        end_d = col_h2.date_input("종료 날짜", datetime.now(), key="hist_end_v2")
-
-        # 세션에 조회 결과를 임시 저장하여 버튼 클릭 시 사라지지 않게 함
-        if "filtered_h" not in st.session_state:
-            st.session_state.filtered_h = pd.DataFrame()
+        start_d = col_h1.date_input("시작 날짜", datetime.now(), key="hist_start_final")
+        end_d = col_h2.date_input("종료 날짜", datetime.now(), key="hist_end_final")
 
         if st.button("🔍 히스토리 조회하기", use_container_width=True, type="secondary"):
-            with st.spinner("구글 시트에서 데이터를 가져오는 중..."):
+            with st.spinner("데이터 정렬 중..."):
                 h_df = load_history_from_gsheet()
                 
                 if not h_df.empty:
-                    # 날짜 보정 및 필터링
+                    # 날짜 형식 변환 및 필터링
                     h_df['저장시간'] = pd.to_datetime(h_df['저장시간'], errors='coerce')
                     h_df['날짜_순수'] = h_df['저장시간'].dt.date
-                    
                     mask = (h_df['날짜_순수'] >= start_d) & (h_df['날짜_순수'] <= end_d)
-                    st.session_state.filtered_h = h_df.loc[mask].copy()
+                    filtered = h_df.loc[mask].copy()
+
+                    if not filtered.empty:
+                        # 💡 [핵심] 사진의 표 순서에 맞춰 컬럼명을 강제로 재배치합니다.
+                        # 시트에 있는 '수량' 컬럼을 '리오더 수량'으로 표시하도록 매핑
+                        if '수량' in filtered.columns:
+                            filtered['리오더 수량'] = filtered['수량']
+                        
+                        # 사진에 있는 항목들 중 데이터가 없는 것들은 빈칸 처리
+                        for col in ['공급처상품명', '추가 리오더', '권장 발주량']:
+                            if col not in filtered.columns:
+                                filtered[col] = "" # 빈값으로 생성
+
+                        # 💡 사진과 똑같은 순서로 컬럼 고정
+                        # 저장시간 | 구분(공급처) | 상품명 | 옵션 | 공급처상품명 | 리오더 수량 | 추가 리오더 | 권장 발주량
+                        final_cols = ['저장시간', '구분', '상품명', '옵션', '공급처상품명', '리오더 수량', '추가 리오더', '권장 발주량']
+                        
+                        # 실제 존재하는 컬럼만 필터링 (에러 방지)
+                        existing_cols = [c for c in final_cols if c in filtered.columns]
+                        df_display = filtered[existing_cols].sort_values(by='저장시간', ascending=False)
+
+                        st.success(f"✅ 총 {len(df_display)}개의 기록을 찾았습니다.")
+                        st.dataframe(df_display, use_container_width=True, hide_index=True)
+                        
+                        # 엑셀 다운로드
+                        csv_data = df_display.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                        st.download_button("📥 조회 결과 엑셀 다운로드", csv_data, f"히스토리_{start_d}.csv", use_container_width=True)
+                    else:
+                        st.warning("해당 기간에 기록이 없습니다.")
                 else:
-                    st.session_state.filtered_h = pd.DataFrame()
-
-        # 2. 결과 표시 및 다운로드 버튼
-        if not st.session_state.filtered_h.empty:
-            df_res = st.session_state.filtered_h.copy()
-            st.success(f"✅ 총 {len(df_res)}개의 기록을 찾았습니다.")
-            
-            # 최신순 정렬 및 불필요 컬럼 제거
-            df_res = df_res.sort_values(by='저장시간', ascending=False)
-            display_df = df_res.drop(columns=['날짜_순수']) if '날짜_순수' in df_res.columns else df_res
-            
-            # 표 출력
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
-            
-            # 💡 [추가] 엑셀 다운로드 버튼
-            csv_hist = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button(
-                label="📥 조회 결과 엑셀(CSV) 다운로드",
-                data=csv_hist,
-                file_name=f"히스토리_{start_d}_{end_d}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        else:
-            if "filtered_h" in st.session_state and st.session_state.filtered_h.empty:
-                st.info("조회 버튼을 눌러주세요. 해당 기간에 기록이 없으면 표시되지 않습니다.")
-
-        # 3. 요약 통계 (선택 사항)
-        if not st.session_state.filtered_h.empty:
-            st.divider()
-            sum_c1, sum_c2 = st.columns(2)
-            # '구분' 또는 'Log Type' 등 컬럼명 유연하게 대응
-            type_col = next((c for c in ['구분', 'Log Type', '유형'] if c in st.session_state.filtered_h.columns), None)
-            if type_col:
-                in_cnt = len(st.session_state.filtered_h[st.session_state.filtered_h[type_col] == "입고"])
-                out_cnt = len(st.session_state.filtered_h[st.session_state.filtered_h[type_col] == "발주"])
-                sum_c1.metric("입고 건수", f"{in_cnt}건")
-                sum_c2.metric("발주 건수", f"{out_cnt}건")
+                    st.error("데이터를 불러올 수 없습니다.")
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
