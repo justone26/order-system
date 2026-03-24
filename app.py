@@ -147,8 +147,8 @@ with tab1:
 
         st.subheader("🚀 분석 설정")
         l1, l2 = st.columns(2)
-        lt = l1.number_input("리드타임 (일)", value=10)
-        ss = l2.number_input("안전재고 (일 수)", value=7)
+        lt = l1.number_input("리드타임 (일)", value=7)
+        ss = l2.number_input("안전재고 (일 수)", value=3)
         if st.button("📊 분석 실행", width='stretch'):
             st.session_state.analyzed = True
             st.rerun()
