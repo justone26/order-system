@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime, timedelta
 import io
 
 def get_sheet():
@@ -329,9 +330,9 @@ if st.session_state.get('analyzed'):
         # 1. 상단 컨트롤러 (날짜 범위 선택)
         c6_1, c6_2 = st.columns(2)
         with c6_1:
-            start_d = st.date_input("조회 시작 날짜", datetime.now() - timedelta(days=7), key="s_date_v6_fix")
+            start_d = st.date_input("조회 시작 날짜", pd.Timestamp.now() - pd.Timedelta(days=7), key="s_date_v6_fix")
         with c6_2:
-            end_d = st.date_input("조회 종료 날짜", datetime.now(), key="e_date_v6_fix")
+            end_d = st.date_input("조회 종료 날짜", pd.Timestamp.now(), key="e_date_v6_fix")
 
         # 2. 데이터 불러오기
         hist_all = load_history_from_gsheet()
