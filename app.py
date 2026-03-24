@@ -215,26 +215,25 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
             
-  if st.session_state.get('analyzed'):
+ # 이 줄의 앞부분 공백(들여쓰기)이 윗줄들과 정확히 일치해야 합니다.
+    if st.session_state.get('analyzed'):
         # --- [4단계: 데이터 편집 및 재고 관리] ---
         st.divider()
         st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
         
-        # 1. 데이터 복사 및 기본 설정
         df_work = st.session_state.df_raw.copy()
+
         f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
         search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4")
         filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_v4")
         hist_date_4 = f_c3.date_input("🗓️ 입고 기록 확인 날짜", datetime.now(), key="date_v4")
 
-        # 고유키 생성 (상품명+옵션 결합)
         def simple_key(n): return str(n).strip().replace(" ", "").upper() if not pd.isna(n) else ""
         df_work['unique_key'] = df_work[item].apply(simple_key) + df_work[option].apply(simple_key)
 
-        # 2. 과거 입고 기록 매핑 (날짜 연동)
         past_hist = load_history_from_gsheet()
         df_work['과거 리오더입고'] = 0
-        df_work['리오더입고수량'] = 0 # 입력용 빈 컬럼
+        df_work['리오더입고수량'] = 0
         
         if not past_hist.empty and '저장시간' in past_hist.columns:
             past_hist['날짜_only'] = pd.to_datetime(past_hist['저장시간']).dt.date
@@ -244,41 +243,40 @@ with tab1:
                 in_map = t_hist.groupby('k_tmp')['수량'].sum().to_dict()
                 df_work['과거 리오더입고'] = df_work['unique_key'].map(in_map).fillna(0).astype(int)
 
-        # 3. 판매량 및 권장발주량 계산 로직 (사장님 공식)
         v7 = safe_num(df_work[t7day]); v3 = safe_num(df_work[t3day])
         df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
-        # 권장발주량 = (일판매량 * (리드타임+안전재고)) - (가용재고 + 리오더수량)
         df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (safe_num(df_work[avail]) + safe_num(df_work['리오더 수량']))).clip(lower=0).astype(int)
 
-        # 4. 필터 및 검색 적용
         if filter_m == "정상만": df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
         elif filter_m == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
         if search_q: df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
 
-        # 화면에 보여줄 컬럼 순서 세팅
         valid_cols = [sold_out, vendor, v_item, item, option, stock, avail, "리오더 수량", "리오더입고수량", "과거 리오더입고", t3day, "일판매량", "권장발주량"]
         
-        # --- 4단계 편집 실행 (수정 시 즉시 시트 반영) ---
         def on_edit_4():
             changes = st.session_state["editor_v4"]["edited_rows"]
             for r_idx_str, change in changes.items():
                 orig_idx = df_work.index[int(r_idx_str)]
-                # 리오더 수량 직접 수정
                 if "리오더 수량" in change:
                     st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
-                # 리오더입고 시 차감 (-) 로직
                 if "리오더입고수량" in change:
                     in_qty = int(change["리오더입고수량"])
                     if in_qty > 0:
                         curr = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
                         st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr - in_qty)
                         save_history_to_gsheet(pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], in_qty]], columns=['상품명', '옵션', '수량']), log_type="입고")
-            
-            # 구글 시트에 누적으로 업데이트 (철벽 방어)
             save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
             st.rerun()
 
-        st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4", on_change=on_edit_4, hide_index=True)
+        # ✅ 모든 컬럼 왼쪽 정렬 적용
+        st.data_editor(
+            df_work[valid_cols], 
+            use_container_width=True, 
+            key="editor_v4", 
+            on_change=on_edit_4, 
+            hide_index=True,
+            column_config={col: st.column_config.Column(alignment="left") for col in valid_cols}
+        )
 
         # --- [5단계: 최종 발주 리스트 요약] ---
         st.divider()
@@ -290,7 +288,6 @@ with tab1:
         to_order = df_work.copy()
         to_order['추가발주수량'] = 0 
         
-        # 상태 판정 로직 (가용+리오더 합산 기준)
         def get_final_status(r):
             total_stock = safe_num(r[avail]) + safe_num(r['리오더 수량'])
             daily = r['일판매량']
@@ -302,7 +299,6 @@ with tab1:
         to_order['상태'] = to_order.apply(get_final_status, axis=1)
         to_order = to_order.sort_values(by='상태')
 
-        # 5단계 필터링
         if s_filter == "🚨긴급 + ⚠️주의 우선": 
             to_order = to_order[to_order['상태'].isin(["🚨 긴급", "⚠️ 주의"]) | (to_order['권장발주량'] > 0)]
         elif s_filter == "🚨 긴급만 보기": 
@@ -310,7 +306,6 @@ with tab1:
 
         disp_final = ["상태", item, option, vendor, avail, "리오더 수량", "추가발주수량", "과거 리오더입고", "권장발주량"]
         
-        # --- 5단계 편집 실행 (추가 발주 시 리오더 수량 합산) ---
         def on_edit_5():
             edits = st.session_state["editor_v5"]["edited_rows"]
             for r_idx_str, change in edits.items():
@@ -318,16 +313,20 @@ with tab1:
                 if "추가발주수량" in change:
                     add_qty = int(change["추가발주수량"])
                     if add_qty > 0:
-                        # 리오더 수량에 즉시 합산 (+)
                         st.session_state.df_raw.at[orig_idx, "리오더 수량"] += add_qty
-            
-            # 구글 시트에 누적으로 업데이트
             save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
             st.rerun()
 
-        st.data_editor(to_order[disp_final], use_container_width=True, key="editor_v5", on_change=on_edit_5, hide_index=True)
+        # ✅ 모든 컬럼 왼쪽 정렬 적용
+        st.data_editor(
+            to_order[disp_final], 
+            use_container_width=True, 
+            key="editor_v5", 
+            on_change=on_edit_5, 
+            hide_index=True,
+            column_config={col: st.column_config.Column(alignment="left") for col in disp_final}
+        )
 
-        # 저장 및 다운로드 버튼
         b1, b2 = st.columns(2)
         if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
             order_final = to_order[to_order['권장발주량'] > 0].copy()
