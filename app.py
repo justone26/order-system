@@ -9,35 +9,46 @@ import time  # 👈 이 줄을 꼭 추가해 주세요!
 # 한국 시간(KST) 설정 (UTC+9)
 KST = timezone(timedelta(hours=9))
 
-# --- [1. 기본 함수 설정] ---
+# --- [1. 기본 함수 설정 수정본] ---
+
 def get_sheet():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
-        scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive"]
+        scope = [
+            "https://spreadsheets.google.com/feeds", 
+            'https://www.googleapis.com/auth/spreadsheets', 
+            "https://www.googleapis.com/auth/drive"
+        ]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
+        # 사장님의 시트 고유 키값
         spreadsheet_key = "1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg"
         return client.open_by_key(spreadsheet_key)
-    except: return None
+    except Exception as e:
+        st.error(f"구글 시트 연결 실패: {e}")
+        return None
 
+# gspread 방식으로 히스토리 불러오기
 def load_history_from_gsheet():
     try:
-        # worksheet 이름을 실제 사장님 구글 시트 탭 이름("발주기록")으로 정확히 맞춤
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        df = conn.read(worksheet="발주기록", ttl=0) # ttl=0이 있어야 실시간으로 반영됩니다!
-        return df
+        sh = get_sheet()
+        if sh:
+            # 🚨 실제 구글 시트 하단 탭 이름이 '발주기록'인지 확인 필수!
+            ws = sh.worksheet("발주기록") 
+            data = ws.get_all_records()
+            return pd.DataFrame(data)
+        return pd.DataFrame()
     except Exception as e:
-        # 에러가 나면 화면에 표시 (원인 파악용)
-        st.error(f"❌ 시트 읽기 실패: {e}")
+        st.error(f"❌ 히스토리 불러오기 실패: {e}")
         return pd.DataFrame()
 
-[추가] 데이터를 저장하는 함수도 gspread 방식으로 통일
+# gspread 방식으로 데이터 저장하기
 def save_history_to_gsheet(df, log_type="발주"):
     try:
         sh = get_sheet()
         if sh:
             ws = sh.worksheet("발주기록")
-            # 데이터프레임을 리스트 형식으로 변환하여 시트 맨 아래에 추가
+            # 데이터프레임을 리스트로 변환하여 시트 맨 아래 추가
             ws.append_rows(df.values.tolist())
             return True
         return False
@@ -45,8 +56,6 @@ def save_history_to_gsheet(df, log_type="발주"):
         st.error(f"❌ 저장 실패: {e}")
         return False
 
-def make_match_key(name, opt):
-    return str(name).strip().replace(" ", "").upper() + str(opt).strip().replace(" ", "").upper()
 def make_match_key(name, opt):
     return str(name).strip().replace(" ", "").upper() + str(opt).strip().replace(" ", "").upper()
 
