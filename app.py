@@ -303,7 +303,7 @@ with tab1:
 
         st.data_editor(df_work[valid_cols], use_container_width=True, key="editor_v4", on_change=on_edit_4, hide_index=True)
 
-        # --- [5단계: 최종 발주 리스트 요약] ---
+ # --- [5단계: 최종 발주 리스트 요약] ---
         st.divider()
         st.subheader("📋 5단계: 최종 발주 리스트 요약")
         
