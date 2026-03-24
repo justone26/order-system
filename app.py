@@ -396,55 +396,62 @@ with tab1:
         csv_data = to_order[actual_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         b2.download_button("📥 엑셀(CSV) 다운로드", data=csv_data, file_name=f"발주요약_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
         
-# --- [6단계: 히스토리 컬럼 위치 보정 버전] ---
+# --- [6단계: 히스토리 데이터 위치 완벽 보정 버전] ---
         st.divider()
         st.subheader("📜 6단계: 제작 상품 입고 및 발주 히스토리")
 
         # 1. 날짜 범위 선택 UI
         col_h1, col_h2 = st.columns(2)
-        start_d = col_h1.date_input("시작 날짜", datetime.now(), key="hist_start_final")
-        end_d = col_h2.date_input("종료 날짜", datetime.now(), key="hist_end_final")
+        start_date = col_h1.date_input("시작 날짜", datetime.now(), key="h_start_final")
+        end_date = col_h2.date_input("종료 날짜", datetime.now(), key="h_end_final")
 
         if st.button("🔍 히스토리 조회하기", use_container_width=True, type="secondary"):
-            with st.spinner("데이터 정렬 중..."):
-                h_df = load_history_from_gsheet()
+            with st.spinner("데이터를 정렬하는 중..."):
+                raw_h = load_history_from_gsheet()
                 
-                if not h_df.empty:
-                    # 날짜 형식 변환 및 필터링
-                    h_df['저장시간'] = pd.to_datetime(h_df['저장시간'], errors='coerce')
-                    h_df['날짜_순수'] = h_df['저장시간'].dt.date
-                    mask = (h_df['날짜_순수'] >= start_d) & (h_df['날짜_순수'] <= end_d)
-                    filtered = h_df.loc[mask].copy()
+                if not raw_h.empty:
+                    # 날짜 필터링 로직
+                    raw_h['저장시간'] = pd.to_datetime(raw_h['저장시간'], errors='coerce')
+                    raw_h['pure_date'] = raw_h['저장시간'].dt.date
+                    f_df = raw_h[(raw_h['pure_date'] >= start_date) & (raw_h['pure_date'] <= end_date)].copy()
 
-                    if not filtered.empty:
-                        # 💡 [핵심] 사진의 표 순서에 맞춰 컬럼명을 강제로 재배치합니다.
-                        # 시트에 있는 '수량' 컬럼을 '리오더 수량'으로 표시하도록 매핑
-                        if '수량' in filtered.columns:
-                            filtered['리오더 수량'] = filtered['수량']
+                    if not f_df.empty:
+                        # 💡 [핵심 보정] 사진의 컬럼 순서에 맞춰 데이터를 재배치합니다.
                         
-                        # 사진에 있는 항목들 중 데이터가 없는 것들은 빈칸 처리
-                        for col in ['공급처상품명', '추가 리오더', '권장 발주량']:
-                            if col not in filtered.columns:
-                                filtered[col] = "" # 빈값으로 생성
+                        # 1. '수량' 컬럼 이름을 '리오더 수량'으로 변경 (데이터 밀림 방지)
+                        if '수량' in f_df.columns:
+                            f_df['리오더 수량'] = f_df['수량']
+                        
+                        # 2. 사진에 있는 나머지 칸들(공급처상품명, 추가 리오더 등) 생성
+                        # 만약 시트에 해당 데이터가 없다면 빈칸("")으로 채웁니다.
+                        needed_cols = ['공급처상품명', '추가 리오더', '권장 발주량']
+                        for nc in needed_cols:
+                            if nc not in f_df.columns:
+                                f_df[nc] = "" 
 
-                        # 💡 사진과 똑같은 순서로 컬럼 고정
-                        # 저장시간 | 구분(공급처) | 상품명 | 옵션 | 공급처상품명 | 리오더 수량 | 추가 리오더 | 권장 발주량
-                        final_cols = ['저장시간', '구분', '상품명', '옵션', '공급처상품명', '리오더 수량', '추가 리오더', '권장 발주량']
+                        # 3. 🎯 [중요] 사장님 사진과 똑같은 순서로 컬럼 강제 고정
+                        # 저장시간 | 구분 | 상품명 | 옵션 | 공급처상품명 | 리오더 수량 | 추가 리오더 | 권장 발주량
+                        final_order = [
+                            '저장시간', '구분', '상품명', '옵션', 
+                            '공급처상품명', '리오더 수량', '추가 리오더', '권장 발주량'
+                        ]
                         
-                        # 실제 존재하는 컬럼만 필터링 (에러 방지)
-                        existing_cols = [c for c in final_cols if c in filtered.columns]
-                        df_display = filtered[existing_cols].sort_values(by='저장시간', ascending=False)
+                        # 실제로 존재하는 컬럼만 필터링해서 보여줌
+                        actual_view = [c for c in final_order if c in f_df.columns]
+                        show_df = f_df[actual_view].sort_values(by='저장시간', ascending=False)
 
-                        st.success(f"✅ 총 {len(df_display)}개의 기록을 찾았습니다.")
-                        st.dataframe(df_display, use_container_width=True, hide_index=True)
+                        st.success(f"✅ 오늘 날짜 기록을 포함하여 총 {len(show_df)}건을 불러왔습니다.")
                         
-                        # 엑셀 다운로드
-                        csv_data = df_display.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                        st.download_button("📥 조회 결과 엑셀 다운로드", csv_data, f"히스토리_{start_d}.csv", use_container_width=True)
+                        # 4. 표 출력 (숫자가 공급처상품명에 안 들어가게 고정됨)
+                        st.dataframe(show_df, use_container_width=True, hide_index=True)
+                        
+                        # 5. 엑셀 다운로드
+                        csv_res = show_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                        st.download_button("📥 조회 결과 엑셀 다운로드", csv_res, f"발주기록_{start_date}.csv", use_container_width=True)
                     else:
-                        st.warning("해당 기간에 기록이 없습니다.")
+                        st.warning("해당 기간에는 저장된 데이터가 없습니다.")
                 else:
-                    st.error("데이터를 불러올 수 없습니다.")
+                    st.error("불러올 데이터가 없습니다. 시트를 확인해 주세요.")
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
