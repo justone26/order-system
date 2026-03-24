@@ -139,13 +139,17 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
             
-   # --- [4단계: 데이터 편집 및 재고 관리 - 리오더 차감 전용] ---
-st.divider()
-st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
+if st.session_state.get('analyzed'):
+    # 데이터가 정말로 로드되었는지 최종 확인 (방어막)
+    if st.session_state.get('df_raw') is None:
+        st.warning("⚠️ 먼저 상단에서 데이터를 로드해 주세요.")
+        st.stop() # 데이터 없으면 아래 로직 실행 안 하고 멈춤
 
-# 1. 데이터 복사 및 수치형 변환
-df_work = st.session_state.df_raw.copy()
-
+    # --- [4단계: 데이터 편집 및 재고 관리] ---
+    st.divider()
+    st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
+    df_work = st.session_state.df_raw.copy() # 이제 안전하게 복사됩니다!
+    
 num_cols = [stock, avail, "리오더 수량", t7day, t3day]
 for c in num_cols:
     if c in df_work.columns:
