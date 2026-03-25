@@ -24,7 +24,7 @@ def load_reorder_data():
         return pd.DataFrame(ss.sheet1.get_all_records()) if ss else pd.DataFrame()
     except: return pd.DataFrame()
 
-# 3. 세션 상태 관리 (강력 초기화)
+# 3. 세션 상태 관리 (초기화 장치)
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'df_final' not in st.session_state: st.session_state.df_final = None
 if 'last_fn' not in st.session_state: st.session_state.last_fn = None
@@ -37,22 +37,23 @@ with tab1:
     st.subheader("📁 1단계: 엑셀 데이터 업로드")
     up_file = st.file_uploader("파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="up_key")
     
-    # [강력 조치] 새 파일이 감지되면 세션을 즉시 폭파하고 리부트
-    if up_file and st.session_state.last_fn != up_file.name:
-        st.session_state.df_raw = None
-        st.session_state.df_final = None
-        st.session_state.last_fn = up_file.name
-        
-        try:
-            df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
-            df.columns = df.columns.str.strip()
-            st.session_state.df_raw = df
-            st.rerun() # 여기서 화면을 한번 싹 깨끗하게 밀어버립니다.
-        except Exception as e:
-            st.error(f"파일 읽기 오류: {e}")
+    # 새 파일이 들어오면 모든 상태 초기화
+    if up_file:
+        if st.session_state.last_fn != up_file.name:
+            st.session_state.df_raw = None
+            st.session_state.df_final = None
+            st.session_state.last_fn = up_file.name
+            
+            try:
+                df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
+                df.columns = df.columns.str.strip()
+                st.session_state.df_raw = df
+                st.rerun() 
+            except Exception as e:
+                st.error(f"파일 읽기 오류: {e}")
 
     # --- [2~3단계: 매핑 및 분석 설정] ---
-    # 분석 결과(df_final)가 없을 때만 매핑창이 보입니다.
+    # 분석 버튼 누르기 전까지만 노출
     if st.session_state.df_raw is not None and st.session_state.df_final is None:
         st.divider()
         st.subheader("🔗 2단계: 컬럼 매핑 설정")
@@ -71,7 +72,6 @@ with tab1:
                 df = st.session_state.df_raw.copy()
                 gs_data = load_reorder_data()
                 
-                # 리오더 매칭 로직
                 if not gs_data.empty:
                     gs_data['상품명'] = gs_data['상품명'].astype(str).str.strip()
                     gs_data['옵션'] = gs_data['옵션'].astype(str).str.strip()
@@ -83,7 +83,6 @@ with tab1:
                 else:
                     df['리오더 수량'] = 0
                 
-                # 매핑 정보 저장 및 계산
                 st.session_state.mapping = {"item": sel_item, "opt": sel_opt, "avail": sel_avail, "t7": sel_t7}
                 df['일판매량'] = (pd.to_numeric(df[sel_t7], errors='coerce').fillna(0) / 7).round(1)
                 df['권장발주량'] = ((df['일판매량'] * 10) - (pd.to_numeric(df[sel_avail], errors='coerce').fillna(0) + df['리오더 수량'])).clip(lower=0).astype(int)
@@ -92,13 +91,11 @@ with tab1:
                 st.rerun()
 
     # --- [4~6단계: 수정 및 저장] ---
-    # 분석 버튼을 눌러서 df_final이 생겼을 때만 노출됩니다.
     if st.session_state.df_final is not None:
         m = st.session_state.mapping
         st.divider()
         st.subheader("📝 4~5단계: 수량 검토 및 수정")
         
-        # 사장님이 보기 싫어하시는 '미리보기'나 '분석완료' 문구는 아예 넣지 않았습니다.
         d_cols = [m["item"], m["opt"], m["avail"], '리오더 수량', '일판매량', '권장발주량']
         edited_df = st.data_editor(st.session_state.df_final[d_cols], use_container_width=True, hide_index=True)
 
@@ -117,14 +114,14 @@ with tab1:
                 sh1 = ss.sheet1
                 sh1.clear()
                 sh1.update([['상품명', '옵션', '리오더 수량']] + edited_df[[m["item"], m["opt"], '리오더 수량']].values.tolist())
-                st.success("✅ 저장되었습니다!")
-                st.balloons()
+                st.success("✅ 저장 완료!")
             except Exception as e:
                 st.error(f"저장 오류: {e}")
 
-    # 리셋 버튼
+    # 하단 리셋 버튼
     if st.session_state.df_raw is not None:
-        if st.button("🗑️ 전체 초기화"):
+        st.divider()
+        if st.button("🗑️ 화면 초기화"):
             st.session_state.df_raw = None
             st.session_state.df_final = None
             st.session_state.last_fn = None
