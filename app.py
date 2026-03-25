@@ -9,16 +9,27 @@ import time
 KST = timezone(timedelta(hours=9))
 st.set_page_config(layout="wide", page_title="저스트원 재고관리")
 
-# 2. 구글 시트 함수 (기존 정보 유지)
+# 2. 구글 시트 함수
 def get_sheet():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
         scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        # 사장님 시트 ID 고정
         return client.open_by_key("1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg")
     except Exception as e:
+        return None
+
+# [추가] 리오더 수량 불러오기 함수 (이게 없어서 에러 났던 겁니다!)
+def load_reorder_data():
+    try:
+        ss = get_sheet()
+        if ss:
+            sh = ss.sheet1
+            data = sh.get_all_records()
+            return pd.DataFrame(data)
+        return None
+    except:
         return None
 
 def save_reorder_data(df, i_col, o_col):
@@ -27,113 +38,22 @@ def save_reorder_data(df, i_col, o_col):
         if ss:
             sh = ss.sheet1
             sh.clear()
-            # 상품명, 옵션, 리오더 수량만 추출해서 저장
             sdf = df[[i_col, o_col, '리오더 수량']].copy()
             sdf.columns = ['상품명', '옵션', '리오더 수량']
             sh.update([sdf.columns.values.tolist()] + sdf.values.tolist())
     except Exception as e:
         st.error(f"시트 저장 중 오류: {e}")
-        
-def save_history_to_gsheet(df, log_type="발주"):
-    """발주 또는 입고 내역을 구글 시트에 저장 (시트 없으면 자동 생성)"""
-    try:
-        ss = get_sheet()
-        # 저장할 탭 이름 (사장님 시트에 이 이름으로 탭이 생깁니다)
-        sheet_name = "발주기록" if log_type == "발주" else "입고로그"
-        
-        try:
-            ws = ss.worksheet(sheet_name)
-        except:
-            # 시트가 없으면 새로 만들고 제목줄 추가
-            ws = ss.add_worksheet(title=sheet_name, rows="1000", cols="10")
-            if log_type == "발주":
-                ws.append_row(["날짜", "공급쳐", "상품명", "옵션", "발주수량"])
-            else:
-                ws.append_row(["날짜", "상품명", "옵션", "수량"])
-            st.info(f"💡 '{sheet_name}' 시트가 없어서 새로 생성했습니다.")
 
-        # 실제 수량이 있는 데이터만 저장
-        df_to_save = df[df.iloc[:, -1] > 0] # 마지막 컬럼(수량)이 0보다 큰 것만
-        if not df_to_save.empty:
-            ws.append_rows(df_to_save.values.tolist())
-            return True
-        return False
-    except Exception as e:
-        st.error(f"⚠️ 시트 저장 중 상세 오류 발생: {e}")
-        return False
-
-def get_incoming_history():
-    """구글 시트의 '입고로그'에서 상품별 합계를 가져옴"""
-    try:
-        ss = get_sheet()
-        ws = ss.worksheet("입고로그")
-        data = pd.DataFrame(ws.get_all_records())
-        if data.empty:
-            return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
-        
-        # 상품명+옵션별 합산
-        summary = data.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
-        summary.rename(columns={'수량': '과거리오더 입고'}, inplace=True)
-        return summary
-    except:
-        return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
-
-def 파이썬_시트_초기화():
-    try:
-        sheet = get_sheet()
-        worksheets = [s.title for s in sheet.worksheets()]
-        
-        # 1. 입고기록 시트 (과거 리오더용)
-        if "입고기록" not in worksheets:
-            sheet.add_worksheet(title="입고기록", rows="1000", cols="5")
-            sheet.worksheet("입고기록").append_row(["날짜", "상품명", "옵션", "수량"])
-            
-        # 2. 발주기록 시트 (6단계 히스토리용)
-        if "발주기록" not in worksheets:
-            sheet.add_worksheet(title="발주기록", rows="5000", cols="6")
-            sheet.worksheet("발주기록").append_row(["날짜", "공급쳐", "상품명", "옵션", "발주수량"])
-            
-        return True
-    except Exception as e:
-        st.error(f"시트 초기화 중 오류: {e}")
-        return False
-
-# --- [함수 정의 구역: 상단에 추가] ---
-
-def load_v6_history():
-    """구글 시트의 '발주기록' 탭에서 데이터를 읽어오는 함수"""
-    try:
-        sheet = get_sheet() # 기존에 만들어둔 시트 접속 함수 사용
-        record_sheet = sheet.worksheet("발주기록")
-        data = record_sheet.get_all_records()
-        return pd.DataFrame(data)
-    except Exception as e:
-        # 시트가 없거나 연결 오류 시 빈 표 반환
-        return pd.DataFrame()
-
-# 프로그램 시작 시 한 번 실행
-if 'sheet_init' not in st.session_state:
-    if 파이썬_시트_초기화():
-        st.session_state.sheet_init = True
-
-# 3. 세션 상태 관리
-if 'df_raw' not in st.session_state: st.session_state.df_raw = None
+# [세션 상태 관리 - 맨 위로 이동]
 if 'analyzed' not in st.session_state: st.session_state.analyzed = False
-if 'last_fn' not in st.session_state: st.session_state.last_fn = None
-if 'p' not in st.session_state: st.session_state.p = None
+if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 
 st.title("📦 저스트원 통합 재고 관리 시스템")
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
+
 with tab1:
-    # --- 1단계: 데이터 업로드 & 보존 로직 ---
     st.subheader("📁 1단계: 데이터 업로드")
     
-    # [중요] 세션 상태 초기화 (최초 1회 실행)
-    if 'analyzed' not in st.session_state:
-        st.session_state.analyzed = False
-    if 'df_raw' not in st.session_state:
-        st.session_state.df_raw = None
-
     # 1. 파일 업로드 위젯
     up_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls', 'csv'], key="up_key")
 
@@ -144,48 +64,52 @@ with tab1:
         st.session_state.add_order_dict = {}
         if "up_key" in st.session_state:
             st.session_state.up_key = None
-        # ✅ 버튼 '안쪽'에만 rerun이 있어야 합니다.
         st.rerun() 
 
-    # 3. 📍 데이터 분석 로직 (조건문으로 꽉 묶어놨습니다)
+    # 3. 데이터 분석 로직 (st.rerun 무한루프 방지)
     if up_file is not None and st.session_state.analyzed == False:
+        # 변수 설정 (사장님 엑셀에 맞게 수정)
+        item = "상품명"
+        option = "옵션"
+        
         with st.spinner('📡 기존 데이터를 동기화하는 중...'):
             try:
-                # 파일 읽기
                 if up_file.name.endswith('.csv'):
                     df_new = pd.read_csv(up_file)
                 else:
                     df_new = pd.read_excel(up_file)
 
-                # 기존 리오더 수량 불러오기
+                # 기존 리오더 수량 불러와서 합치기
                 existing_reorder_df = load_reorder_data() 
                 
                 if existing_reorder_df is not None and not existing_reorder_df.empty:
                     df_new = pd.merge(
                         df_new, 
-                        existing_reorder_df[[item, option, '리오더 수량']], 
-                        on=[item, option], 
+                        existing_reorder_df[['상품명', '옵션', '리오더 수량']], 
+                        left_on=[item, option], 
+                        right_on=['상품명', '옵션'],
                         how='left', 
                         suffixes=('', '_old')
                     )
                     if '리오더 수량_old' in df_new.columns:
                         df_new['리오더 수량'] = df_new['리오더 수량_old'].fillna(0)
-                        df_new.drop(columns=['리오더 수량_old'], inplace=True)
+                        df_new.drop(columns=['리오더 수량_old', '상품명_old', '옵션_old'], errors='ignore', inplace=True)
                 
                 if '리오더 수량' not in df_new.columns:
                     df_new['리오더 수량'] = 0
 
-                # 🎯 상태 변경 (이걸 해야 무한 로딩이 멈춤!)
+                # 🎯 상태 변경 후 "딱 한 번" 새로고침
                 st.session_state.df_raw = df_new
                 st.session_state.analyzed = True
-                
-                # ✅ 분석 완료 직후 딱 한 번만 새로고침!
                 st.rerun()
 
             except Exception as e:
-                st.error(f"⚠️ 오류 발생: {e}")
+                st.error(f"⚠️ 업로드 오류: {e}")
 
-    # 🛑 [절대 금지] 이 아래부터는 그 어떤 st.rerun()도 있으면 안 됩니다!
+    # 4. 분석 결과 표시 구역
+    if st.session_state.analyzed and st.session_state.df_raw is not None:
+        st.success("✅ 데이터 분석 완료!")
+        st.dataframe(st.session_state.df_raw.head()) # 일단 데이터가 잘 나오는지 5줄만 확인
 
         # ---------------------------------------------------------
         # 📍 [핵심] 구글 시트에서 기존 리오더 수량 동기화 (데이터 보존)
