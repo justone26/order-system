@@ -411,39 +411,34 @@ if st.session_state.analyzed and st.session_state.df_raw is not None:
                 st.success(f"✅ {hist_date_5} 자로 리오더 수량이 갱신되었습니다.")
                 time.sleep(1); st.rerun()
 
-    # 5. 하단 버튼 (구글 시트 저장 및 다운로드)
-    st.write("---")
-    b1, b2 = st.columns(2)
-
+    # 5단계 하단 버튼 구역
     if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-        order_ready = df_5[(df_5['권장발주량'] > 0) | (df_5['추가발주수량'] > 0)].copy()
-        if not order_ready.empty:
-            # 선택한 날짜(hist_date_5)를 사용하여 저장
-            target_date = hist_date_5.strftime('%Y-%m-%d')
-            now_time = datetime.now(KST).strftime('%H:%M:%S')
-            
-            log_df = pd.DataFrame()
-            log_df['날짜'] = [f"{target_date} {now_time}"] * len(order_ready)
-            log_df['공급쳐'] = order_ready[vendor].values
-            log_df['상품명'] = order_ready[item].values
-            log_df['옵션'] = order_ready[option].values
-            log_df['발주수량'] = (order_ready['권장발주량'] + order_ready['추가발주수량']).values
-            
-            try:
-                save_history_to_gsheet(log_df, log_type="발주")
-                st.success(f"✅ {target_date} 자 발주 내역이 저장되었습니다!")
-                time.sleep(1); st.rerun()
-            except:
-                st.error("저장 중 오류가 발생했습니다.")
-
-    if not df_display_5.empty:
-        csv_final = df_display_5[final_cols_5].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        b2.download_button(
-            label="📥 최종 발주서 다운로드",
-            data=csv_final,
-            file_name=f"발주서_{hist_date_5.strftime('%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True
+        # 권장발주 + 추가발주 합산 수량 계산
+        order_ready = df_5.copy()
+        order_ready['총발주수량'] = order_ready['권장발주량'] + order_ready['추가발주수량']
+        
+        # 실제 발주할 품목만 필터링
+        final_orders = order_ready[order_ready['총발주수량'] > 0].copy()
+        
+        if not final_orders.empty:
+            with st.spinner('📡 구글 시트에 기록 중...'):
+                target_date = hist_date_5.strftime('%Y-%m-%d')
+                now_time = datetime.now(KST).strftime('%H:%M:%S')
+                
+                # 시트에 들어갈 5개 컬럼 구성
+                log_df = pd.DataFrame()
+                log_df['날짜'] = [f"{target_date} {now_time}"] * len(final_orders)
+                log_df['공급쳐'] = final_orders[vendor].values
+                log_df['상품명'] = final_orders[item].values
+                log_df['옵션'] = final_orders[option].values
+                log_df['발주수량'] = final_orders['총발주수량'].values
+                
+                if save_history_to_gsheet(log_df):
+                    st.success(f"✅ {target_date} 자 발주서 저장이 완료되었습니다!")
+                    time.sleep(1)
+                    st.rerun()
+        else:
+            st.warning("발주 수량이 입력된 상품이 없습니다.")
         )
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
