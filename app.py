@@ -44,12 +44,23 @@ with tab1:
     if 'df_raw' not in st.session_state: st.session_state.df_raw = None
     if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 
-    st.subheader("📁 1단계: 데이터 업로드")
-    c_up1, c_up2 = st.columns([3, 1])
-    uploaded_file = c_up1.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_up")
-    
-    if c_up2.button("🔄 전체 데이터 초기화", use_container_width=True):
+    # --- [1단계: 데이터 업로드 구역] ---
+st.subheader("📁 1단계: 데이터 업로드")
+
+# 컬럼 너비를 [4, 1] 정도로 조절해서 버튼을 왼쪽으로 당깁니다.
+col1, col2 = st.columns([4, 1]) 
+
+with col1:
+    # 업로드 박스
+    upload_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
+
+with col2:
+    # 버튼 높이를 맞추기 위해 빈 공간을 살짝 줍니다.
+    st.write("##") 
+    # 버튼을 왼쪽으로 정렬해서 배치
+    if st.button("🔄 전체 데이터 초기화", use_container_width=True):
         st.session_state.clear()
+        st.success("데이터가 초기화되었습니다.")
         st.rerun()
 
     # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
