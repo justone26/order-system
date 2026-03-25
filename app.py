@@ -47,20 +47,7 @@ with tab1:
 # --- [1단계: 데이터 업로드 구역] ---
 st.subheader("📁 1단계: 데이터 업로드")
 
-# 1. 업로드 박스 (이름을 'upload_file'로 통일했습니다)
-upload_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
-
-# 2. 업로드 파일만 초기화하는 버튼 (왼쪽 배치)
-if st.button("🗑️ 업로드 파일 초기화", key="reset_upload_only"):
-    # 리오더 수량은 건드리지 않고, 업로드 상태만 초기화
-    st.session_state.analyzed = False 
-    st.success("업로드된 파일 정보가 초기화되었습니다. (리오더 수량은 유지됨)")
-    st.rerun()
-
-# --- [1단계: 데이터 업로드 구역] ---
-st.subheader("📁 1단계: 데이터 업로드")
-
-# 1. 업로드 박스 (사장님 기존 코드 이름인 'uploaded_file'로 다시 맞췄습니다!)
+# 1. 업로드 박스 (딱 한 번만 나와야 합니다!)
 uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
 
 # 2. 업로드 파일만 초기화하는 버튼 (왼쪽 배치)
@@ -71,9 +58,9 @@ if st.button("🗑️ 업로드 파일 초기화", key="reset_upload_only"):
     st.rerun()
 
 # --- [데이터 처리 시작] ---
-# 이제 아래 76번 줄의 'if uploaded_file is not None:'과 이름이 딱 맞아서 에러가 안 납니다!
+# 이제 이름이 'uploaded_file'로 통일되어 아래쪽 코드들도 잘 돌아갈 겁니다.
 if uploaded_file is not None:
-    # (이하 사장님의 기존 로직이 그대로 이어지면 됩니다.)
+    # (이후 사장님의 기존 로직 시작...)
     pass
 
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
