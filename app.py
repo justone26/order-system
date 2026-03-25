@@ -33,6 +33,24 @@ def save_reorder_data(df, i_col, o_col):
             sh.update([sdf.columns.values.tolist()] + sdf.values.tolist())
     except Exception as e:
         st.error(f"시트 저장 중 오류: {e}")
+# --- [1단계: 도구(함수) 모음 구역] ---
+
+# (기존에 있던 get_sheet 함수 아래에 붙여넣으세요)
+def get_incoming_history():
+    """구글 시트의 '입고' 로그를 읽어와서 상품명+옵션별 합계를 반환"""
+    try:
+        ss = get_sheet() 
+        ws = ss.worksheet("입고로그") # 👈 사장님 구글 시트의 실제 탭 이름!
+        data = pd.DataFrame(ws.get_all_records())
+        if data.empty: 
+            return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
+        
+        # 상품명+옵션별로 입고 수량 합산
+        summary = data.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+        summary.rename(columns={'수량': '과거리오더 입고'}, inplace=True)
+        return summary
+    except:
+        return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
 
 # 3. 세션 상태 관리
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
