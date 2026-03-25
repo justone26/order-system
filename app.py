@@ -244,12 +244,12 @@ if st.session_state.analyzed and st.session_state.p:
             use_container_width=True, 
             key="editor_v4_final", 
             hide_index=True,
-            column_config={
-                "품절": st.column_config.TextColumn(alignment="left"),
-                "공급쳐": st.column_config.TextColumn(alignment="left"),
-                "상품명": st.column_config.TextColumn(alignment="left"),
-                "옵션": st.column_config.TextColumn(alignment="left"),
-                "공급쳐 상품명": st.column_config.TextColumn(alignment="left"),
+           column_config={
+                "품절": st.column_config.TextColumn(), # 👈 alignment 옵션 삭제
+                "공급쳐": st.column_config.TextColumn(),
+                "상품명": st.column_config.TextColumn(),
+                "옵션": st.column_config.TextColumn(),
+                "공급쳐 상품명": st.column_config.TextColumn(),
                 "정상재고": st.column_config.NumberColumn(format="%d", alignment="left"),
                 "가용재고": st.column_config.NumberColumn(format="%d", alignment="left"),
                 "리오더 수량": st.column_config.NumberColumn(format="%d", alignment="left"),
@@ -258,7 +258,6 @@ if st.session_state.analyzed and st.session_state.p:
                 "일판매량": st.column_config.NumberColumn(format="%d", alignment="left"),
                 "권장발주량": st.column_config.NumberColumn(format="%d", alignment="left")
             }
-        )
         if st.form_submit_button("💾 입고량 반영 및 데이터 저장", use_container_width=True, type="primary"):
             edits = st.session_state["editor_v4_final"].get("edited_rows", {})
             if edits:
@@ -329,17 +328,16 @@ if st.session_state.analyzed and st.session_state.p:
             key="editor_v5_final", 
             hide_index=True,
             column_config={
-                "상태": st.column_config.TextColumn(alignment="left"),
-                "상품명": st.column_config.TextColumn(alignment="left"),
-                "옵션": st.column_config.TextColumn(alignment="left"),
-                "공급쳐상품명": st.column_config.TextColumn(alignment="left"),
+                "상태": st.column_config.TextColumn(), # 👈 alignment 옵션 삭제
+                "상품명": st.column_config.TextColumn(),
+                "옵션": st.column_config.TextColumn(),
+                "공급쳐상품명": st.column_config.TextColumn(),
                 "가용재고": st.column_config.NumberColumn(format="%d", alignment="left"),
                 "리오더수량": st.column_config.NumberColumn(format="%d", alignment="left"),
                 "과거리오더 입고": st.column_config.NumberColumn(format="%d", alignment="left"),
                 "추가발주수량": st.column_config.NumberColumn(format="%d", alignment="left"),
                 "권장발주량": st.column_config.NumberColumn(format="%d", alignment="left")
             }
-        )
         if st.form_submit_button("✅ 수량 확정 및 리오더 반영", use_container_width=True, type="primary"):
             edits_5 = st.session_state["editor_v5_final"].get("edited_rows", {})
             if edits_5:
