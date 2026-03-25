@@ -124,34 +124,40 @@ if 'p' not in st.session_state: st.session_state.p = None
 
 st.title("📦 저스트원 통합 재고 관리 시스템")
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
-
 with tab1:
     # --- 1단계: 데이터 업로드 & 보존 로직 ---
     st.subheader("📁 1단계: 데이터 업로드")
     
+    # [중요] 세션 상태 초기화 (최초 1회 실행)
+    if 'analyzed' not in st.session_state:
+        st.session_state.analyzed = False
+    if 'df_raw' not in st.session_state:
+        st.session_state.df_raw = None
+
     # 1. 파일 업로드 위젯
     up_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls', 'csv'], key="up_key")
 
-    # 2. 전체 데이터 초기화 버튼 (버튼을 눌렀을 때만 안쪽 코드가 실행됨)
+    # 2. 전체 데이터 초기화 버튼
     if st.button("🗑️ 전체 데이터 초기화", use_container_width=True):
         st.session_state.df_raw = None
         st.session_state.analyzed = False 
         st.session_state.add_order_dict = {}
         if "up_key" in st.session_state:
             st.session_state.up_key = None
-        # ✅ 버튼 클릭 시에만 새로고침!
+        # ✅ 버튼 '안쪽'에만 rerun이 있어야 합니다.
         st.rerun() 
 
-    # 3. 📍 분석 로직 (파일이 있고, 아직 분석 안 했을 때만 딱 1번 실행)
-    if up_file is not None and not st.session_state.get('analyzed', False):
-        with st.spinner('📡 기존 데이터 동기화 중...'):
+    # 3. 📍 데이터 분석 로직 (조건문으로 꽉 묶어놨습니다)
+    if up_file is not None and st.session_state.analyzed == False:
+        with st.spinner('📡 기존 데이터를 동기화하는 중...'):
             try:
+                # 파일 읽기
                 if up_file.name.endswith('.csv'):
                     df_new = pd.read_csv(up_file)
                 else:
                     df_new = pd.read_excel(up_file)
 
-                # 기존 리오더 수량 불러오기 (이미 정의된 함수 호출)
+                # 기존 리오더 수량 불러오기
                 existing_reorder_df = load_reorder_data() 
                 
                 if existing_reorder_df is not None and not existing_reorder_df.empty:
@@ -169,17 +175,17 @@ with tab1:
                 if '리오더 수량' not in df_new.columns:
                     df_new['리오더 수량'] = 0
 
-                # 분석 완료 상태 저장
+                # 🎯 상태 변경 (이걸 해야 무한 로딩이 멈춤!)
                 st.session_state.df_raw = df_new
                 st.session_state.analyzed = True
                 
-                # ✅ 분석이 딱 끝난 시점에만 1번 새로고침!
+                # ✅ 분석 완료 직후 딱 한 번만 새로고침!
                 st.rerun()
 
             except Exception as e:
                 st.error(f"⚠️ 오류 발생: {e}")
 
-    # ⛔ [주의] 이 줄 아래(if문 밖)에는 그 어떤 st.rerun()도 있으면 안 됩니다!
+    # 🛑 [절대 금지] 이 아래부터는 그 어떤 st.rerun()도 있으면 안 됩니다!
 
         # ---------------------------------------------------------
         # 📍 [핵심] 구글 시트에서 기존 리오더 수량 동기화 (데이터 보존)
