@@ -8,7 +8,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 KST = timezone(timedelta(hours=9))
 st.set_page_config(layout="wide", page_title="저스트원 재고관리")
 
-# 2. 구글 시트 접속 함수 (심플 버전)
+# 2. 구글 시트 함수 (사장님 원본 로직 복구)
 def get_sheet():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
@@ -20,6 +20,7 @@ def get_sheet():
         return None
 
 def load_reorder_data():
+    """Sheet1에서 기존 리오더 수량 로드"""
     try:
         ss = get_sheet()
         if ss:
@@ -28,135 +29,140 @@ def load_reorder_data():
     except:
         return pd.DataFrame()
 
-# 3. 세션 상태 초기화 (제일 중요!)
-if 'analyzed' not in st.session_state: st.session_state.analyzed = False
+def save_reorder_data(df, i_col, o_col):
+    """Sheet1에 현재 리오더 상태 저장"""
+    try:
+        ss = get_sheet()
+        if ss:
+            sh = ss.sheet1
+            sh.clear()
+            sdf = df[[i_col, o_col, '리오더 수량']].copy()
+            sdf.columns = ['상품명', '옵션', '리오더 수량']
+            sh.update([sdf.columns.values.tolist()] + sdf.values.tolist())
+    except Exception as e:
+        st.error(f"시트 저장 중 오류: {e}")
+
+def 파이썬_시트_초기화():
+    """필요한 시트 탭이 없으면 자동 생성"""
+    try:
+        sheet = get_sheet()
+        worksheets = [s.title for s in sheet.worksheets()]
+        if "입고로그" not in worksheets:
+            sheet.add_worksheet(title="입고로그", rows="1000", cols="5")
+            sheet.worksheet("입고로그").append_row(["날짜", "상품명", "옵션", "수량"])
+        if "발주기록" not in worksheets:
+            sheet.add_worksheet(title="발주기록", rows="5000", cols="6")
+            sheet.worksheet("발주기록").append_row(["날짜", "상품명", "옵션", "공급처상품명", "가용재고", "발주수량"])
+        return True
+    except:
+        return False
+
+# 3. 세션 상태 관리 (무한 로딩 방지용)
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
+if 'last_fn' not in st.session_state: st.session_state.last_fn = None
+if 'sheet_init' not in st.session_state:
+    if 파이썬_시트_초기화():
+        st.session_state.sheet_init = True
 
 st.title("📦 저스트원 통합 재고 관리 시스템")
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
 with tab1:
-    st.subheader("📁 1단계: 데이터 업로드")
+    st.subheader("📁 1단계: 데이터 업로드 및 동기화")
     
-    # 파일 업로드
     up_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls', 'csv'], key="up_key")
 
-    # 초기화 버튼 (rerun 삭제 버전)
     if st.button("🗑️ 전체 데이터 초기화", use_container_width=True):
         st.session_state.df_raw = None
-        st.session_state.analyzed = False
-        st.info("데이터가 초기화되었습니다. 파일을 다시 올려주세요.")
+        st.session_state.last_fn = None
+        st.rerun()
 
-    # 분석 로직 (rerun 없이 상태만 변경)
-    if up_file is not None and st.session_state.analyzed == False:
-        item, option = "상품명", "옵션"
-        try:
-            df_new = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
-            
-            # 기존 리오더 데이터 병합
-            ex_df = load_reorder_data()
-            if not ex_df.empty:
-                df_new = pd.merge(df_new, ex_df[['상품명', '옵션', '리오더 수량']], 
-                                  left_on=[item, option], right_on=['상품명', '옵션'], how='left')
-                df_new['리오더 수량'] = df_new['리오더 수량'].fillna(0)
-            else:
-                df_new['리오더 수량'] = 0
-            
-            st.session_state.df_raw = df_new
-            st.session_state.analyzed = True
-            st.success("분석 완료! 아래 결과가 표시됩니다.")
-        except Exception as e:
-            st.error(f"오류 발생: {e}")
-
-    # 데이터가 있을 때만 화면에 표시
-    if st.session_state.analyzed and st.session_state.df_raw is not None:
-        st.write("### 분석된 데이터 미리보기")
-        st.dataframe(st.session_state.df_raw.head(20))
-
-    # 4. 분석 결과 표시 구역
-    if st.session_state.analyzed and st.session_state.df_raw is not None:
-        st.success("✅ 데이터 분석 완료!")
-        st.dataframe(st.session_state.df_raw.head()) # 일단 데이터가 잘 나오는지 5줄만 확인
-
-        # ---------------------------------------------------------
-        # 📍 [핵심] 구글 시트에서 기존 리오더 수량 동기화 (데이터 보존)
-        # ---------------------------------------------------------
-        if st.session_state.df_raw is None: # 처음 올릴 때만 실행
-            with st.spinner('📡 기존 리오더 수량을 불러와서 합치는 중...'):
-                try:
-                    # 기존에 우리가 만든 '리오더데이터' 시트 읽기 함수 호출
-                    existing_reorder_df = load_reorder_data() 
-                    
-                    if existing_reorder_df is not None and not existing_reorder_df.empty:
-                        # 새 엑셀과 기존 시트 데이터를 [상품명, 옵션] 기준으로 매칭
-                        # '리오더 수량' 컬럼만 쏙 빼와서 새 표에 붙여줍니다.
-                        df_new = pd.merge(
-                            df_new, 
-                            existing_reorder_df[[item, option, '리오더 수량']], 
-                            on=[item, option], 
-                            how='left', 
-                            suffixes=('', '_old')
-                        )
-                        # 기존 기록이 있으면 쓰고, 없으면 0으로 채움
-                        if '리오더 수량_old' in df_new.columns:
-                            df_new['리오더 수량'] = df_new['리오더 수량_old'].fillna(0)
-                            df_new.drop(columns=['리오더 수량_old'], inplace=True)
-                        else:
-                            if '리오더 수량' not in df_new.columns:
-                                df_new['리오더 수량'] = 0
-                    else:
-                        # 저장된 데이터가 아예 없는 경우
-                        if '리오더 수량' not in df_new.columns:
-                            df_new['리오더 수량'] = 0
-                            
-                except Exception as e:
-                    st.error(f"데이터 동기화 중 오류 발생: {e}")
-                    if '리오더 수량' not in df_new.columns:
-                        df_new['리오더 수량'] = 0
-
-            # 최종 완성된 데이터를 세션에 저장
-            st.session_state.df_raw = df_new
-            st.session_state.analyzed = True
-            st.success(f"✅ {up_file.name} 업로드 완료 및 기존 데이터 동기화 성공!")
-
-    if up_file is not None:
-        if st.session_state.get('last_fn') != up_file.name:
-            with st.spinner(f'{up_file.name} 처리 중...'):
-                df_new = pd.read_excel(up_file) if not up_file.name.endswith('.csv') else pd.read_csv(up_file)
+    # [핵심] 파일 처리 로직 (중복 실행 방지)
+    if up_file is not None and st.session_state.last_fn != up_file.name:
+        with st.spinner(f'{up_file.name} 처리 중...'):
+            try:
+                df_new = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
                 df_new.columns = df_new.columns.str.strip()
-                df_new = df_new.loc[:, ~df_new.columns.duplicated()]
+                
+                # 컬럼 매칭
+                item = next((c for c in df_new.columns if '상품명' in c), df_new.columns[0])
+                option = next((c for c in df_new.columns if '옵션' in c), df_new.columns[1])
+                
+                # 기존 리오더 수량 불러와서 합치기
+                gs_data = load_reorder_data()
+                if not gs_data.empty:
+                    gs_data['상품명'] = gs_data['상품명'].astype(str).str.strip()
+                    gs_data['옵션'] = gs_data['옵션'].astype(str).str.strip()
+                    df_new['t_n'] = df_new[item].astype(str).str.strip()
+                    df_new['t_o'] = df_new[option].astype(str).str.strip()
+                    
+                    df_new = pd.merge(df_new, gs_data[['상품명', '옵션', '리오더 수량']], 
+                                      left_on=['t_n', 't_o'], right_on=['상품명', '옵션'], 
+                                      how='left', suffixes=('', '_gs'))
+                    
+                    if '리오더 수량_gs' in df_new.columns:
+                        df_new['리오더 수량'] = df_new['리오더 수량_gs'].fillna(0).astype(int)
+                        df_new.drop(columns=['상품명_gs', '옵션_gs', '리오더 수량_gs', 't_n', 't_o'], inplace=True, errors='ignore')
+                
+                if '리오더 수량' not in df_new.columns:
+                    df_new['리오더 수량'] = 0
 
-                # 구글 시트 리오더 수량 동기화
-                try:
-                    gs = get_sheet()
-                    gs_data = pd.DataFrame(gs.sheet1.get_all_records())
-                    if not gs_data.empty and '리오더 수량' in gs_data.columns:
-                        tmp_n = next((c for c in df_new.columns if '상품명' in c), df_new.columns[0])
-                        tmp_o = next((c for c in df_new.columns if '옵션' in c), df_new.columns[1])
-                        df_new['t_n'] = df_new[tmp_n].astype(str).str.strip()
-                        df_new['t_o'] = df_new[tmp_o].astype(str).str.strip()
-                        gs_data['상품명'] = gs_data['상품명'].astype(str).str.strip()
-                        gs_data['옵션'] = gs_data['옵션'].astype(str).str.strip()
-                        df_new = pd.merge(df_new, gs_data[['상품명', '옵션', '리오더 수량']], 
-                                         left_on=['t_n', 't_o'], right_on=['상품명', '옵션'], 
-                                         how='left', suffixes=('', '_gs'))
-                        if '리오더 수량_gs' in df_new.columns:
-                            df_new['리오더 수량'] = df_new['리오더 수량_gs'].fillna(0).astype(int)
-                            df_new.drop(columns=['상품명_gs', '옵션_gs', '리오더 수량_gs', 't_n', 't_o'], inplace=True, errors='ignore')
-                except:
-                    if '리오더 수량' not in df_new.columns: df_new['리오더 수량'] = 0
-
-                # 업체별 데이터 누적 (상품명+옵션 기준 중복 제거)
+                # 업체별 데이터 누적
                 if st.session_state.df_raw is not None:
                     st.session_state.df_raw = pd.concat([st.session_state.df_raw, df_new], ignore_index=True)
-                    t_n = next((c for c in st.session_state.df_raw.columns if '상품명' in c), st.session_state.df_raw.columns[0])
-                    t_o = next((c for c in st.session_state.df_raw.columns if '옵션' in c), st.session_state.df_raw.columns[1])
-                    st.session_state.df_raw.drop_duplicates(subset=[t_n, t_o], keep='last', inplace=True)
+                    st.session_state.df_raw.drop_duplicates(subset=[item, option], keep='last', inplace=True)
                 else:
                     st.session_state.df_raw = df_new
 
                 st.session_state.last_fn = up_file.name
                 st.rerun()
+                
+            except Exception as e:
+                st.error(f"⚠️ 오류: {e}")
+
+    # 4. 분석 및 발주 (데이터가 있을 때만)
+    if st.session_state.df_raw is not None:
+        df = st.session_state.df_raw.copy()
+        
+        # 컬럼 식별
+        item = next((c for c in df.columns if '상품명' in c), df.columns[0])
+        option = next((c for c in df.columns if '옵션' in c), df.columns[1])
+        v_item = next((c for c in df.columns if '공급처상품명' in c), item)
+        avail = next((c for c in df.columns if '가용재고' in c), None)
+        t7day = next((c for c in df.columns if '7일판매량' in c), None)
+        t3day = next((c for c in df.columns if '3일판매량' in c), None)
+
+        if avail and t7day and t3day:
+            st.divider()
+            for c in [avail, t7day, t3day, '리오더 수량']:
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
+            
+            df['일판매량'] = df.apply(lambda x: round(x[t7day]/7) if x[t7day]>0 else round(x[t3day]/3), axis=1)
+            df['권장발주량'] = ((df['일판매량'] * 10) - (df[avail] + df['리오더 수량'])).clip(lower=0)
+
+            st.write("### 📊 재고 분석 및 발주 수정")
+            edited_df = st.data_editor(df, use_container_width=True, hide_index=True)
+
+            if st.button("💾 최종 발주 확정 및 시트 저장", type="primary", use_container_width=True):
+                now_str = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+                try:
+                    ss = get_sheet()
+                    record_ws = ss.worksheet("발주기록")
+                    to_log = edited_df[edited_df['권장발주량'] > 0]
+                    
+                    if not to_log.empty:
+                        # 8대 항목 구성 (날짜, 상품명, 옵션, 공급처상품명, 가용재고, 발주수량)
+                        log_rows = [[now_str, r[item], r[option], r[v_item], int(r[avail]), int(r['권장발주량'])] for _, r in to_log.iterrows()]
+                        record_ws.append_rows(log_rows)
+                        save_reorder_data(edited_df, item, option)
+                        st.success(f"✅ {len(log_rows)}건 저장 완료!")
+                    else:
+                        st.warning("발주할 항목이 없습니다.")
+                except Exception as e:
+                    st.error(f"저장 실패: {e}")
+        else:
+            st.warning("필수 컬럼(가용재고, 7일판매량, 3일판매량)이 부족합니다.")
+            st.dataframe(df.head())
 
   # --- 2, 3단계: 매핑 및 설정 (5:5 비율 최적화) ---
     if st.session_state.df_raw is not None: # 👈 이 줄을 추가해서 감싸주세요!
