@@ -45,42 +45,54 @@ with tab1:
     if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 
 # --- [매핑 및 분석 로직 (최종 수정본)] ---
-if st.session_state.df_raw is not None:
-    df_curr = st.session_state.df_raw
-    cols = df_curr.columns.tolist()
+    if st.session_state.df_raw is not None:
+        df_curr = st.session_state.df_raw
+        cols = df_curr.columns.tolist()
 
-    # 💡 [핵심] 인덱스를 안전하게 찾아주는 함수
-    # 위에서 찾은 변수(t7_col 등)가 리스트에 없으면 0번 대신 가장 유사한 걸 찾거나 빈 값을 줍니다.
-    def safe_index(target_label, all_cols):
-        try:
-            # 위에서 자동 매칭으로 찾은 컬럼명(예: '7일 발주합계')이 실제 cols에 있는지 확인
-            return all_cols.index(target_label)
-        except:
-            return 0 # 못 찾으면 첫 번째(품절) 선택
+        # 1. 자동 매칭 함수 다시 정의 (안전하게 사용하기 위해)
+        def find_best_col(targets, options):
+            for opt in options:
+                clean_opt = str(opt).replace(" ", "").upper()
+                for t in targets:
+                    if t.upper() in clean_opt: 
+                        return opt
+            return options[0] if options else ""
 
-    st.divider()
-    st.subheader("⚙️ 2단계: 매칭 설정 (자동 매칭 완료)")
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        # index=0 대신 위에서 계산된 위치를 넣어줍니다.
-        sold_out = st.selectbox("품절 여부", cols, index=safe_index(sold_out_col, cols))
-        vendor = st.selectbox("공급처", cols, index=safe_index(vendor_col, cols))
-        v_item = st.selectbox("공급처 상품명", cols, index=safe_index(v_item_col, cols))
-        item = st.selectbox("상품명", cols, index=safe_index(item_col, cols))
-        option = st.selectbox("옵션", cols, index=safe_index(option_col, cols))
+        # 2. 실시간으로 현재 cols 리스트에서 다시 매칭 (변수 실종 방지)
+        s_col = find_best_col(["품절", "상태"], cols)
+        v_col = find_best_col(["공급처", "거래처"], cols)
+        vi_col = find_best_col(["공급처상품명", "공급명"], cols)
+        i_col = find_best_col(["상품명", "자체상품"], cols)
+        o_col = find_best_col(["옵션"], cols)
+        r_col = find_best_col(["등록일"], cols)
+        st_col = find_best_col(["정상재고", "현재고"], cols)
+        a_col = find_best_col(["가용재고", "판매가능"], cols)
+        t3_c = find_best_col(["3일", "3DAY"], cols)
+        # 🔥 여기서 7일 발주합계를 다시 찾습니다!
+        t7_c = find_best_col(["7일", "7DAY", "7D", "최근7", "일주일", "발주합계"], cols)
+
+        st.divider()
+        st.subheader("⚙️ 2단계: 매핑 설정 (자동 매칭 완료)")
         
-    with c2:
-        reg_date = st.selectbox("등록일", cols, index=safe_index(reg_date_col, cols))
-        stock = st.selectbox("정상재고", cols, index=safe_index(stock_col, cols))
-        avail = st.selectbox("가용재고", cols, index=safe_index(avail_col, cols))
-        # 🔥 이제 7일 발주합계가 제대로 잡힙니다!
-        t3day = st.selectbox("3일 발주합계", cols, index=safe_index(t3_col, cols))
-        t7day = st.selectbox("7일 발주합계", cols, index=safe_index(t7_col, cols))
+        c1, c2 = st.columns(2)
+        with c1:
+            # 💡 위에서 새로 정의한 변수들(s_col, v_col 등)을 직접 사용합니다.
+            sold_out = st.selectbox("품절 여부", cols, index=cols.index(s_col))
+            vendor = st.selectbox("공급처", cols, index=cols.index(v_col))
+            v_item = st.selectbox("공급처 상품명", cols, index=cols.index(vi_col))
+            item = st.selectbox("상품명", cols, index=cols.index(i_col))
+            option = st.selectbox("옵션", cols, index=cols.index(o_col))
+            
+        with c2:
+            reg_date = st.selectbox("등록일", cols, index=cols.index(r_col))
+            stock = st.selectbox("정상재고", cols, index=cols.index(st_col))
+            avail = st.selectbox("가용재고", cols, index=cols.index(a_col))
+            t3day = st.selectbox("3일 발주합계", cols, index=cols.index(t3_c))
+            t7day = st.selectbox("7일 발주합계", cols, index=cols.index(t7_c))
 
-    if st.button("🚀 분석 실행", use_container_width=True, type="primary"):
-        st.session_state.analyzed = True
-        st.rerun()
+        if st.button("🚀 분석 실행", use_container_width=True, type="primary"):
+            st.session_state.analyzed = True
+            st.rerun()
         
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
