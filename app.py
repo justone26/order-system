@@ -53,6 +53,7 @@ uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['
 if st.button("🗑️ 업로드 파일 초기화", key="reset_upload_only"):
     st.session_state.df_raw = None
     st.session_state.analyzed = False 
+    st.session_state.params = None
     st.rerun()
 
 # ---------------------------------------------------------
@@ -83,31 +84,28 @@ if uploaded_file is not None:
         st_col = find_best_col(["정상재고", "현재고"], all_cols)
         a_col = find_best_col(["가용재고", "판매가능"], all_cols)
         t3_c = find_best_col(["3일", "3DAY", "3D"], all_cols)
-        # 🔥 7일 발주합계 후보군을 넉넉히 넣었습니다.
         t7_c = find_best_col(["7일", "7DAY", "7D", "발주합계", "일주일"], all_cols)
 
-        # 3. 2단계 UI 출력 (파일이 있을 때만 화면에 나타남)
+        # 3. 2단계 UI 출력
         st.divider()
         st.subheader("⚙️ 2단계: 매핑 설정")
         c1, c2 = st.columns(2)
         
         with c1:
-            # index=all_cols.index(...) 코드가 자동 선택을 담당합니다.
             sold_out = st.selectbox("품절 여부", all_cols, index=all_cols.index(s_col))
             vendor = st.selectbox("공급처", all_cols, index=all_cols.index(v_col))
             v_item = st.selectbox("공급처 상품명", all_cols, index=all_cols.index(vi_col))
             item = st.selectbox("상품명", all_cols, index=all_cols.index(i_col))
-            option = st.selectbox("옵션", all_cols, index=all_cols.index(o_col))
+            option = st.selectbox("옵션", all_cols, index=all_cols.index(option_col if 'option_col' in locals() else o_col))
             
         with c2:
             reg_date = st.selectbox("등록일", all_cols, index=all_cols.index(r_col))
             stock = st.selectbox("정상재고", all_cols, index=all_cols.index(st_col))
             avail = st.selectbox("가용재고", all_cols, index=all_cols.index(a_col))
             t3day = st.selectbox("3일 발주합계", all_cols, index=all_cols.index(t3_c))
-            # 💡 이제 7일 발주합계가 품절이 아닌 제 자리를 찾아갑니다!
             t7day = st.selectbox("7일 발주합계", all_cols, index=all_cols.index(t7_c))
 
- # --- [3단계: 분석 설정] ---
+        # --- [3단계: 분석 설정] ---
         st.divider()
         st.subheader("📊 3단계: 분석 파라미터 설정")
         p1, p2 = st.columns(2)
@@ -116,34 +114,28 @@ if uploaded_file is not None:
         with p2:
             safety_stock_days = st.number_input("🛡️ 안전재고", min_value=0, value=3)
 
-        # 💡 [핵심 수정] 버튼을 누르면 'analyzed' 상태를 금고(session_state)에 저장
+        # 분석 실행 버튼
         if st.button("🚀 데이터 분석 및 발주 계산 실행", use_container_width=True, type="primary"):
-            st.session_state.analyzed = True  # 버튼을 떼도 이 값은 유지됨
-            # 계산에 필요한 값들도 금고에 저장
+            st.session_state.analyzed = True
             st.session_state.params = {
-                'lt': lead_time, 
-                'ss': safety_stock_days,
-                't7': t7day,
-                'av': avail,
-                'vn': vendor,
-                'it': item,
-                'op': option
+                'lt': lead_time, 'ss': safety_stock_days,
+                't7': t7day, 'av': avail, 'vn': vendor,
+                'it': item, 'op': option
             }
+            # 현재 데이터를 세션에 저장해두어야 새로고침 후에도 유지됨
+            st.session_state.df_raw = df_new
             st.rerun()
 
-        # ---------------------------------------------------------
-        # 🔥 [4~5단계] '금고'에 분석 완료 신호가 있을 때만 실행
-        # ---------------------------------------------------------
-        if st.session_state.get('analyzed'):
+        # --- [4~5단계] 분석 완료 시 출력 ---
+        if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             try:
                 st.divider()
                 st.subheader("📋 4단계: 발주 계산 결과")
                 
-                # 금고에서 값 꺼내오기
                 p = st.session_state.params
-                df_final = df_new.copy() 
+                df_final = st.session_state.df_raw.copy() 
                 
-                # 계산 로직 (숫자로 변환 후 계산)
+                # 계산 로직
                 sales_7d = pd.to_numeric(df_final[p['t7']], errors='coerce').fillna(0)
                 stock_av = pd.to_numeric(df_final[p['av']], errors='coerce').fillna(0)
                 
@@ -155,15 +147,18 @@ if uploaded_file is not None:
                 display_cols = [p['vn'], p['it'], p['op'], p['av'], p['t7'], '권장발주량']
                 st.dataframe(df_final[display_cols], use_container_width=True)
 
-                # --- [5단계: 다운로드] ---
                 st.divider()
                 st.subheader("💾 5단계: 결과 저장")
-                
                 csv = df_final.to_csv(index=False).encode('utf-8-sig')
                 st.download_button("📥 분석 결과 다운로드 (CSV)", data=csv, file_name="result.csv", mime="text/csv")
+            except Exception as calc_e:
+                st.error(f"계산 중 오류 발생: {calc_e}")
 
-            except Exception as e:
-                st.error(f"결과 출력 중 오류: {e}")
+    except Exception as e:
+        st.error(f"파일 처리 중 오류: {e}")
+
+else:
+    st.info("👆 위에서 엑셀 파일을 먼저 업로드해 주세요. 그래야 분석이 시작됩니다.")
             
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
