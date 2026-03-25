@@ -62,7 +62,66 @@ if st.button("🗑️ 업로드 파일 초기화", key="reset_upload_only"):
 if uploaded_file is not None:
     # (이후 사장님의 기존 로직 시작...)
     pass
+# --- [데이터 처리 및 자동 매핑 로직] ---
+if uploaded_file is not None:
+    try:
+        # 1. 파일 읽기 (엑셀/CSV 구분)
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+        
+        # 💡 [핵심] 컬럼명 양쪽 공백 제거 (매칭률 향상)
+        df.columns = [str(c).strip() for c in df.columns]
+        all_cols = list(df.columns)
 
+        # 2. 자동 매칭 사전 정의 (사장님 엑셀 양식 기준)
+        def find_best_col(targets, options):
+            for t in targets:
+                for opt in options:
+                    if t in opt: return opt # 포함만 되어도 매칭
+            return options[0] if options else ""
+
+        # 항목별 매칭 후보들
+        sold_out_col = find_best_col(["품절", "상태"], all_cols)
+        vendor_col = find_best_col(["공급처", "거래처"], all_cols)
+        v_item_col = find_best_col(["공급처상품명", "공급처명"], all_cols)
+        item_col = find_best_col(["상품명", "자체상품명"], all_cols)
+        option_col = find_best_col(["옵션"], all_cols)
+        reg_date_col = find_best_col(["등록일"], all_cols)
+        stock_col = find_best_col(["정상재고", "현재고"], all_cols)
+        avail_col = find_best_col(["가용재고", "판매가능"], all_cols)
+        t3_col = find_best_col(["3일", "3DAY"], all_cols)
+        t7_col = find_best_col(["7일", "7DAY"], all_cols)
+
+        # 3. 2단계 UI 출력 (자동으로 선택되게 설정)
+        st.divider()
+        st.subheader("⚙️ 2단계: 매핑 설정")
+        
+        m1, m2 = st.columns(2)
+        with m1:
+            sold_out = st.selectbox("품절 여부", all_cols, index=all_cols.index(sold_out_col))
+            vendor = st.selectbox("공급처", all_cols, index=all_cols.index(vendor_col))
+            v_item = st.selectbox("공급처 상품명", all_cols, index=all_cols.index(v_item_col))
+            item = st.selectbox("상품명", all_cols, index=all_cols.index(item_col))
+            option = st.selectbox("옵션", all_cols, index=all_cols.index(option_col))
+
+        with m2:
+            reg_date = st.selectbox("등록일", all_cols, index=all_cols.index(reg_date_col))
+            stock = st.selectbox("정상재고", all_cols, index=all_cols.index(stock_col))
+            avail = st.selectbox("가용재고", all_cols, index=all_cols.index(avail_col))
+            t3day = st.selectbox("3일 발주합계", all_cols, index=all_cols.index(t3_col))
+            t7day = st.selectbox("7일 발주합계", all_cols, index=all_cols.index(t7_col))
+
+        # 분석 실행 버튼
+        if st.button("🚀 분석 실행", use_container_width=True, type="primary"):
+            st.session_state.df_raw = df
+            st.session_state.analyzed = True
+            st.rerun()
+
+    except Exception as e:
+        st.error(f"⚠️ 데이터를 읽는 중 오류가 발생했습니다: {e}")
+        
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
         if st.session_state.get('last_fn') != uploaded_file.name:
