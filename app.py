@@ -2,11 +2,12 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 import time
+import io
 
 # 1. [환경 설정]
 KST = timezone(timedelta(hours=9))
 now = datetime.now(KST)
-st.set_page_config(layout="wide", page_title="저스트원 재고관리 v3.9")
+st.set_page_config(layout="wide", page_title="저스트원 재고관리 v4.0")
 
 # --- [공통 함수: 구글 시트 연동] ---
 def get_sheet():
@@ -27,7 +28,7 @@ if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 if 'p' not in st.session_state: st.session_state.p = {}
 if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
 
-st.title("📦 저스트원 통합 재고 관리 v3.9")
+st.title("📦 저스트원 통합 재고 관리 v4.0")
 
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
@@ -43,7 +44,6 @@ with tab1:
     if up_file and st.session_state.df_raw is None:
         df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
         df.columns = df.columns.str.strip()
-        # [중요] 업로드 시점에 리오더 수량 컬럼 미리 생성
         if "리오더 수량" not in df.columns: df["리오더 수량"] = 0
         st.session_state.df_raw = df
         st.rerun()
@@ -56,16 +56,13 @@ with tab1:
             return 0
         c1, c2, c3 = st.columns(3)
         with c1:
-            so = st.selectbox("품절 여부", cols, index=auto_idx(['품절']))
-            vn = st.selectbox("공급처", cols, index=auto_idx(['공급처']))
+            so = st.selectbox("품절 여부", cols, index=auto_idx(['품절'])); vn = st.selectbox("공급처", cols, index=auto_idx(['공급처']))
             vi = st.selectbox("공급처 상품명", cols, index=auto_idx(['공급처상품명']))
         with c2:
-            it = st.selectbox("상품명", cols, index=auto_idx(['상품명']))
-            op = st.selectbox("옵션", cols, index=auto_idx(['옵션']))
+            it = st.selectbox("상품명", cols, index=auto_idx(['상품명'])); op = st.selectbox("옵션", cols, index=auto_idx(['옵션']))
             stk = st.selectbox("정상재고", cols, index=auto_idx(['정상재고']))
         with c3:
-            av = st.selectbox("가용재고", cols, index=auto_idx(['가용재고']))
-            t3 = st.selectbox("3일 판매", cols, index=auto_idx(['3일']))
+            av = st.selectbox("가용재고", cols, index=auto_idx(['가용재고'])); t3 = st.selectbox("3일 판매", cols, index=auto_idx(['3일']))
             t7 = st.selectbox("7일 판매", cols, index=auto_idx(['7일']))
         
         lt_val = st.number_input("⏳ 리드타임 (일)", value=7)
@@ -76,14 +73,12 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
 
-    # --- [4단계: 리오더 차감 및 입고 관리] ---
+    # --- [4단계: 리오더 차감 관리] ---
     if st.session_state.get('analyzed'):
-        st.divider()
-        st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
+        st.divider(); st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
         p = st.session_state.p
         df_work = st.session_state.df_raw.copy()
         
-        # 컬럼 존재 확인 및 숫자 변환
         if "리오더 수량" not in df_work.columns: df_work["리오더 수량"] = 0
         for col_name in [p['st'], p['av'], p['t3'], "리오더 수량"]:
             df_work[col_name] = pd.to_numeric(df_work[col_name], errors='coerce').fillna(0).astype(int)
@@ -115,10 +110,8 @@ with tab1:
                         st.session_state.df_raw.at[o_idx, "리오더 수량"] = max(0, int(st.session_state.df_raw.at[o_idx, "리오더 수량"]) - in_qty)
                 st.success("✅ 차감 완료!"); time.sleep(0.5); st.rerun()
 
-        # --- [5단계: 최종 발주 및 리오더 합산] ---
-        st.divider()
-        st.subheader("📋 5단계: 최종 발주 리스트 요약")
-        # [해결] 원본 세션에서 데이터를 가져온 후 '리오더 수량' 유무를 다시 한 번 확인
+        # --- [5단계: 최종 발주 및 엑셀 다운로드] ---
+        st.divider(); st.subheader("📋 5단계: 최종 발주 리스트 요약")
         df_5 = st.session_state.df_raw.copy()
         if "리오더 수량" not in df_5.columns: df_5["리오더 수량"] = 0
 
@@ -134,10 +127,10 @@ with tab1:
         elif m5_f == "품절만": df_5 = df_5[df_5[p['so']].astype(str).str.contains('품절', na=False)]
         if s5_q: df_5 = df_5[df_5[p['it']].astype(str).str.contains(s5_q, case=False) | df_5[p['op']].astype(str).str.contains(s5_q, case=False)]
 
-        # [에러 발생 지점 수정 완료]
         df_5['일판매량'] = (df_5[p['t3']] / 3).round(1)
         df_5['권장발주량'] = ((df_5['일판매량'] * (p['lt'] + p['ss'])) - (df_5[p['av']] + df_5['리오더 수량'])).clip(lower=0).astype(int)
         df_5['추가발주수량'] = df_5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
+        df_5['최종발주합계'] = df_5['권장발주량'] + df_5['추가발주수량']
 
         def get_stat5(r):
             tot = r[p['av']] + r['리오더 수량']; day = r['일판매량']
@@ -148,7 +141,7 @@ with tab1:
         df_5['상태'] = df_5.apply(get_stat5, axis=1)
 
         df_disp5 = df_5.rename(columns={p['it']:"상품명", p['op']:"옵션", p['av']:"가용재고", "리오더 수량":"리오더수량", p['t3']:"3일 판매 합계"})
-        cols5 = ["상태", "상품명", "옵션", "가용재고", "리오더수량", "3일 판매 합계", "일판매량", "추가발주수량", "권장발주량"]
+        cols5 = ["상태", "상품명", "옵션", "가용재고", "리오더수량", "3일 판매 합계", "일판매량", "추가발주수량", "권장발주량", "최종발주합계"]
 
         with st.form("form_v5"):
             ed5 = st.data_editor(df_disp5[cols5], use_container_width=True, hide_index=True, key="ed5")
@@ -160,20 +153,41 @@ with tab1:
                         add_v = int(val["추가발주수량"])
                         st.session_state.df_raw.at[o_idx, "리오더 수량"] += add_v
                         st.session_state.add_order_dict[o_idx] = add_v
-                st.success("✅ 합산 완료!"); time.sleep(0.5); st.rerun()
+                st.success("✅ 리오더 합산 완료!"); time.sleep(0.5); st.rerun()
 
-        if st.button("💾 구글 시트 저장 (6단계)", use_container_width=True):
-            ready = df_5[(df_5['권장발주량'] + df_5['추가발주수량']) > 0]
-            if not ready.empty:
-                log_rows = [[d5_h.strftime('%Y-%m-%d'), r['상태'], r[p['it']], r[p['op']], r[p['vi']], int(r[p['av']]), int(r['리오더 수량']), int(r['추가발주수량']), int(r['권장발주량'])] for _, r in ready.iterrows()]
-                sheet = get_sheet()
-                if sheet: 
-                    sheet.worksheet("발주기록").append_rows(log_rows)
-                    st.success("✅ 저장 성공!"); time.sleep(0.5); st.rerun()
+        # [핵심] 구글시트 저장 & 엑셀 다운로드 버튼 2개 배치
+        btn_c1, btn_c2 = st.columns(2)
+        with btn_c1:
+            if st.button("💾 구글 시트 저장 (6단계 전송)", use_container_width=True, type="primary"):
+                ready = df_5[df_5['최종발주합계'] > 0]
+                if not ready.empty:
+                    log_rows = [[d5_h.strftime('%Y-%m-%d'), r['상태'], r[p['it']], r[p['op']], r[p['vi']], int(r[p['av']]), int(r['리오더 수량']), int(r['추가발주수량']), int(r['권장발주량'])] for _, r in ready.iterrows()]
+                    sheet = get_sheet()
+                    if sheet: 
+                        sheet.worksheet("발주기록").append_rows(log_rows)
+                        st.success("✅ 구글 시트 저장 성공!"); time.sleep(0.5); st.rerun()
+                else: st.warning("발주할 내역이 없습니다.")
+        
+        with btn_c2:
+            # 엑셀 파일 생성 로직
+            ready_excel = df_5[df_5['최종발주합계'] > 0]
+            if not ready_excel.empty:
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    ready_excel[cols5].to_excel(writer, index=False, sheet_name='발주리스트')
+                excel_data = output.getvalue()
+                st.download_button(
+                    label="📥 최종 발주 리스트 엑셀 다운로드",
+                    data=excel_data,
+                    file_name=f"저스트원_발주리스트_{d5_h.strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            else:
+                st.button("📥 엑셀 다운로드 (내역 없음)", use_container_width=True, disabled=True)
 
         # --- [6단계: 히스토리] ---
-        st.divider()
-        st.subheader("📜 6단계: 전체 히스토리 내역")
+        st.divider(); st.subheader("📜 6단계: 전체 히스토리 내역")
         if st.button("🔄 히스토리 새로고침", use_container_width=True):
             sheet = get_sheet()
             if sheet:
