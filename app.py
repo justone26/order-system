@@ -9,27 +9,26 @@ def get_now_kst():
     return datetime.now(timezone(timedelta(hours=9)))
 
 now = get_now_kst()
-today_str = now.strftime("%Y-%m-%d %H:%M:%S")
+today_date = now.strftime("%Y-%m-%d")
+today_time = now.strftime("%H:%M:%S")
 
 st.set_page_config(layout="wide", page_title=f"저스트원 재고관리 ({now.strftime('%m/%d')})")
 
-# 2. [핵심] 구글 시트 연동 함수
-def get_google_sheet():
+# [나중에 쓸 전송용 함수]
+def save_to_google(df_to_save):
     try:
-        # Streamlit Secrets에 저장된 서비스 계정 키 사용
         creds_dict = dict(st.secrets["gcp_service_account"])
-        scope = [
-            "https://spreadsheets.google.com/feeds",
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        # 사장님의 구글 시트 ID (기존 사용하시던 ID)
-        return client.open_by_key("1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg")
-    except Exception as e:
-        st.error(f"구글 시트 연결 실패: {e}")
-        return None
+        sh = client.open_by_key("1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg")
+        # 여기에 저장할 시트 이름(예: '발주현황')을 넣으면 됩니다.
+        ws = sh.worksheet("Sheet1") 
+        # 데이터프레임을 리스트로 변환하여 추가
+        ws.append_rows(df_to_save.values.tolist())
+        return True
+    except:
+        return False
 
 # 리셋 콜백
 def reset_callback():
@@ -50,7 +49,7 @@ if 'mapping' not in st.session_state: st.session_state.mapping = {}
 
 # --- 화면 시작 ---
 st.title("📦 저스트원 통합 재고 관리 시스템")
-st.write(f"🕒 **현재 분석 시간:** {today_str} (KST)")
+st.info(f"📅 **분석 기준일:** {today_date} / **현재 시간:** {today_time}")
 
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
@@ -93,45 +92,44 @@ with tab1:
             t1week = st.selectbox("7일 발주합계", cols, index=get_auto_index(cols, ['7일', '1주']))
 
         st.divider()
-        st.subheader("⚙️ 3단계: 발주 기준 및 구글시트 연동")
-        col_lt, col_ss, col_sheet = st.columns([1, 1, 2])
+        st.subheader("⚙️ 3단계: 발주 기준 설정")
+        col_lt, col_ss = st.columns(2)
         with col_lt:
-            lt_val = st.number_input("⏳ 리드타임 (일)", min_value=1, value=st.session_state.mapping.get('lt', 7))
+            lt_val = st.number_input("⏳ 리드타임 (일) - 디폴트 7일", min_value=1, value=7)
         with col_ss:
-            ss_val = st.number_input("🛡️ 안전재고 (일)", min_value=0, value=st.session_state.mapping.get('ss', 3))
-        with col_sheet:
-            st.info("📊 시트 연결 상태: 연동 준비 완료")
+            ss_val = st.number_input("🛡️ 안전재고 (일) - 디폴트 3일", min_value=0, value=3)
 
-        if st.button("🚀 데이터 분석 및 구글시트 대조 시작", use_container_width=True):
-            with st.spinner("구글 시트에서 최신 리오더 데이터를 가져오는 중..."):
-                # 구글 시트 데이터 로드
-                sh = get_google_sheet()
-                # 예: '발주기록' 시트에서 데이터를 가져온다고 가정
-                # ws = sh.worksheet("발주기록")
-                # sheet_data = pd.DataFrame(ws.get_all_records())
-                
-                st.session_state.mapping = {
-                    "item": item, "option": option, "avail": avail, 
-                    "t1week": t1week, "lt": lt_val, "ss": ss_val
-                }
-                
-                # 계산 로직
-                df_calc = st.session_state.df_raw.copy()
-                df_calc['일판매량'] = (pd.to_numeric(df_calc[t1week], errors='coerce').fillna(0) / 7).round(2)
-                df_calc['필요재고'] = (df_calc['일판매량'] * (lt_val + ss_val)).round(0).astype(int)
-                df_calc['가용재고_num'] = pd.to_numeric(df_calc[avail], errors='coerce').fillna(0)
-                df_calc['권장발주량'] = (df_calc['필요재고'] - df_calc['가용재고_num']).clip(lower=0).astype(int)
-                
-                st.session_state.df_final = df_calc
-                st.rerun()
+        if st.button("🚀 데이터 분석 시작", use_container_width=True):
+            st.session_state.mapping = {
+                "item": item, "option": option, "avail": avail, 
+                "t1week": t1week, "lt": lt_val, "ss": ss_val
+            }
+            # 계산 로직
+            df_calc = st.session_state.df_raw.copy()
+            df_calc['일판매량'] = (pd.to_numeric(df_calc[t1week], errors='coerce').fillna(0) / 7).round(2)
+            df_calc['필요재고'] = (df_calc['일판매량'] * (lt_val + ss_val)).round(0).astype(int)
+            df_calc['가용재고_num'] = pd.to_numeric(df_calc[avail], errors='coerce').fillna(0)
+            df_calc['권장발주량'] = (df_calc['필요재고'] - df_calc['가용재고_num']).clip(lower=0).astype(int)
+            
+            st.session_state.df_final = df_calc
+            st.rerun()
 
-    # 4단계: 결과 확인
+    # 4단계: 결과 확인 및 저장
     if st.session_state.df_final is not None:
         st.divider()
-        st.success(f"✅ 분석 완료 ({today_str})")
+        st.subheader("📊 4~5단계: 발주 수량 검토 및 수정")
         m = st.session_state.mapping
+        
+        # 사장님이 편집할 결과 표 구성
         display_cols = [m['item'], m['option'], m['avail'], m['t1week'], '일판매량', '필요재고', '권장발주량']
-        st.data_editor(st.session_state.df_final[display_cols], use_container_width=True, hide_index=True)
+        edited_df = st.data_editor(st.session_state.df_final[display_cols], use_container_width=True, hide_index=True)
 
-        if st.button("✅ 구글 시트로 최종 발주 데이터 전송", type="primary", use_container_width=True):
-            st.write("구글 시트에 데이터를 기록하는 중입니다... (함수 연결 필요)")
+        st.divider()
+        st.subheader("💾 6단계: 최종 데이터 저장")
+        if st.button("✅ 분석된 데이터를 구글 시트로 저장하기", type="primary", use_container_width=True):
+            # [연동 로직] 실제 저장은 여기서 일어납니다.
+            success = save_to_google(edited_df)
+            if success:
+                st.success(f"🎉 성공적으로 구글 시트에 저장되었습니다! ({today_date} {today_time})")
+            else:
+                st.error("❌ 저장 실패! 구글 시트 권한이나 인터넷 연결을 확인해 주세요.")
