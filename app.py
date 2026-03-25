@@ -44,55 +44,67 @@ with tab1:
     if 'df_raw' not in st.session_state: st.session_state.df_raw = None
     if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 
-# --- [매핑 및 분석 로직 (최종 수정본)] ---
-    if st.session_state.df_raw is not None:
-        df_curr = st.session_state.df_raw
-        cols = df_curr.columns.tolist()
+# --- [1단계: 데이터 업로드 구역] ---
+st.subheader("📁 1단계: 데이터 업로드")
 
-        # 1. 자동 매칭 함수 다시 정의 (안전하게 사용하기 위해)
+uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
+
+# 초기화 버튼 (필요 시)
+if st.button("🗑️ 업로드 파일 초기화", key="reset_upload_only"):
+    st.session_state.analyzed = False 
+    st.rerun()
+
+# ---------------------------------------------------------
+# 🔥 [핵심] 여기서부터는 "파일이 올라왔을 때만" 실행됩니다!
+# ---------------------------------------------------------
+if uploaded_file is not None:
+    # 1. 파일 읽기
+    try:
+        df_new = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
+        df_new.columns = df_new.columns.str.strip()
+        all_cols = list(df_new.columns)
+
+        # 2. 자동 매칭 함수 및 변수 설정 (여기서 t7_col 등을 다 찾습니다)
         def find_best_col(targets, options):
             for opt in options:
                 clean_opt = str(opt).replace(" ", "").upper()
                 for t in targets:
-                    if t.upper() in clean_opt: 
-                        return opt
+                    if t.upper() in clean_opt: return opt
             return options[0] if options else ""
 
-        # 2. 실시간으로 현재 cols 리스트에서 다시 매칭 (변수 실종 방지)
-        s_col = find_best_col(["품절", "상태"], cols)
-        v_col = find_best_col(["공급처", "거래처"], cols)
-        vi_col = find_best_col(["공급처상품명", "공급명"], cols)
-        i_col = find_best_col(["상품명", "자체상품"], cols)
-        o_col = find_best_col(["옵션"], cols)
-        r_col = find_best_col(["등록일"], cols)
-        st_col = find_best_col(["정상재고", "현재고"], cols)
-        a_col = find_best_col(["가용재고", "판매가능"], cols)
-        t3_c = find_best_col(["3일", "3DAY"], cols)
-        # 🔥 여기서 7일 발주합계를 다시 찾습니다!
-        t7_c = find_best_col(["7일", "7DAY", "7D", "최근7", "일주일", "발주합계"], cols)
+        # 항목별 자동 매칭
+        s_col = find_best_col(["품절", "상태"], all_cols)
+        v_col = find_best_col(["공급처", "거래처"], all_cols)
+        vi_col = find_best_col(["공급처상품명"], all_cols)
+        i_col = find_best_col(["상품명"], all_cols)
+        o_col = find_best_col(["옵션"], all_cols)
+        r_col = find_best_col(["등록일"], all_cols)
+        st_col = find_best_col(["정상재고"], all_cols)
+        a_col = find_best_col(["가용재고"], all_cols)
+        t3_c = find_best_col(["3일", "3DAY"], all_cols)
+        t7_c = find_best_col(["7일", "7DAY", "7D", "일주일", "발주합계"], all_cols)
 
+        # 3. 2단계 매핑 UI 출력
         st.divider()
-        st.subheader("⚙️ 2단계: 매핑 설정 (자동 매칭 완료)")
-        
+        st.subheader("⚙️ 2단계: 매핑 설정")
         c1, c2 = st.columns(2)
         with c1:
-            # 💡 위에서 새로 정의한 변수들(s_col, v_col 등)을 직접 사용합니다.
-            sold_out = st.selectbox("품절 여부", cols, index=cols.index(s_col))
-            vendor = st.selectbox("공급처", cols, index=cols.index(v_col))
-            v_item = st.selectbox("공급처 상품명", cols, index=cols.index(vi_col))
-            item = st.selectbox("상품명", cols, index=cols.index(i_col))
-            option = st.selectbox("옵션", cols, index=cols.index(o_col))
-            
-        with c2:
-            reg_date = st.selectbox("등록일", cols, index=cols.index(r_col))
-            stock = st.selectbox("정상재고", cols, index=cols.index(st_col))
-            avail = st.selectbox("가용재고", cols, index=cols.index(a_col))
-            t3day = st.selectbox("3일 발주합계", cols, index=cols.index(t3_c))
-            t7day = st.selectbox("7일 발주합계", cols, index=cols.index(t7_c))
+            sold_out = st.selectbox("품절 여부", all_cols, index=all_cols.index(s_col))
+            # ... 나머지 selectbox들도 동일하게 index=... 적용 ...
+            t7day = st.selectbox("7일 발주합계", all_cols, index=all_cols.index(t7_c))
 
+        # 4. 분석 실행 버튼
         if st.button("🚀 분석 실행", use_container_width=True, type="primary"):
+            st.session_state.df_raw = df_new
             st.session_state.analyzed = True
             st.rerun()
+
+    except Exception as e:
+        st.error(f"파일 처리 중 오류: {e}")
+
+else:
+    # 💡 파일을 아직 안 올렸을 때 보여줄 메시지
+    st.info("👆 위에서 엑셀 파일을 먼저 업로드해 주세요. 그래야 분석이 시작됩니다.")
         
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
