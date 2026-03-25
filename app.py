@@ -44,28 +44,22 @@ with tab1:
     if 'df_raw' not in st.session_state: st.session_state.df_raw = None
     if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 
- # --- [1단계: 데이터 업로드 구역] ---
+# --- [1단계: 데이터 업로드 구역] ---
 st.subheader("📁 1단계: 데이터 업로드")
 
-# 칸 너비를 조절해서 버튼을 왼쪽으로 바짝 붙입니다.
-col1, col2 = st.columns([4, 1]) 
+# 1. 업로드 박스를 먼저 배치 (변수명은 upload_file로 통일)
+upload_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
 
-with col1:
-    # 💡 변수명을 'upload_file'로 통일했습니다.
-    upload_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
-
-with col2:
-    st.write("##") # 높이 맞추기용
-    if st.button("🔄 전체 데이터 초기화", use_container_width=True):
-        st.session_state.clear()
-        st.success("데이터가 초기화되었습니다.")
-        st.rerun()
+# 2. 버튼을 바로 아래 배치 (컬럼 없이 그냥 쓰면 왼쪽으로 붙습니다)
+# 버튼 크기가 너무 크면 use_container_width를 False로 하거나 너비를 조절하면 됩니다.
+if st.button("🔄 전체 데이터 초기화", key="reset_btn"):
+    st.session_state.clear()
+    st.success("데이터가 초기화되었습니다.")
+    st.rerun()
 
 # --- [데이터 처리 시작] ---
-# 여기서 위에서 만든 'upload_file' 변수를 그대로 사용합니다.
 if upload_file is not None:
-    # 사장님의 기존 분석 로직이 여기서부터 시작됩니다.
-    # (예: df = pd.read_excel(upload_file) 등...)
+    # 사장님의 기존 데이터 읽기 로직...
     pass
 
     # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
