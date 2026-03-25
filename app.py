@@ -107,14 +107,35 @@ if uploaded_file is not None:
             # 💡 이제 7일 발주합계가 품절이 아닌 제 자리를 찾아갑니다!
             t7day = st.selectbox("7일 발주합계", all_cols, index=all_cols.index(t7_c))
 
-        # 4. 분석 실행 버튼
-        if st.button("🚀 분석 실행", use_container_width=True, type="primary"):
+   # --- [3단계: 분석 설정 (리드타임, 안전재고)] ---
+        st.divider()
+        st.subheader("📊 3단계: 분석 파라미터 설정")
+        
+        p1, p2 = st.columns(2)
+        with p1:
+            # 리드타임 설정 (기본값 7)
+            lead_time = st.number_input("🚚 리드타임 (입고 소요 기간)", min_value=1, value=7, step=1, help="주문 후 입고까지 걸리는 평균 일수입니다.")
+        with p2:
+            # 안전재고 설정 (기본값 3)
+            safety_stock_days = st.number_input("🛡️ 안전재고 (보유 일수)", min_value=0, value=3, step=1, help="품절 방지를 위해 추가로 보유할 재고 일수입니다.")
+
+        # --- [최종 분석 실행 버튼] ---
+        st.write("") # 간격 띄우기
+        if st.button("🚀 데이터 분석 및 발주 계산 실행", use_container_width=True, type="primary"):
+            # 선택된 컬럼명들을 세션 상태에 저장 (나중 계산을 위해)
+            st.session_state.mapping = {
+                'sold_out': sold_out, 'vendor': vendor, 'v_item': v_item,
+                'item': item, 'option': option, 'reg_date': reg_date,
+                'stock': stock, 'avail': avail, 't3day': t3day, 't7day': t7day,
+                'lead_time': lead_time, 'safety_stock_days': safety_stock_days
+            }
             st.session_state.df_raw = df_new
             st.session_state.analyzed = True
+            st.success("✅ 분석 설정이 완료되었습니다! 아래에서 결과를 확인하세요.")
             st.rerun()
 
     except Exception as e:
-        st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
+        st.error(f"처리 중 오류 발생: {e}")
 
 else:
     # 💡 파일을 올리기 전에는 이 안내문만 나옵니다.
