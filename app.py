@@ -57,6 +57,35 @@ def get_incoming_history():
         # 시트가 없거나 연결 오류 시 빈 표 반환
         return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
 
+def save_history_to_gsheet(df, log_type="발주"):
+    """발주 내역을 구글 시트에 저장 (시트가 없으면 자동 생성)"""
+    try:
+        ss = get_sheet()
+        sheet_name = "발주기록" # 👈 사용할 시트 이름
+        
+        # 1. 시트 존재 여부 확인 및 자동 생성
+        try:
+            ws = ss.worksheet(sheet_name)
+        except:
+            # 시트가 없으면 새로 만들고 제목(Header) 추가
+            ws = ss.add_worksheet(title=sheet_name, rows="1000", cols="10")
+            ws.append_row(["날짜", "공급쳐", "상품명", "옵션", "발주수량"]) 
+            st.info(f"💡 '{sheet_name}' 시트가 없어서 새로 생성했습니다.")
+
+        # 2. 데이터 저장 (데이터프레임을 리스트로 변환)
+        # 발주수량이 0인 데이터는 제외하고 실제 발주 건만 저장
+        df_to_save = df[df['발주수량'] > 0]
+        if not df_to_save.empty:
+            new_data = df_to_save.values.tolist()
+            ws.append_rows(new_data)
+            return True
+        else:
+            return False
+    except Exception as e:
+        # 에러 내용을 화면에 표시
+        st.error(f"⚠️ 시트 저장 중 상세 오류 발생: {e}")
+        return False
+        
 # 3. 세션 상태 관리
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'analyzed' not in st.session_state: st.session_state.analyzed = False
