@@ -366,42 +366,43 @@ if st.session_state.analyzed and st.session_state.p:
                 time.sleep(1); st.rerun()
 
     # 하단 버튼
+   # 4. 하단 저장 및 다운로드 버튼 (들여쓰기 교정 완료)
     st.write("---")
     b1, b2 = st.columns(2)
-   if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
+    
+    # [버튼 1: 구글 시트 저장]
+    if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
         ready = df_5.copy()
-        # 권장 + 추가 수량 합산
         ready['총발주'] = ready['권장발주량'] + ready['추가발주수량']
         final_orders = ready[ready['총발주'] > 0]
         
         if not final_orders.empty:
-            # 6단계에서 불러올 데이터 형식 만들기
             now_str = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
             log_data = []
             for _, row in final_orders.iterrows():
-                log_data.append([
-                    now_str,              # 날짜
-                    row[vendor],          # 공급쳐
-                    row[item],            # 상품명
-                    row[option],          # 옵션
-                    int(row['총발주'])     # 발주수량
-                ])
+                log_data.append([now_str, row[vendor], row[item], row[option], int(row['총발주'])])
             
-            # 구글 시트 전송
             try:
                 record_sheet = get_sheet().worksheet("발주기록")
                 record_sheet.append_rows(log_data)
                 st.success(f"✅ {len(log_data)}건의 발주 내역이 '발주기록' 시트에 저장되었습니다!")
-                # 저장 후 리스트 초기화 (중복 저장 방지)
-                st.session_state.add_order_dict = {}
+                st.session_state.add_order_dict = {} # 저장 후 초기화
                 time.sleep(1); st.rerun()
             except Exception as e:
                 st.error(f"저장 실패: {e}")
         else:
-            st.warning("발주할 수량이 없습니다. 수량을 확인해 주세요.")
-    
-    csv_data = df_disp_5[cols_5].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-    b2.download_button(label="📥 발주서 CSV 다운로드", data=csv_data, file_name=f"발주서_{hist_date_5.strftime('%m%d')}.csv", mime="text/csv", use_container_width=True)
+            st.warning("발주할 수량이 없습니다.")
+
+    # [버튼 2: CSV 다운로드]
+    if not df_disp_5.empty:
+        csv_data = df_disp_5[cols_5].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        b2.download_button(
+            label="📥 최종 발주서 CSV 다운로드", 
+            data=csv_data, 
+            file_name=f"발주서_{hist_date_5.strftime('%m%d')}.csv", 
+            mime="text/csv", 
+            use_container_width=True
+        )
         
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
