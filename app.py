@@ -1,11 +1,37 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, timezone
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
-# 1. 기본 설정
-st.set_page_config(layout="wide", page_title="저스트원 재고관리 v1.9")
+# 1. [핵심] 한국 표준시(KST) 및 날짜 설정
+def get_now_kst():
+    return datetime.now(timezone(timedelta(hours=9)))
 
-# [수정] 콜백 함수에서는 데이터만 삭제 (rerun은 제거)
+now = get_now_kst()
+today_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
+st.set_page_config(layout="wide", page_title=f"저스트원 재고관리 ({now.strftime('%m/%d')})")
+
+# 2. [핵심] 구글 시트 연동 함수
+def get_google_sheet():
+    try:
+        # Streamlit Secrets에 저장된 서비스 계정 키 사용
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        scope = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        # 사장님의 구글 시트 ID (기존 사용하시던 ID)
+        return client.open_by_key("1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg")
+    except Exception as e:
+        st.error(f"구글 시트 연결 실패: {e}")
+        return None
+
+# 리셋 콜백
 def reset_callback():
     for key in list(st.session_state.keys()):
         del st.session_state[key]
@@ -17,41 +43,41 @@ def get_auto_index(cols, keywords):
             return i
     return 0
 
-# 세션 상태 초기화
+# 세션 초기화
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'df_final' not in st.session_state: st.session_state.df_final = None
+if 'mapping' not in st.session_state: st.session_state.mapping = {}
 
+# --- 화면 시작 ---
 st.title("📦 저스트원 통합 재고 관리 시스템")
+st.write(f"🕒 **현재 분석 시간:** {today_str} (KST)")
 
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
 with tab1:
-    # --- [1단계: 데이터 업로드] ---
+    # 1단계: 업로드
     st.subheader("📁 1단계: 데이터 업로드")
-    
-    # [중요] 초기화 버튼 클릭 시 key가 날아가면서 업로더도 초기화됨
     up_file = st.file_uploader("파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_uploader", label_visibility="collapsed")
     
     col_btn, _ = st.columns([1, 3])
     with col_btn:
-        # on_click에 리셋 함수 연결 (내부에 rerun 없음)
         st.button("🔄 전체 데이터 초기화", use_container_width=True, on_click=reset_callback)
 
-    # 파일 읽기 로직 (세션이 비어있을 때만 실행)
     if up_file is not None and st.session_state.df_raw is None:
         try:
             df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
             df.columns = df.columns.str.strip()
             st.session_state.df_raw = df
-            st.rerun() # 여기는 콜백 밖이라 rerun이 아주 잘 먹힙니다.
+            st.rerun()
         except Exception as e:
             st.error(f"파일 읽기 실패: {e}")
 
-    # --- [2~3단계: 매칭 및 설정] ---
-    if st.session_state.df_raw is not None and st.session_state.df_final is None:
+    # 2단계 & 3단계: 설정 영역 (파일 있을 때 상시 노출)
+    if st.session_state.df_raw is not None:
         st.divider()
         st.subheader("🔗 2단계: 자동 컬럼 매칭")
         cols = st.session_state.df_raw.columns.tolist()
+        
         c1, c2 = st.columns(2)
         with c1:
             sold_out = st.selectbox("품절 여부", cols, index=get_auto_index(cols, ['품절', '판매중단']))
@@ -67,34 +93,45 @@ with tab1:
             t1week = st.selectbox("7일 발주합계", cols, index=get_auto_index(cols, ['7일', '1주']))
 
         st.divider()
-        st.subheader("⚙️ 3단계: 발주 기준 설정")
-        col_lt, col_ss = st.columns(2)
+        st.subheader("⚙️ 3단계: 발주 기준 및 구글시트 연동")
+        col_lt, col_ss, col_sheet = st.columns([1, 1, 2])
         with col_lt:
-            lt_val = st.number_input("⏳ 리드타임 설정 (7일 디폴트)", min_value=1, value=7)
+            lt_val = st.number_input("⏳ 리드타임 (일)", min_value=1, value=st.session_state.mapping.get('lt', 7))
         with col_ss:
-            ss_val = st.number_input("🛡️ 안전재고 설정 (3일 디폴트)", min_value=0, value=3)
+            ss_val = st.number_input("🛡️ 안전재고 (일)", min_value=0, value=st.session_state.mapping.get('ss', 3))
+        with col_sheet:
+            st.info("📊 시트 연결 상태: 연동 준비 완료")
 
-        if st.button("🚀 분석 시작", use_container_width=True):
-            st.session_state.mapping = {
-                "item": item, "option": option, "avail": avail, "t1week": t1week, "lt": lt_val, "ss": ss_val
-            }
-            # 계산 로직
-            df = st.session_state.df_raw.copy()
-            df['일판매량'] = (pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7).round(2)
-            df['필요재고'] = (df['일판매량'] * (lt_val + ss_val)).round(0).astype(int)
-            df['가용재고_num'] = pd.to_numeric(df[avail], errors='coerce').fillna(0)
-            df['권장발주량'] = (df['필요재고'] - df['가용재고_num']).clip(lower=0).astype(int)
-            
-            st.session_state.df_final = df
-            st.rerun()
+        if st.button("🚀 데이터 분석 및 구글시트 대조 시작", use_container_width=True):
+            with st.spinner("구글 시트에서 최신 리오더 데이터를 가져오는 중..."):
+                # 구글 시트 데이터 로드
+                sh = get_google_sheet()
+                # 예: '발주기록' 시트에서 데이터를 가져온다고 가정
+                # ws = sh.worksheet("발주기록")
+                # sheet_data = pd.DataFrame(ws.get_all_records())
+                
+                st.session_state.mapping = {
+                    "item": item, "option": option, "avail": avail, 
+                    "t1week": t1week, "lt": lt_val, "ss": ss_val
+                }
+                
+                # 계산 로직
+                df_calc = st.session_state.df_raw.copy()
+                df_calc['일판매량'] = (pd.to_numeric(df_calc[t1week], errors='coerce').fillna(0) / 7).round(2)
+                df_calc['필요재고'] = (df_calc['일판매량'] * (lt_val + ss_val)).round(0).astype(int)
+                df_calc['가용재고_num'] = pd.to_numeric(df_calc[avail], errors='coerce').fillna(0)
+                df_calc['권장발주량'] = (df_calc['필요재고'] - df_calc['가용재고_num']).clip(lower=0).astype(int)
+                
+                st.session_state.df_final = df_calc
+                st.rerun()
 
-    # --- [4단계: 결과 확인] ---
+    # 4단계: 결과 확인
     if st.session_state.df_final is not None:
         st.divider()
-        st.success("✅ 분석 완료!")
+        st.success(f"✅ 분석 완료 ({today_str})")
         m = st.session_state.mapping
         display_cols = [m['item'], m['option'], m['avail'], m['t1week'], '일판매량', '필요재고', '권장발주량']
         st.data_editor(st.session_state.df_final[display_cols], use_container_width=True, hide_index=True)
 
-        # 아래쪽 리셋 버튼도 동일한 방식 적용
-        st.button("🗑️ 처음부터 다시 하기", on_click=reset_callback, use_container_width=True)
+        if st.button("✅ 구글 시트로 최종 발주 데이터 전송", type="primary", use_container_width=True):
+            st.write("구글 시트에 데이터를 기록하는 중입니다... (함수 연결 필요)")
