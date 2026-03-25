@@ -158,50 +158,6 @@ with tab1:
                 st.session_state.last_fn = up_file.name
                 st.rerun()
 
-    # 4. 분석 및 발주 (데이터가 있을 때만)
-    if st.session_state.df_raw is not None:
-        df = st.session_state.df_raw.copy()
-        
-        # 컬럼 식별
-        item = next((c for c in df.columns if '상품명' in c), df.columns[0])
-        option = next((c for c in df.columns if '옵션' in c), df.columns[1])
-        v_item = next((c for c in df.columns if '공급처상품명' in c), item)
-        avail = next((c for c in df.columns if '가용재고' in c), None)
-        t7day = next((c for c in df.columns if '7일판매량' in c), None)
-        t3day = next((c for c in df.columns if '3일판매량' in c), None)
-
-        if avail and t7day and t3day:
-            st.divider()
-            for c in [avail, t7day, t3day, '리오더 수량']:
-                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
-            
-            df['일판매량'] = df.apply(lambda x: round(x[t7day]/7) if x[t7day]>0 else round(x[t3day]/3), axis=1)
-            df['권장발주량'] = ((df['일판매량'] * 10) - (df[avail] + df['리오더 수량'])).clip(lower=0)
-
-            st.write("### 📊 재고 분석 및 발주 수정")
-            edited_df = st.data_editor(df, use_container_width=True, hide_index=True)
-
-            if st.button("💾 최종 발주 확정 및 시트 저장", type="primary", use_container_width=True):
-                now_str = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
-                try:
-                    ss = get_sheet()
-                    record_ws = ss.worksheet("발주기록")
-                    to_log = edited_df[edited_df['권장발주량'] > 0]
-                    
-                    if not to_log.empty:
-                        # 8대 항목 구성 (날짜, 상품명, 옵션, 공급처상품명, 가용재고, 발주수량)
-                        log_rows = [[now_str, r[item], r[option], r[v_item], int(r[avail]), int(r['권장발주량'])] for _, r in to_log.iterrows()]
-                        record_ws.append_rows(log_rows)
-                        save_reorder_data(edited_df, item, option)
-                        st.success(f"✅ {len(log_rows)}건 저장 완료!")
-                    else:
-                        st.warning("발주할 항목이 없습니다.")
-                except Exception as e:
-                    st.error(f"저장 실패: {e}")
-        else:
-            st.warning("필수 컬럼(가용재고, 7일판매량, 3일판매량)이 부족합니다.")
-            st.dataframe(df.head())
-
   # --- 2, 3단계: 매핑 및 설정 (5:5 비율 최적화) ---
     if st.session_state.df_raw is not None: # 👈 이 줄을 추가해서 감싸주세요!
         all_cols = list(st.session_state.df_raw.columns)
