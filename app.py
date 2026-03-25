@@ -6,7 +6,7 @@ import time
 # 1. [환경 설정] KST 시간 및 페이지 설정
 KST = timezone(timedelta(hours=9))
 now = datetime.now(KST)
-st.set_page_config(layout="wide", page_title="저스트원 재고관리 v3.6")
+st.set_page_config(layout="wide", page_title="저스트원 재고관리 v3.7")
 
 # --- [공통 함수: 구글 시트 연동] ---
 def get_sheet():
@@ -21,35 +21,13 @@ def get_sheet():
     except Exception as e:
         return None
 
-# [수정] 시간은 빼고 '날짜'만 깔끔하게 칩으로 표시하는 함수
-def display_saved_date_chips():
-    sheet = get_sheet()
-    if sheet:
-        try:
-            ws = sheet.worksheet("발주기록")
-            df_hist = pd.DataFrame(ws.get_all_records())
-            if not df_hist.empty and '날짜' in df_hist.columns:
-                # 날짜 데이터에서 시간 부분은 버리고 YYYY-MM-DD 형식만 추출하여 중복 제거
-                raw_dates = pd.to_datetime(df_hist['날짜']).dt.strftime('%Y-%m-%d')
-                unique_dates = sorted(raw_dates.unique().tolist(), reverse=True)
-                
-                if unique_dates:
-                    st.write("📅 **기록 보유 일자:**")
-                    chips_html = ""
-                    # 최근 기록 10일치만 표시
-                    for d in unique_dates[:10]:
-                        chips_html += f"<span style='background-color:#e3f2fd; color:#0d47a1; padding:3px 10px; margin-right:6px; border-radius:12px; font-size:12px; border:1px solid #1976d2; font-weight:bold;'>{d}</span>"
-                    st.markdown(chips_html, unsafe_allow_html=True)
-        except:
-            pass
-
 # --- [세션 상태 초기화] ---
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 if 'p' not in st.session_state: st.session_state.p = {}
 if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
 
-st.title("📦 저스트원 통합 재고 관리 v3.6")
+st.title("📦 저스트원 통합 재고 관리 v3.7")
 
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
@@ -118,12 +96,11 @@ with tab1:
         df_work['일판매량'] = (df_work[p['t3']] / 3).round(1)
         df_work['권장발주량'] = ((df_work['일판매량'] * (p['lt'] + p['ss'])) - (df_work[p['av']] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
+        # 4단계 필터링 (날짜 칩 제거됨)
         f4_c1, f4_c2, f4_c3 = st.columns([2, 1, 1])
         s4_q = f4_c1.text_input("🔍 4단계 상품명/옵션 검색", key="s4_search")
         m4_f = f4_c2.selectbox("4단계 상태 필터", ["전체보기", "정상만", "품절만"], index=1, key="m4_filter")
-        with f4_c3:
-            d4_h = st.date_input("🗓️ 4단계 입고 기록 날짜", now.date(), key="d4_date")
-            display_saved_date_chips() # 시간 제외된 날짜 칩 표시
+        d4_h = f4_c3.date_input("🗓️ 4단계 입고 기록 날짜", now.date(), key="d4_date")
 
         if m4_f == "정상만": df_work = df_work[~df_work[p['so']].astype(str).str.contains('품절', na=False)]
         elif m4_f == "품절만": df_work = df_work[df_work[p['so']].astype(str).str.contains('품절', na=False)]
@@ -152,9 +129,7 @@ with tab1:
         f5_c1, f5_c2, f5_c3 = st.columns([2, 1, 1])
         s5_q = f5_c1.text_input("🔍 5단계 상품명/옵션 검색", key="s5_search")
         m5_f = f5_c2.selectbox("5단계 상태 필터", ["전체보기", "정상만", "품절만"], index=1, key="m5_filter")
-        with f5_c3:
-            d5_h = st.date_input("🗓️ 5단계 발주 기록 날짜", now.date(), key="d5_date")
-            display_saved_date_chips()
+        d5_h = f5_c3.date_input("🗓️ 5단계 발주 기록 날짜", now.date(), key="d5_date")
 
         df_5[p['av']] = pd.to_numeric(df_5[p['av']], errors='coerce').fillna(0).astype(int)
         df_5[p['t3']] = pd.to_numeric(df_5[p['t3']], errors='coerce').fillna(0).astype(int)
@@ -196,8 +171,9 @@ with tab1:
         # --- [6단계: 히스토리] ---
         st.divider()
         st.subheader("📜 6단계: 전체 히스토리 내역")
-        if st.button("🔄 히스토리 새로고침"):
+        if st.button("🔄 히스토리 새로고침", use_container_width=True):
             sheet = get_sheet()
             if sheet:
                 df_hist = pd.DataFrame(sheet.worksheet("발주기록").get_all_records())
-                st.dataframe(df_hist.sort_values(by=df_hist.columns[0], ascending=False), use_container_width=True, hide_index=True)
+                if not df_hist.empty:
+                    st.dataframe(df_hist.sort_values(by=df_hist.columns[0], ascending=False), use_container_width=True, hide_index=True)
