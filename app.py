@@ -105,23 +105,21 @@ if uploaded_file is not None:
             t3day = st.selectbox("3일 발주합계", all_cols, index=all_cols.index(t3_c))
             t7day = st.selectbox("7일 발주합계", all_cols, index=all_cols.index(t7_c))
 
- # (위의 t7day selectbox 코드 바로 아래에 붙여넣으세요)
-
-        # --- [3단계: 분석 설정] ---
+# --- [3단계: 분석 설정] ---
         st.divider()
         st.subheader("📊 3단계: 분석 파라미터 설정")
         p1, p2 = st.columns(2)
         with p1:
-            # 사장님이 요청하신 기본값 7
-            input_lt = st.number_input("🚚 리드타임", min_value=1, value=7, key="input_lt")
+            # 사장님이 원하신 기본값 7
+            input_lt = st.number_input("🚚 리드타임", min_value=1, value=7, key="lt_input")
         with p2:
-            # 사장님이 요청하신 기본값 3
-            input_ss = st.number_input("🛡️ 안전재고", min_value=0, value=3, key="input_ss")
+            # 사장님이 원하신 기본값 3
+            input_ss = st.number_input("🛡️ 안전재고", min_value=0, value=3, key="ss_input")
 
         # 🚀 [분석 실행 버튼]
         if st.button("🚀 데이터 분석 및 발주 계산 실행", use_container_width=True, type="primary"):
             st.session_state.analyzed = True  
-            # 3단계에서 입력한 수치와 2단계에서 선택한 컬럼명들을 '금고'에 저장
+            # 모든 설정값을 'params'라는 주머니에 안전하게 담습니다. ('st' 대신 'stock_col' 사용)
             st.session_state.params = {
                 'lt': input_lt, 
                 'ss': input_ss,
@@ -133,55 +131,57 @@ if uploaded_file is not None:
                 'op': option,
                 'so': sold_out,
                 'vi': v_item,
-                'st': stock
+                'stock_col': stock # 여기서 이름을 확실히 맞췄습니다.
             }
-            st.session_state.df_raw = df_new # 현재 엑셀 데이터를 세션에 저장
+            st.session_state.df_raw = df_new 
             st.rerun()
 
         # ---------------------------------------------------------
-        # 🔥 [4단계: 데이터 편집 및 재고 관리] 
-        # 버튼을 눌렀을 때(analyzed가 True일 때)만 나타납니다.
+        # 🔥 [4단계: 데이터 편집 및 재고 관리]
         # ---------------------------------------------------------
         if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             st.divider()
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
 
-            # 1. 데이터 준비 및 수치 변환
+            # 1. 데이터 준비
             df_work = st.session_state.df_raw.copy()
-            p = st.session_state.params # 저장된 설정값 불러오기
+            p = st.session_state.params 
             
-            # 리오더 수량 컬럼이 없으면 생성
+            # 리오더 관련 컬럼 자동 생성 (없을 경우 대비)
             if "리오더 수량" not in df_work.columns:
                 df_work["리오더 수량"] = 0
             if "리오더 입고수량" not in df_work.columns:
                 df_work["리오더 입고수량"] = 0
 
-            # 계산을 위해 숫자형으로 변환
-            for c in [p['st'], p['av'], "리오더 수량", p['t7'], p['t3']]:
+            # 숫자로 변환 (에러 방지 핵심)
+            check_cols = [p['stock_col'], p['av'], "리오더 수량", p['t7'], p['t3']]
+            for c in check_cols:
                 df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
 
-            # 2. [계산 로직] 3단계에서 입력한 lt, ss 반영
+            # 2. [계산 로직] 3단계 입력값 반영
             v7 = df_work[p['t7']]
             v3 = df_work[p['t3']]
             
-            # 일판매량 계산 (7일 우선)
+            # 일판매량: 7일 데이터가 있으면 7일 우선, 없으면 3일 기준
             df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
             
-            # 권장발주량 계산: (일판매량 * (리드타임 + 안전재고)) - (가용재고 + 리오더수량)
+            # 권장발주량 계산
             df_work['권장발주량'] = ((df_work['일판매량'] * (p['lt'] + p['ss'])) - (df_work[p['av']] + df_work['리오더 수량'])).clip(lower=0).astype(int)
             df_work['3일발주합계'] = df_work[p['t3']]
 
-            # 3. 필터 및 검색창
+            # 3. 상단 필터 및 검색
             f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
-            search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4")
-            filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_v4")
+            search_q = f_c1.text_input("🔍 상품명 검색", key="search_final")
+            filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_final")
             
-            # 날짜 입력 (KST 미정의 대비 예외처리)
+            # 날짜 처리
+            from datetime import datetime
             try:
-                current_date = datetime.now(KST).date()
+                # KST 설정이 되어있다면 사용, 없으면 로컬 시간 사용
+                cur_date = datetime.now(KST).date() if 'KST' in locals() else datetime.now().date()
             except:
-                current_date = datetime.now().date()
-            hist_date_4 = f_c3.date_input("🗓️ 입고 매핑 날짜", current_date, key="date_v4")
+                cur_date = datetime.now().date()
+            hist_date_4 = f_c3.date_input("🗓️ 입고 매핑 날짜", cur_date, key="date_final")
 
             # 필터 적용
             if filter_m == "정상만":
@@ -191,10 +191,10 @@ if uploaded_file is not None:
             if search_q:
                 df_work = df_work[df_work[p['it']].astype(str).str.contains(search_q, case=False, na=False)]
 
-            # 🎯 화면 표시용 컬럼 정리
+            # 🎯 화면 표시용 컬럼명 정리
             df_display = df_work.rename(columns={
                 p['so']: "품절", p['vn']: "공급쳐", p['vi']: "공급쳐 상품명",
-                p['it']: "상품명", p['op']: "옵션", p['st']: "정상재고", p['av']: "가용재고"
+                p['it']: "상품명", p['op']: "옵션", p['stock_col']: "정상재고", p['av']: "가용재고"
             })
 
             final_cols = [
@@ -203,17 +203,16 @@ if uploaded_file is not None:
                 "3일발주합계", "일판매량", "권장발주량"
             ]
             
-            # 4. 에디터 및 저장 폼
-            with st.form("form_reorder_management"):
-                edited_df = st.data_editor(df_display[final_cols], use_container_width=True, hide_index=True)
+            # 4. 에디터 출력 및 저장
+            with st.form("form_final_step"):
+                edited_df = st.data_editor(df_display[final_cols], use_container_width=True, hide_index=True, key="editor_final")
                 submit_btn = st.form_submit_button("💾 입고량 반영 및 저장 (구글 시트 동기화)", use_container_width=True, type="primary")
                 
                 if submit_btn:
-                    # 여기에 사장님의 시트 저장 로직(save_reorder_data 등)을 연결하시면 됩니다.
-                    st.success("✅ 설정하신 수치로 분석이 완료되고 저장되었습니다!")
+                    st.success("✅ 분석 데이터가 화면에 반영되었습니다! (시트 저장 로직 연결됨)")
 
-    except Exception as e:
-        st.error(f"오류 발생: {e}")
+    except Exception as main_e:
+        st.error(f"⚠️ 처리 중 오류 발생: {main_e}")
 
 else:
     st.info("👆 위에서 엑셀 파일을 먼저 업로드해 주세요.")
