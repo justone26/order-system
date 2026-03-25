@@ -145,7 +145,7 @@ with tab1:
             st.rerun()
 
 
-if st.session_state.get('analyzed') and st.session_state.get('p'):
+if st.session_state.analyzed and st.session_state.p:
     # --- [4단계: 데이터 편집 및 재고 관리] ---
     st.divider()
     st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
