@@ -127,9 +127,8 @@ with tab1:
             st.rerun()
 
         if st.session_state.analyzed:
-
-         # --- [4단계: 데이터 편집 및 재고 관리 - 리오더 차감 전용] ---
-st.divider()
+            st.divider()
+    
 st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
 
 # 1. 데이터 복사 및 수치형 변환
