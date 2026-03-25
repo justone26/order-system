@@ -134,11 +134,12 @@ with tab1:
 
     # [초기화 버튼] 화면상의 분석 데이터를 지웁니다 (시트 데이터는 삭제 안됨)
     if st.button("🗑️ 화면 데이터 초기화"):
-    # 1. 모든 데이터 상태를 비웁니다.
-    st.session_state.df_raw = None
-    st.session_state.analyzed = False
-    st.session_state.add_order_dict = {}
-    
+        # 👇 여기 줄 시작점이 반드시 안으로 들어가야 합니다! (스페이스 4칸)
+        st.session_state.df_raw = None
+        st.session_state.analyzed = False
+        st.session_state.add_order_dict = {}
+        st.rerun()
+        
     # 2. 💡 [가장 중요] 즉시 새로고침을 명령합니다.
     # 이 코드가 있어야 아래쪽 4, 5단계 코드를 읽기 전에 화면을 싹 치웁니다.
     st.rerun()
