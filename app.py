@@ -129,11 +129,11 @@ with tab1:
     # --- 1단계: 데이터 업로드 & 보존 로직 ---
     st.subheader("📁 1단계: 데이터 업로드")
     
-    # 1. 파일 업로드 (key="up_key" 유지)
+    # 1. 파일 업로드 (key를 주어 세션에서 관리)
     up_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls', 'csv'], key="up_key")
 
-    # [초기화 버튼]
-    if st.button("🗑️ 화면 데이터 초기화", use_container_width=True):
+    # 2. 전체 데이터 초기화 버튼
+    if st.button("🗑️ 전체 데이터 초기화", use_container_width=True):
         st.session_state.df_raw = None
         st.session_state.analyzed = False 
         st.session_state.add_order_dict = {}
@@ -142,12 +142,12 @@ with tab1:
         if "up_key" in st.session_state:
             st.session_state.up_key = None
             
-        st.rerun() # 버튼 눌렀을 때만 딱 한 번 새로고침!
+        # 버튼을 눌렀을 때만 "딱 한 번" 새로고침합니다.
+        st.rerun()
 
-    # ---------------------------------------------------------
-    # 📍 무한 로딩 방지: 파일이 있고, 아직 분석 전일 때만 실행
-    # ---------------------------------------------------------
-    if up_file is not None and not st.session_state.get('analyzed', False):
+    # 3. 📍 무한 로딩 방지 핵심 로직
+    # 파일이 있고, 아직 분석 전(False)일 때만 내부 코드를 실행합니다.
+    if up_file is not None and st.session_state.get('analyzed') == False:
         with st.spinner('📡 기존 데이터를 동기화하는 중...'):
             try:
                 # 파일 읽기
@@ -160,6 +160,30 @@ with tab1:
                 existing_reorder_df = load_reorder_data() 
                 
                 if existing_reorder_df is not None and not existing_reorder_df.empty:
+                    # 상단에 선언된 item, option 변수를 사용합니다.
+                    df_new = pd.merge(
+                        df_new, 
+                        existing_reorder_df[[item, option, '리오더 수량']], 
+                        on=[item, option], 
+                        how='left', 
+                        suffixes=('', '_old')
+                    )
+                    if '리오더 수량_old' in df_new.columns:
+                        df_new['리오더 수량'] = df_new['리오더 수량_old'].fillna(0)
+                        df_new.drop(columns=['리오더 수량_old'], inplace=True)
+                
+                if '리오더 수량' not in df_new.columns:
+                    df_new['리오더 수량'] = 0
+
+                # 🎯 중요: 데이터 저장 후 analyzed를 True로 바꿔서 다시는 이 if문에 안 들어오게 합니다.
+                st.session_state.df_raw = df_new
+                st.session_state.analyzed = True
+                
+                # 분석이 끝났으니 화면을 한 번 갱신합니다.
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"⚠️ 업로드 오류: {e}")
 
         # ---------------------------------------------------------
         # 📍 [핵심] 구글 시트에서 기존 리오더 수량 동기화 (데이터 보존)
