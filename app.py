@@ -37,7 +37,7 @@ with tab1:
     st.subheader("📁 1~3단계: 데이터 업로드 및 분석 설정")
     up_file = st.file_uploader("엑셀/CSV 파일 업로드", type=['xlsx', 'xls', 'csv'], key="main_up")
     
-    if st.button("🔄 시스템 전체 초기화", use_container_width=True):
+    if st.button("🔄 화면 전체 초기화", use_container_width=True):
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.rerun()
 
