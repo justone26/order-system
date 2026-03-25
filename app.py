@@ -6,33 +6,19 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # 1. 기본 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 재고관리")
+st.set_page_config(layout="wide", page_title="저스트원 재고관리 v1.5")
 
-# 2. 10가지 자동 매칭 키워드 (사장님 요청)
-MATCH_KEYS = {
-    "상품명": ["상품명", "물명", "아이템", "Item Name", "상품", "제품명"],
-    "옵션": ["옵션", "규격", "사이즈", "컬러", "Option", "색상"],
-    "가용재고": ["가용재고", "현재고", "재고수량", "재고", "Stock", "실재고"],
-    "7일판매량": ["7일판매량", "주간판매", "7일판매", "판매량(7일)", "Sale7", "최근판매"],
-    "원가": ["원가", "매입가", "구매가", "Cost", "단가"],
-    "판매가": ["판매가", "매출가", "정가", "Price", "소비자가"],
-    "바코드": ["바코드", "품번", "관리코드", "Barcode", "SKU"],
-    "거래처": ["거래처", "제조사", "공급처", "Vendor", "처명"],
-    "상태": ["상태", "판매상태", "진열상태", "Status", "구분"],
-    "카테고리": ["카테고리", "분류", "Category", "대분류"]
-}
-
-def auto_match(cols, target_key):
+# 사장님이 사용하시는 자동 매칭 로직 (get_auto_index)
+def get_auto_index(cols, keywords):
     for i, col in enumerate(cols):
-        if any(k in str(col) for k in MATCH_KEYS[target_key]):
+        if any(k in str(col) for k in keywords):
             return i
     return 0
 
-# 3. 세션 상태 관리
+# 세션 상태 관리
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'df_final' not in st.session_state: st.session_state.df_final = None
 
-# 초기화 함수
 def reset_all():
     st.session_state.df_raw = None
     st.session_state.df_final = None
@@ -43,19 +29,15 @@ st.title("📦 저스트원 통합 재고 관리 시스템")
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
 with tab1:
-    # --- [1단계: 데이터 업로드 영역] ---
+    # --- [1단계: 데이터 업로드 & 초기화] ---
     st.subheader("📁 1단계: 데이터 업로드")
+    up_file = st.file_uploader("파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="up_key", label_visibility="collapsed")
     
-    # 엑셀 업로드 칸
-    up_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="up_key", label_visibility="collapsed")
-    
-    # [사장님 요청] 업로드 라인 바로 아래 + 왼쪽에 버튼 배치
-    col_btn, col_empty = st.columns([1, 3]) # 왼쪽 1칸, 오른쪽 3칸 비움
+    col_btn, _ = st.columns([1, 3])
     with col_btn:
         if st.button("🔄 전체 데이터 초기화", use_container_width=True):
             reset_all()
 
-    # 파일 읽기 로직
     if up_file and st.session_state.df_raw is None:
         try:
             df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
@@ -63,43 +45,47 @@ with tab1:
             st.session_state.df_raw = df
             st.rerun()
         except Exception as e:
-            st.error(f"파일 오류: {e}")
+            st.error(f"파일 읽기 실패: {e}")
 
-    # --- [2~3단계: 자동 매칭 및 분석] ---
+    # --- [2단계: 사장님 요청 10가지 항목 (5:5 배치)] ---
     if st.session_state.df_raw is not None and st.session_state.df_final is None:
         st.divider()
-        st.subheader("🔗 2단계: 자동 컬럼 매칭 (10종)")
+        st.subheader("🔗 2단계: 자동 컬럼 매칭 (좌우 5:5 정렬)")
         cols = st.session_state.df_raw.columns.tolist()
         
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: sel_item = st.selectbox("상품명", cols, index=auto_match(cols, "상품명"))
-        with c2: sel_opt = st.selectbox("옵션", cols, index=auto_match(cols, "옵션"))
-        with c3: sel_avail = st.selectbox("가용재고", cols, index=auto_match(cols, "가용재고"))
-        with c4: sel_t7 = st.selectbox("7일판매량", cols, index=auto_match(cols, "7일판매량"))
+        c1, c2 = st.columns(2)
         
-        with st.expander("추가 매칭 항목 확인 (원가, 거래처 등)"):
-            c5, c6, c7 = st.columns(3)
-            with c5: st.selectbox("원가", cols, index=auto_match(cols, "원가"))
-            with c6: st.selectbox("거래처", cols, index=auto_match(cols, "거래처"))
-            with c7: st.selectbox("바코드", cols, index=auto_match(cols, "바코드"))
+        with c1:
+            st.info("📍 기본 정보 (C1)")
+            sold_out = st.selectbox("품절 여부", cols, index=get_auto_index(cols, ['품절', '판매중단']))
+            vendor = st.selectbox("공급처", cols, index=get_auto_index(cols, ['공급처', '업체명']))
+            item = st.selectbox("상품명", cols, index=get_auto_index(cols, ['상품명', '상품']))
+            option = st.selectbox("옵션", cols, index=get_auto_index(cols, ['옵션']))
+            vendor_item = st.selectbox("공급처 상품명", cols, index=get_auto_index(cols, ['공급처상품명', '거래처옵션']))
+            
+        with c2:
+            st.info("📊 재고/판매 정보 (C2)")
+            reg_date = st.selectbox("등록일", cols, index=get_auto_index(cols, ['등록일', '생성일']))
+            stock = st.selectbox("정상재고", cols, index=get_auto_index(cols, ['정상재고', '재고']))
+            avail = st.selectbox("가용재고", cols, index=get_auto_index(cols, ['가용재고', '가용']))
+            t3day = st.selectbox("3일 발주합계", cols, index=get_auto_index(cols, ['3일']))
+            t1week = st.selectbox("7일 발주합계", cols, index=get_auto_index(cols, ['7일', '1주']))
 
+        # --- [3단계: 분석 실행] ---
         st.divider()
-        st.subheader("⚙️ 3단계: 데이터 분석 실행")
-        if st.button("🚀 분석 시작 (리오더 수치 동기화)", use_container_width=True):
-            # 실제 구글 시트 연동 및 계산 로직을 위해 세션에 매핑 저장
-            st.session_state.mapping = {"item": sel_item, "opt": sel_opt, "avail": sel_avail, "t7": sel_t7}
+        st.subheader("⚙️ 3단계: 분석 및 계산 실행")
+        if st.button("🚀 분석 시작 (수량 동기화)", use_container_width=True):
+            # 매칭 정보를 세션에 저장 (발주량 계산용)
+            st.session_state.mapping = {
+                "sold_out": sold_out, "vendor": vendor, "item": item, "option": option,
+                "vendor_item": vendor_item, "reg_date": reg_date, "stock": stock,
+                "avail": avail, "t3day": t3day, "t1week": t1week
+            }
             st.session_state.df_final = st.session_state.df_raw.copy() 
             st.rerun()
 
     # --- [4~6단계: 수정 및 저장] ---
     if st.session_state.df_final is not None:
         st.divider()
-        st.subheader("📝 4~5단계: 수량 검토 및 수정")
-        st.info("데이터 분석이 완료되었습니다. 아래 표에서 수량을 확인하세요.")
-        # (기존 데이터 에디터 로직...)
-        
-        if st.button("🗑️ 처음부터 다시 하기 (완전 초기화)", use_container_width=True):
-            reset_all()
-
-with tab2:
-    st.write("준비 중입니다.")
+        st.success("✅ 매칭 완료! 수량을 확인하고 수정하세요.")
+        # 여기에 편집기 및 구글시트 업데이트 로직 추가
