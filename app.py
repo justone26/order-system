@@ -44,17 +44,18 @@ tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리
 
 with tab1:
     # --- [1단계: 데이터 업로드 영역] ---
-    # 사진처럼 한 줄에 제목과 초기화 버튼 배치
-    col_title, col_btn = st.columns([3, 1])
-    with col_title:
-        st.subheader("📁 1단계: 데이터 업로드")
+    st.subheader("📁 1단계: 데이터 업로드")
+    
+    # 엑셀 업로드 칸
+    up_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="up_key", label_visibility="collapsed")
+    
+    # [사장님 요청] 업로드 라인 바로 아래 + 왼쪽에 버튼 배치
+    col_btn, col_empty = st.columns([1, 3]) # 왼쪽 1칸, 오른쪽 3칸 비움
     with col_btn:
-        # 사진 속의 '전체 데이터 초기화' 버튼 위치
         if st.button("🔄 전체 데이터 초기화", use_container_width=True):
             reset_all()
 
-    up_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="up_key")
-    
+    # 파일 읽기 로직
     if up_file and st.session_state.df_raw is None:
         try:
             df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
@@ -85,9 +86,9 @@ with tab1:
         st.divider()
         st.subheader("⚙️ 3단계: 데이터 분석 실행")
         if st.button("🚀 분석 시작 (리오더 수치 동기화)", use_container_width=True):
-            # 실제 구글 시트 연동 및 계산 로직 (여기에 들어감)
-            st.session_state.df_final = st.session_state.df_raw.copy() # 임시
+            # 실제 구글 시트 연동 및 계산 로직을 위해 세션에 매핑 저장
             st.session_state.mapping = {"item": sel_item, "opt": sel_opt, "avail": sel_avail, "t7": sel_t7}
+            st.session_state.df_final = st.session_state.df_raw.copy() 
             st.rerun()
 
     # --- [4~6단계: 수정 및 저장] ---
@@ -97,7 +98,7 @@ with tab1:
         st.info("데이터 분석이 완료되었습니다. 아래 표에서 수량을 확인하세요.")
         # (기존 데이터 에디터 로직...)
         
-        if st.button("🗑️ 처음부터 다시 하기", use_container_width=True):
+        if st.button("🗑️ 처음부터 다시 하기 (완전 초기화)", use_container_width=True):
             reset_all()
 
 with tab2:
