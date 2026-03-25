@@ -1,29 +1,23 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, timezone
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 
 # 1. 기본 설정
-KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 재고관리 v1.8")
+st.set_page_config(layout="wide", page_title="저스트원 재고관리 v1.9")
 
-# 자동 매칭 로직 (사장님 요청 10종)
+# [수정] 콜백 함수에서는 데이터만 삭제 (rerun은 제거)
+def reset_callback():
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+
+# 자동 매칭 로직
 def get_auto_index(cols, keywords):
     for i, col in enumerate(cols):
         if any(k in str(col).strip() for k in keywords):
             return i
     return 0
 
-# [수정] 먹통 방지용 강력 초기화 함수
-def reset_all():
-    # 세션에 저장된 모든 데이터를 삭제
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    # 즉시 화면 갱신
-    st.rerun()
-
-# 세션 상태 초기화 (최초 1회)
+# 세션 상태 초기화
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'df_final' not in st.session_state: st.session_state.df_final = None
 
@@ -35,23 +29,21 @@ with tab1:
     # --- [1단계: 데이터 업로드] ---
     st.subheader("📁 1단계: 데이터 업로드")
     
-    # 파일 업로더 (key를 고정해서 초기화 시 같이 날아가게 함)
-    up_file = st.file_uploader("파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="file_uploader_key", label_visibility="collapsed")
+    # [중요] 초기화 버튼 클릭 시 key가 날아가면서 업로더도 초기화됨
+    up_file = st.file_uploader("파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_uploader", label_visibility="collapsed")
     
-    # [사장님 요청 위치] 업로드 칸 바로 아래 왼쪽
     col_btn, _ = st.columns([1, 3])
     with col_btn:
-        if st.button("🔄 전체 데이터 초기화", use_container_width=True, on_click=reset_all):
-            # on_click에 함수를 직접 연결해서 더 확실하게 작동하게 함
-            pass
+        # on_click에 리셋 함수 연결 (내부에 rerun 없음)
+        st.button("🔄 전체 데이터 초기화", use_container_width=True, on_click=reset_callback)
 
-    # 파일 읽기 (업로드된 파일이 있고, 아직 데이터프레임이 생성 안 됐을 때만)
+    # 파일 읽기 로직 (세션이 비어있을 때만 실행)
     if up_file is not None and st.session_state.df_raw is None:
         try:
             df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
             df.columns = df.columns.str.strip()
             st.session_state.df_raw = df
-            st.rerun()
+            st.rerun() # 여기는 콜백 밖이라 rerun이 아주 잘 먹힙니다.
         except Exception as e:
             st.error(f"파일 읽기 실패: {e}")
 
@@ -84,11 +76,9 @@ with tab1:
 
         if st.button("🚀 분석 시작", use_container_width=True):
             st.session_state.mapping = {
-                "sold_out": sold_out, "vendor": vendor, "item": item, "option": option,
-                "vendor_item": vendor_item, "reg_date": reg_date, "stock": stock,
-                "avail": avail, "t3day": t3day, "t1week": t1week, "lt": lt_val, "ss": ss_val
+                "item": item, "option": option, "avail": avail, "t1week": t1week, "lt": lt_val, "ss": ss_val
             }
-            # 계산 엔진
+            # 계산 로직
             df = st.session_state.df_raw.copy()
             df['일판매량'] = (pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7).round(2)
             df['필요재고'] = (df['일판매량'] * (lt_val + ss_val)).round(0).astype(int)
@@ -106,5 +96,5 @@ with tab1:
         display_cols = [m['item'], m['option'], m['avail'], m['t1week'], '일판매량', '필요재고', '권장발주량']
         st.data_editor(st.session_state.df_final[display_cols], use_container_width=True, hide_index=True)
 
-        if st.button("🗑️ 처음부터 다시 하기", on_click=reset_all, use_container_width=True):
-            pass
+        # 아래쪽 리셋 버튼도 동일한 방식 적용
+        st.button("🗑️ 처음부터 다시 하기", on_click=reset_callback, use_container_width=True)
