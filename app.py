@@ -8,6 +8,27 @@ from oauth2client.service_account import ServiceAccountCredentials
 KST = timezone(timedelta(hours=9))
 st.set_page_config(layout="wide", page_title="저스트원 재고관리")
 
+# [보강] 사장님이 말씀하신 10가지 자동 매칭 키워드 리스트
+MATCH_KEYS = {
+    "상품명": ["상품명", "물명", "아이템", "Item Name", "상품"],
+    "옵션": ["옵션", "규격", "사이즈", "컬러", "Option"],
+    "가용재고": ["가용재고", "현재고", "재고수량", "재고", "Stock"],
+    "7일판매량": ["7일판매량", "주간판매", "7일판매", "판매량(7일)", "Sale7"],
+    "원가": ["원가", "매입가", "구매가", "Cost"],
+    "판매가": ["판매가", "매출가", "정가", "Price"],
+    "바코드": ["바코드", "품번", "관리코드", "Barcode"],
+    "거래처": ["거래처", "제조사", "공급처", "Vendor"],
+    "상태": ["상태", "판매상태", "진열상태", "Status"],
+    "카테고리": ["카테고리", "분류", "Category"]
+}
+
+def auto_match(cols, target_key):
+    """엑셀 컬럼 중 매칭되는 키워드가 있으면 인덱스 반환"""
+    for i, col in enumerate(cols):
+        if any(k in col for k in MATCH_KEYS[target_key]):
+            return i
+    return 0
+
 # 2. 구글 시트 연결 함수
 def get_sheet():
     try:
@@ -24,7 +45,7 @@ def load_reorder_data():
         return pd.DataFrame(ss.sheet1.get_all_records()) if ss else pd.DataFrame()
     except: return pd.DataFrame()
 
-# 3. 세션 상태 관리 (초기화 장치)
+# 3. 세션 상태 관리
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'df_final' not in st.session_state: st.session_state.df_final = None
 if 'last_fn' not in st.session_state: st.session_state.last_fn = None
@@ -37,37 +58,41 @@ with tab1:
     st.subheader("📁 1단계: 엑셀 데이터 업로드")
     up_file = st.file_uploader("파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="up_key")
     
-    # 새 파일이 들어오면 모든 상태 초기화
-    if up_file:
-        if st.session_state.last_fn != up_file.name:
-            st.session_state.df_raw = None
-            st.session_state.df_final = None
-            st.session_state.last_fn = up_file.name
-            
-            try:
-                df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
-                df.columns = df.columns.str.strip()
-                st.session_state.df_raw = df
-                st.rerun() 
-            except Exception as e:
-                st.error(f"파일 읽기 오류: {e}")
+    if up_file and st.session_state.last_fn != up_file.name:
+        st.session_state.df_raw = None
+        st.session_state.df_final = None
+        st.session_state.last_fn = up_file.name
+        try:
+            df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
+            df.columns = df.columns.str.strip()
+            st.session_state.df_raw = df
+            st.rerun()
+        except Exception as e:
+            st.error(f"파일 읽기 오류: {e}")
 
-    # --- [2~3단계: 매핑 및 분석 설정] ---
-    # 분석 버튼 누르기 전까지만 노출
+    # --- [2~3단계: 자동 매칭 및 분석 설정] ---
     if st.session_state.df_raw is not None and st.session_state.df_final is None:
         st.divider()
-        st.subheader("🔗 2단계: 컬럼 매핑 설정")
+        st.subheader("🔗 2단계: 자동 컬럼 매칭 (10종)")
         cols = st.session_state.df_raw.columns.tolist()
         
+        # 자동 매칭 적용된 선택창
         c1, c2, c3, c4 = st.columns(4)
-        with c1: sel_item = st.selectbox("상품명 컬럼", cols, index=cols.index(next((c for c in cols if '상품명' in c), cols[0])))
-        with c2: sel_opt = st.selectbox("옵션 컬럼", cols, index=cols.index(next((c for c in cols if '옵션' in c), cols[1] if len(cols)>1 else cols[0])))
-        with c3: sel_avail = st.selectbox("가용재고 컬럼", cols, index=cols.index(next((c for c in cols if '가용재고' in c), cols[2] if len(cols)>2 else cols[0])))
-        with c4: sel_t7 = st.selectbox("7일판매량 컬럼", cols, index=cols.index(next((c for c in cols if '7일판매량' in c), cols[3] if len(cols)>3 else cols[0])))
+        with c1: sel_item = st.selectbox("상품명", cols, index=auto_match(cols, "상품명"))
+        with c2: sel_opt = st.selectbox("옵션", cols, index=auto_match(cols, "옵션"))
+        with c3: sel_avail = st.selectbox("가용재고", cols, index=auto_match(cols, "가용재고"))
+        with c4: sel_t7 = st.selectbox("7일판매량", cols, index=auto_match(cols, "7일판매량"))
         
+        # 나머지 6가지 (필요시 확장 가능하도록 UI만 배치 가능)
+        with st.expander("추가 매칭 항목 확인 (원가, 거래처 등)"):
+            c5, c6, c7 = st.columns(3)
+            with c5: st.selectbox("원가", cols, index=auto_match(cols, "원가"))
+            with c6: st.selectbox("거래처", cols, index=auto_match(cols, "거래처"))
+            with c7: st.selectbox("바코드", cols, index=auto_match(cols, "바코드"))
+
         st.divider()
-        st.subheader("⚙️ 3단계: 데이터 분석 실행")
-        if st.button("🚀 분석 시작 (리오더 수치 동기화)", use_container_width=True):
+        st.subheader("⚙️ 3단계: 분석 실행")
+        if st.button("🚀 데이터 분석 및 리오더 동기화", use_container_width=True):
             with st.spinner("구글 시트 연동 중..."):
                 df = st.session_state.df_raw.copy()
                 gs_data = load_reorder_data()
@@ -95,13 +120,12 @@ with tab1:
         m = st.session_state.mapping
         st.divider()
         st.subheader("📝 4~5단계: 수량 검토 및 수정")
-        
         d_cols = [m["item"], m["opt"], m["avail"], '리오더 수량', '일판매량', '권장발주량']
         edited_df = st.data_editor(st.session_state.df_final[d_cols], use_container_width=True, hide_index=True)
 
         st.divider()
         st.subheader("💾 6단계: 최종 발주 확정")
-        if st.button("✅ 구글 시트 전송", type="primary", use_container_width=True):
+        if st.button("✅ 구글 시트 저장 및 기록", type="primary", use_container_width=True):
             try:
                 ss = get_sheet()
                 log_ws = ss.worksheet("발주기록")
@@ -115,13 +139,13 @@ with tab1:
                 sh1.clear()
                 sh1.update([['상품명', '옵션', '리오더 수량']] + edited_df[[m["item"], m["opt"], '리오더 수량']].values.tolist())
                 st.success("✅ 저장 완료!")
+                st.balloons()
             except Exception as e:
                 st.error(f"저장 오류: {e}")
 
-    # 하단 리셋 버튼
+    # 리셋
     if st.session_state.df_raw is not None:
-        st.divider()
-        if st.button("🗑️ 화면 초기화"):
+        if st.button("🗑️ 전체 초기화"):
             st.session_state.df_raw = None
             st.session_state.df_final = None
             st.session_state.last_fn = None
