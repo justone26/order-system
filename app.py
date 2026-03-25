@@ -129,85 +129,62 @@ with tab1:
         if st.session_state.analyzed:
             st.divider()
     
-st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
+# --- [결과 화면 및 4단계 로직 시작] ---
+        if st.session_state.analyzed and st.session_state.df_raw is not None:
+            st.divider()
+            st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
 
-# 1. 데이터 복사 및 수치형 변환
-df_work = st.session_state.df_raw.copy()
+            # 1. 데이터 복사 및 수치형 변환
+            df_work = st.session_state.df_raw.copy()
 
-num_cols = [stock, avail, "리오더 수량", t7day, t3day]
-for c in num_cols:
-    if c in df_work.columns:
-        df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
+            # 수치 데이터 컬럼 변환 (에러 방지)
+            num_cols = [stock, avail, "리오더 수량", t7day, t3day]
+            for c in num_cols:
+                if c in df_work.columns:
+                    df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
 
-# 2. [계산식] 일판매량 반올림 및 권장발주량
-v7 = df_work[t7day]
-v3 = df_work[t3day]
+            # 리오더 입고수량 컬럼이 없으면 생성
+            if "리오더 입고수량" not in df_work.columns:
+                df_work["리오더 입고수량"] = 0
 
-# 💡 일판매량: 반올림 후 정수 처리 (소수점 제거)
-df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
+            # 2. [계산식] 일판매량 및 권장발주량 (lt=리드타임, ss=안전재고)
+            lt = 3; ss = 2 
+            v7 = df_work[t7day]
+            v3 = df_work[t3day]
 
-# 권장발주량 계산
-df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
-df_work['3일발주합계'] = df_work[t3day]
+            # 일판매량: 7일 우선, 데이터 없으면 3일 기준 반올림
+            df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
 
-# 3. 상단 UI 및 필터
-f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
-search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4_input_final_v2")
-filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_v4_select_final_v2")
-hist_date_4 = f_c3.date_input("🗓️ 입고 매핑 날짜", datetime.now(KST).date(), key="date_v4_input_final_v2")
+            # 권장발주량 계산: (일판매량 * (리드타임+안전재고)) - (가용재고 + 리오더수량)
+            df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
+            df_work['3일발주합계'] = df_work[t3day]
 
-if filter_m == "정상만": df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
-elif filter_m == "품절만": df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
-if search_q: df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
+            # 3. 상단 UI 및 필터
+            f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
+            search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4_input_final_v2")
+            filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_v4_select_final_v2")
+            hist_date_4 = f_c3.date_input("🗓️ 입고 매핑 날짜", datetime.now(KST).date(), key="date_v4_input_final_v2")
 
-# 🎯 [순서 및 명칭 정리] 사장님 요청 13개 컬럼
-df_display = df_work.rename(columns={
-    sold_out: "품절", vendor: "공급쳐", v_item: "공급쳐 상품명",
-    item: "상품명", option: "옵션", stock: "정상재고", avail: "가용재고",
-    "리오더입고수량": "리오더 입고수량", "과거 리오더입고": "과거리오더 입고"
-})
+            # 필터 적용 로직
+            if filter_m == "정상만": 
+                df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
+            elif filter_m == "품절만": 
+                df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
+            if search_q: 
+                df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
 
-final_cols = [
-    "품절", "공급쳐", "상품명", "옵션", "공급쳐 상품명", 
-    "정상재고", "가용재고", "리오더 수량", "리오더 입고수량", 
-    "과거리오더 입고", "3일발주합계", "일판매량", "권장발주량"
-]
-actual_final_cols = [c for c in final_cols if c in df_display.columns]
+            # 🎯 컬럼명 정리
+            df_display = df_work.rename(columns={
+                sold_out: "품절", vendor: "공급쳐", v_item: "공급쳐 상품명",
+                item: "상품명", option: "옵션", stock: "정상재고", avail: "가용재고"
+            })
 
-# 4. 저장 폼 및 차감 로직
-with st.form("form_step_4_reorder_only_fix"):
-    edited_v4 = st.data_editor(df_display[actual_final_cols], use_container_width=True, key="editor_v4_reorder_fix", hide_index=True)
-    submit_v4 = st.form_submit_button("💾 입고량 반영 및 저장", use_container_width=True, type="primary")
-    
-    if submit_v4:
-        # 💡 [로딩 액션 시작] 여기서부터 아래 작업이 끝날 때까지 로딩바가 돕니다.
-        with st.spinner('📡 입고 데이터를 기록하고 리오더 수량을 차감 중입니다...'):
-            edits = st.session_state["editor_v4_reorder_fix"].get("edited_rows", {})
-            if edits:
-                for r_idx_str, change in edits.items():
-                    orig_idx = df_work.index[int(r_idx_str)]
-                    
-                    # 1) 리오더 수량 직접 수정 시 반영
-                    if "리오더 수량" in change:
-                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
-                    
-                    # 2) 리오더 입고수량 입력 시 -> 차감 로직
-                    if "리오더 입고수량" in change:
-                        in_qty = int(change["리오더 입고수량"])
-                        if in_qty > 0:
-                            current_reorder = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
-                            st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, current_reorder - in_qty)
-                            
-                            # 입고 히스토리 저장
-                            log_df = pd.DataFrame([[df_work.at[orig_idx, item], df_work.at[orig_idx, option], in_qty]], columns=['상품명', '옵션', '수량'])
-                            save_history_to_gsheet(log_df, log_type="입고")
-
-                # 최종 저장 및 화면 갱신
-                save_reorder_data(st.session_state.df_raw[[item, option, '리오더 수량']].rename(columns={item:'상품명', option:'옵션'}))
-                st.success("✅ 리오더 수량 차감 및 저장이 완료되었습니다!")
-                time.sleep(1) # 사장님이 성공 메시지를 보실 수 있게 1초 대기
-                st.rerun()
-
+            final_cols = [
+                "품절", "공급쳐", "상품명", "옵션", "공급쳐 상품명", 
+                "정상재고", "가용재고", "리오더 수량", "리오더 입고수량", 
+                "3일발주합계", "일판매량", "권장발주량"
+            ]
+            actual_final_cols = [c for c in final_cols
 
 # --- [5단계: 최종 발주 리스트 요약 - 저장 및 엑셀 버튼 복구] ---
 st.divider()
