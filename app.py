@@ -77,7 +77,32 @@ def get_incoming_history():
         return summary
     except:
         return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
+
+def 파이썬_시트_초기화():
+    try:
+        sheet = get_sheet()
+        worksheets = [s.title for s in sheet.worksheets()]
         
+        # 1. 입고기록 시트 (과거 리오더용)
+        if "입고기록" not in worksheets:
+            sheet.add_worksheet(title="입고기록", rows="1000", cols="5")
+            sheet.worksheet("입고기록").append_row(["날짜", "상품명", "옵션", "수량"])
+            
+        # 2. 발주기록 시트 (6단계 히스토리용)
+        if "발주기록" not in worksheets:
+            sheet.add_worksheet(title="발주기록", rows="5000", cols="6")
+            sheet.worksheet("발주기록").append_row(["날짜", "공급쳐", "상품명", "옵션", "발주수량"])
+            
+        return True
+    except Exception as e:
+        st.error(f"시트 초기화 중 오류: {e}")
+        return False
+
+# 프로그램 시작 시 한 번 실행
+if 'sheet_init' not in st.session_state:
+    if 파이썬_시트_초기화():
+        st.session_state.sheet_init = True
+
 # 3. 세션 상태 관리
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'analyzed' not in st.session_state: st.session_state.analyzed = False
@@ -343,20 +368,37 @@ if st.session_state.analyzed and st.session_state.p:
     # 하단 버튼
     st.write("---")
     b1, b2 = st.columns(2)
-    if b1.button("💾 구글 시트에 발주 기록 저장", use_container_width=True):
+   if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
         ready = df_5.copy()
+        # 권장 + 추가 수량 합산
         ready['총발주'] = ready['권장발주량'] + ready['추가발주수량']
         final_orders = ready[ready['총발주'] > 0]
+        
         if not final_orders.empty:
-            log = pd.DataFrame()
-            log['날짜'] = [f"{hist_date_5} {datetime.now(KST).strftime('%H:%M:%S')}"] * len(final_orders)
-            log['공급쳐'] = final_orders[vendor].values
-            log['상품명'] = final_orders[item].values
-            log['옵션'] = final_orders[option].values
-            log['발주수량'] = final_orders['총발주'].values
-            if save_history_to_gsheet(log, log_type="발주"):
-                st.success("✅ 시트 저장 성공!")
+            # 6단계에서 불러올 데이터 형식 만들기
+            now_str = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+            log_data = []
+            for _, row in final_orders.iterrows():
+                log_data.append([
+                    now_str,              # 날짜
+                    row[vendor],          # 공급쳐
+                    row[item],            # 상품명
+                    row[option],          # 옵션
+                    int(row['총발주'])     # 발주수량
+                ])
+            
+            # 구글 시트 전송
+            try:
+                record_sheet = get_sheet().worksheet("발주기록")
+                record_sheet.append_rows(log_data)
+                st.success(f"✅ {len(log_data)}건의 발주 내역이 '발주기록' 시트에 저장되었습니다!")
+                # 저장 후 리스트 초기화 (중복 저장 방지)
+                st.session_state.add_order_dict = {}
                 time.sleep(1); st.rerun()
+            except Exception as e:
+                st.error(f"저장 실패: {e}")
+        else:
+            st.warning("발주할 수량이 없습니다. 수량을 확인해 주세요.")
     
     csv_data = df_disp_5[cols_5].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
     b2.download_button(label="📥 발주서 CSV 다운로드", data=csv_data, file_name=f"발주서_{hist_date_5.strftime('%m%d')}.csv", mime="text/csv", use_container_width=True)
