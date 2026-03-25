@@ -134,10 +134,15 @@ with tab1:
 
     # [초기화 버튼] 화면상의 분석 데이터를 지웁니다 (시트 데이터는 삭제 안됨)
     if st.button("🗑️ 화면 데이터 초기화"):
-        for key in ["df_raw", "analyzed", "last_fn", "p"]:
-            st.session_state[key] = None
-        st.rerun()
-
+    # 1. 모든 데이터 상태를 비웁니다.
+    st.session_state.df_raw = None
+    st.session_state.analyzed = False
+    st.session_state.add_order_dict = {}
+    
+    # 2. 💡 [가장 중요] 즉시 새로고침을 명령합니다.
+    # 이 코드가 있어야 아래쪽 4, 5단계 코드를 읽기 전에 화면을 싹 치웁니다.
+    st.rerun()
+    
     # 2. 파일이 올라오면 실행되는 로직
     if up_file is not None:
         # 파일 읽기
@@ -227,7 +232,7 @@ with tab1:
                 st.rerun()
 
   # --- 2, 3단계: 매핑 및 설정 (5:5 비율 최적화) ---
-    if st.session_state.df_raw is not None:
+    if st.session_state.df_raw is not None: # 👈 이 줄을 추가해서 감싸주세요!
         all_cols = list(st.session_state.df_raw.columns)
         st.divider()
         st.subheader("⚙️ 2단계: 매핑 설정")
