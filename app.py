@@ -371,8 +371,9 @@ if st.session_state.analyzed and st.session_state.p:
     b1, b2 = st.columns(2)
     
     # [버튼 1: 구글 시트 저장]
-    if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
+   if b1.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
         ready = df_5.copy()
+        # 발주 수량이 하나라도 있는 것들만 추출
         ready['총발주'] = ready['권장발주량'] + ready['추가발주수량']
         final_orders = ready[ready['총발주'] > 0]
         
@@ -380,18 +381,28 @@ if st.session_state.analyzed and st.session_state.p:
             now_str = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
             log_data = []
             for _, row in final_orders.iterrows():
-                log_data.append([now_str, row[vendor], row[item], row[option], int(row['총발주'])])
+                # 🎯 사장님이 요청하신 8대 항목 순서대로 저장
+                log_data.append([
+                    now_str,               # 1. 저장시간(날짜)
+                    row['상태'],            # 2. 상태
+                    row[item],             # 3. 상품명
+                    row[option],           # 4. 옵션
+                    row[v_item],           # 5. 공급쳐상품명
+                    int(row[avail]),       # 6. 가용재고
+                    int(row['리오더 수량']), # 7. 리오더수량
+                    int(row['추가발주수량']),# 8. 추가발주수량
+                    int(row['권장발주량'])   # 9. 권장발주량
+                ])
             
             try:
+                # '발주기록' 시트에 9개 컬럼으로 저장
                 record_sheet = get_sheet().worksheet("발주기록")
                 record_sheet.append_rows(log_data)
-                st.success(f"✅ {len(log_data)}건의 발주 내역이 '발주기록' 시트에 저장되었습니다!")
-                st.session_state.add_order_dict = {} # 저장 후 초기화
+                st.success(f"✅ {len(log_data)}건의 상세 내역이 히스토리에 기록되었습니다!")
+                st.session_state.add_order_dict = {}
                 time.sleep(1); st.rerun()
             except Exception as e:
                 st.error(f"저장 실패: {e}")
-        else:
-            st.warning("발주할 수량이 없습니다.")
 
     # [버튼 2: CSV 다운로드]
     if not df_disp_5.empty:
@@ -405,79 +416,59 @@ if st.session_state.analyzed and st.session_state.p:
         )
 
 # ==========================================
-# 6단계: 전체 히스토리 내역 (시트 데이터 완벽 호환)
+# 6단계: 전체 히스토리 내역 (5단계 항목 그대로 재현)
 # ==========================================
 st.divider()
 st.subheader("📜 6단계: 전체 히스토리 내역")
 
-# 1. 구글 시트에서 '발주기록' 데이터 로드 전용 함수 (함수 구역에 넣으셔도 됩니다)
-def load_v6_history():
-    try:
-        sheet = get_sheet()
-        record_sheet = sheet.worksheet("발주기록")
-        data = record_sheet.get_all_records()
-        return pd.DataFrame(data)
-    except Exception as e:
-        # 시트가 없거나 에러나면 빈 표 반환
-        return pd.DataFrame()
-
-# 데이터 로드 시작
 with st.spinner('📡 히스토리 기록을 불러오는 중입니다...'):
-    df_hist = load_v6_history()
+    df_hist = load_v6_history() # 위에서 만든 로드 함수 사용
 
 if not df_hist.empty:
-    # 2. 상단 UI (달력 및 검색창)
     h_c1, h_c2 = st.columns([1, 2])
-    
-    # 한국 시간(KST) 오늘 날짜 설정
     today_kst = datetime.now(KST).date()
-    h_date = h_c1.date_input("🗓️ 조회 날짜 선택", today_kst, key="v6_date_input")
-    h_search = h_c2.text_input("🔍 상품명 검색", key="v6_search_input")
+    h_date = h_c1.date_input("🗓️ 조회 날짜 선택", today_kst, key="v6_final_date")
+    h_search = h_c2.text_input("🔍 상품명 검색", key="v6_final_search")
 
-    # 3. 데이터 필터링 로직
-    # '날짜' 컬럼에서 시간 제외하고 날짜만 추출해서 비교
+    # 날짜 필터링
     if '날짜' in df_hist.columns:
         df_hist['날짜_tmp'] = pd.to_datetime(df_hist['날짜']).dt.date
         df_hist_filtered = df_hist[df_hist['날짜_tmp'] == h_date].copy()
     else:
-        df_hist_filtered = df_hist.copy()
+        # 컬럼명이 '저장시간'으로 되어 있을 경우 대비
+        col_time = '저장시간' if '저장시간' in df_hist.columns else df_hist.columns[0]
+        df_hist['날짜_tmp'] = pd.to_datetime(df_hist[col_time]).dt.date
+        df_hist_filtered = df_hist[df_hist['날짜_tmp'] == h_date].copy()
     
-    # 검색어 필터링 (상품명 기준)
     if h_search:
         df_hist_filtered = df_hist_filtered[df_hist_filtered['상품명'].astype(str).str.contains(h_search, case=False, na=False)]
 
-    # 🎯 [항목 정리] 시트에 저장된 5가지 핵심 항목 표시
-    # 날짜, 공급쳐, 상품명, 옵션, 발주수량
-    final_view_cols = ["날짜", "공급쳐", "상품명", "옵션", "발주수량"]
+    # 🎯 사장님이 원하시는 8대 항목 순서 고정
+    view_cols = ["날짜", "상태", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장발주량"]
     
-    # 실제 존재하는 컬럼만 선별
-    actual_view = [c for c in final_view_cols if c in df_hist_filtered.columns]
+    # 실제 존재하는 컬럼만 필터링
+    actual_cols = [c for c in view_cols if c in df_hist_filtered.columns]
 
-    # 4. 결과 출력
     if not df_hist_filtered.empty:
-        # 최신 저장 시간이 위로 오도록 정렬 (날짜 기준 내림차순)
         st.dataframe(
-            df_hist_filtered[actual_view].sort_values(by='날짜', ascending=False), 
+            df_hist_filtered[actual_cols].sort_values(by=actual_cols[0], ascending=False), 
             use_container_width=True, 
             hide_index=True,
             column_config={
-                "발주수량": st.column_config.NumberColumn(format="%d") # 콤마 적용
+                "가용재고": st.column_config.NumberColumn(format="%d"),
+                "리오더수량": st.column_config.NumberColumn(format="%d"),
+                "추가발주수량": st.column_config.NumberColumn(format="%d"),
+                "권장발주량": st.column_config.NumberColumn(format="%d")
             }
         )
         
-        # 5. 📥 엑셀(CSV) 다운로드 버튼
-        csv_hist = df_hist_filtered[actual_view].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        st.download_button(
-            label=f"📥 {h_date} 발주 내역 다운로드",
-            data=csv_hist,
-            file_name=f"발주히스토리_{h_date}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+        csv_hist = df_hist_filtered[actual_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        st.download_button(label="📥 해당 내역 다운로드", data=csv_hist, 
+                           file_name=f"발주히스토리_{h_date}.csv", mime="text/csv", use_container_width=True)
     else:
-        st.info(f"📅 {h_date} 날짜에는 저장된 기록이 없습니다. 다른 날짜를 선택해 주세요.")
+        st.info("📅 해당 날짜에 기록된 내역이 없습니다.")
 else:
-    st.warning("아직 저장된 히스토리 기록이 없습니다. 5단계에서 '저장' 버튼을 먼저 눌러주세요.")
+    st.warning("저장된 히스토리가 없습니다.")
     
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
