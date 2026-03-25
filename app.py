@@ -126,14 +126,66 @@ st.title("📦 저스트원 통합 재고 관리 시스템")
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
 with tab1:
-    # --- 1단계: 데이터 업로드 & 누적 ---
+    # --- 1단계: 데이터 업로드 & 보존 로직 ---
     st.subheader("📁 1단계: 데이터 업로드")
-    up_file = st.file_uploader("엑셀/CSV 파일 업로드 (여러 업체 누적 가능)", type=['xlsx', 'xls', 'csv'], key="up_key")
+    
+    # 1. 파일 업로드
+    up_file = st.file_uploader("엑셀 파일을 업로드하세요 (업체가 달라도 리오더 수량은 보존됩니다)", type=['xlsx', 'xls', 'csv'], key="up_key")
 
-    if st.button("🗑️ 전체 데이터 초기화"):
+    # [초기화 버튼] 화면상의 분석 데이터를 지웁니다 (시트 데이터는 삭제 안됨)
+    if st.button("🗑️ 화면 데이터 초기화"):
         for key in ["df_raw", "analyzed", "last_fn", "p"]:
             st.session_state[key] = None
         st.rerun()
+
+    # 2. 파일이 올라오면 실행되는 로직
+    if up_file is not None:
+        # 파일 읽기
+        if up_file.name.endswith('.csv'):
+            df_new = pd.read_csv(up_file)
+        else:
+            df_new = pd.read_excel(up_file)
+
+        # ---------------------------------------------------------
+        # 📍 [핵심] 구글 시트에서 기존 리오더 수량 동기화 (데이터 보존)
+        # ---------------------------------------------------------
+        if st.session_state.df_raw is None: # 처음 올릴 때만 실행
+            with st.spinner('📡 기존 리오더 수량을 불러와서 합치는 중...'):
+                try:
+                    # 기존에 우리가 만든 '리오더데이터' 시트 읽기 함수 호출
+                    existing_reorder_df = load_reorder_data() 
+                    
+                    if existing_reorder_df is not None and not existing_reorder_df.empty:
+                        # 새 엑셀과 기존 시트 데이터를 [상품명, 옵션] 기준으로 매칭
+                        # '리오더 수량' 컬럼만 쏙 빼와서 새 표에 붙여줍니다.
+                        df_new = pd.merge(
+                            df_new, 
+                            existing_reorder_df[[item, option, '리오더 수량']], 
+                            on=[item, option], 
+                            how='left', 
+                            suffixes=('', '_old')
+                        )
+                        # 기존 기록이 있으면 쓰고, 없으면 0으로 채움
+                        if '리오더 수량_old' in df_new.columns:
+                            df_new['리오더 수량'] = df_new['리오더 수량_old'].fillna(0)
+                            df_new.drop(columns=['리오더 수량_old'], inplace=True)
+                        else:
+                            if '리오더 수량' not in df_new.columns:
+                                df_new['리오더 수량'] = 0
+                    else:
+                        # 저장된 데이터가 아예 없는 경우
+                        if '리오더 수량' not in df_new.columns:
+                            df_new['리오더 수량'] = 0
+                            
+                except Exception as e:
+                    st.error(f"데이터 동기화 중 오류 발생: {e}")
+                    if '리오더 수량' not in df_new.columns:
+                        df_new['리오더 수량'] = 0
+
+            # 최종 완성된 데이터를 세션에 저장
+            st.session_state.df_raw = df_new
+            st.session_state.analyzed = True
+            st.success(f"✅ {up_file.name} 업로드 완료 및 기존 데이터 동기화 성공!")
 
     if up_file is not None:
         if st.session_state.get('last_fn') != up_file.name:
