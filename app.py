@@ -6,7 +6,7 @@ import time
 # 1. [환경 설정]
 KST = timezone(timedelta(hours=9))
 now = datetime.now(KST)
-st.set_page_config(layout="wide", page_title="저스트원 재고관리 v3.8")
+st.set_page_config(layout="wide", page_title="저스트원 재고관리 v3.9")
 
 # --- [공통 함수: 구글 시트 연동] ---
 def get_sheet():
@@ -27,7 +27,7 @@ if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 if 'p' not in st.session_state: st.session_state.p = {}
 if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
 
-st.title("📦 저스트원 통합 재고 관리 v3.8")
+st.title("📦 저스트원 통합 재고 관리 v3.9")
 
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
@@ -43,6 +43,8 @@ with tab1:
     if up_file and st.session_state.df_raw is None:
         df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
         df.columns = df.columns.str.strip()
+        # [중요] 업로드 시점에 리오더 수량 컬럼 미리 생성
+        if "리오더 수량" not in df.columns: df["리오더 수량"] = 0
         st.session_state.df_raw = df
         st.rerun()
 
@@ -81,15 +83,12 @@ with tab1:
         p = st.session_state.p
         df_work = st.session_state.df_raw.copy()
         
-        # 숫자 변환
-        for col_name in [p['st'], p['av'], p['t3']]:
+        # 컬럼 존재 확인 및 숫자 변환
+        if "리오더 수량" not in df_work.columns: df_work["리오더 수량"] = 0
+        for col_name in [p['st'], p['av'], p['t3'], "리오더 수량"]:
             df_work[col_name] = pd.to_numeric(df_work[col_name], errors='coerce').fillna(0).astype(int)
         
-        if "리오더 수량" not in df_work.columns: df_work["리오더 수량"] = 0
-        df_work["리오더 수량"] = pd.to_numeric(df_work["리오더 수량"], errors='coerce').fillna(0).astype(int)
         df_work["리오더 입고수량"] = 0
-
-        # 일판매량 계산 (3일 판매량 / 3)
         df_work['일판매량'] = (df_work[p['t3']] / 3).round(1)
         df_work['권장발주량'] = ((df_work['일판매량'] * (p['lt'] + p['ss'])) - (df_work[p['av']] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
@@ -114,15 +113,16 @@ with tab1:
                     if "리오더 입고수량" in change:
                         in_qty = int(change["리오더 입고수량"])
                         st.session_state.df_raw.at[o_idx, "리오더 수량"] = max(0, int(st.session_state.df_raw.at[o_idx, "리오더 수량"]) - in_qty)
-                st.success("✅ 리오더 수량이 차감되었습니다."); time.sleep(0.5); st.rerun()
+                st.success("✅ 차감 완료!"); time.sleep(0.5); st.rerun()
 
         # --- [5단계: 최종 발주 및 리오더 합산] ---
         st.divider()
         st.subheader("📋 5단계: 최종 발주 리스트 요약")
+        # [해결] 원본 세션에서 데이터를 가져온 후 '리오더 수량' 유무를 다시 한 번 확인
         df_5 = st.session_state.df_raw.copy()
+        if "리오더 수량" not in df_5.columns: df_5["리오더 수량"] = 0
 
-        # 5단계 매칭 고정
-        for col_name in [p['av'], p['t3']]:
+        for col_name in [p['av'], p['t3'], "리오더 수량"]:
             df_5[col_name] = pd.to_numeric(df_5[col_name], errors='coerce').fillna(0).astype(int)
 
         f5_c1, f5_c2, f5_c3 = st.columns([2, 1, 1])
@@ -134,6 +134,7 @@ with tab1:
         elif m5_f == "품절만": df_5 = df_5[df_5[p['so']].astype(str).str.contains('품절', na=False)]
         if s5_q: df_5 = df_5[df_5[p['it']].astype(str).str.contains(s5_q, case=False) | df_5[p['op']].astype(str).str.contains(s5_q, case=False)]
 
+        # [에러 발생 지점 수정 완료]
         df_5['일판매량'] = (df_5[p['t3']] / 3).round(1)
         df_5['권장발주량'] = ((df_5['일판매량'] * (p['lt'] + p['ss'])) - (df_5[p['av']] + df_5['리오더 수량'])).clip(lower=0).astype(int)
         df_5['추가발주수량'] = df_5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
@@ -159,7 +160,7 @@ with tab1:
                         add_v = int(val["추가발주수량"])
                         st.session_state.df_raw.at[o_idx, "리오더 수량"] += add_v
                         st.session_state.add_order_dict[o_idx] = add_v
-                st.success("✅ 리오더 수량이 합산되었습니다."); time.sleep(0.5); st.rerun()
+                st.success("✅ 합산 완료!"); time.sleep(0.5); st.rerun()
 
         if st.button("💾 구글 시트 저장 (6단계)", use_container_width=True):
             ready = df_5[(df_5['권장발주량'] + df_5['추가발주수량']) > 0]
