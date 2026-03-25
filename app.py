@@ -403,7 +403,83 @@ if st.session_state.analyzed and st.session_state.p:
             mime="text/csv", 
             use_container_width=True
         )
+
+# ==========================================
+# 6단계: 전체 히스토리 내역 (시트 데이터 완벽 호환)
+# ==========================================
+st.divider()
+st.subheader("📜 6단계: 전체 히스토리 내역")
+
+# 1. 구글 시트에서 '발주기록' 데이터 로드 전용 함수 (함수 구역에 넣으셔도 됩니다)
+def load_v6_history():
+    try:
+        sheet = get_sheet()
+        record_sheet = sheet.worksheet("발주기록")
+        data = record_sheet.get_all_records()
+        return pd.DataFrame(data)
+    except Exception as e:
+        # 시트가 없거나 에러나면 빈 표 반환
+        return pd.DataFrame()
+
+# 데이터 로드 시작
+with st.spinner('📡 히스토리 기록을 불러오는 중입니다...'):
+    df_hist = load_v6_history()
+
+if not df_hist.empty:
+    # 2. 상단 UI (달력 및 검색창)
+    h_c1, h_c2 = st.columns([1, 2])
+    
+    # 한국 시간(KST) 오늘 날짜 설정
+    today_kst = datetime.now(KST).date()
+    h_date = h_c1.date_input("🗓️ 조회 날짜 선택", today_kst, key="v6_date_input")
+    h_search = h_c2.text_input("🔍 상품명 검색", key="v6_search_input")
+
+    # 3. 데이터 필터링 로직
+    # '날짜' 컬럼에서 시간 제외하고 날짜만 추출해서 비교
+    if '날짜' in df_hist.columns:
+        df_hist['날짜_tmp'] = pd.to_datetime(df_hist['날짜']).dt.date
+        df_hist_filtered = df_hist[df_hist['날짜_tmp'] == h_date].copy()
+    else:
+        df_hist_filtered = df_hist.copy()
+    
+    # 검색어 필터링 (상품명 기준)
+    if h_search:
+        df_hist_filtered = df_hist_filtered[df_hist_filtered['상품명'].astype(str).str.contains(h_search, case=False, na=False)]
+
+    # 🎯 [항목 정리] 시트에 저장된 5가지 핵심 항목 표시
+    # 날짜, 공급쳐, 상품명, 옵션, 발주수량
+    final_view_cols = ["날짜", "공급쳐", "상품명", "옵션", "발주수량"]
+    
+    # 실제 존재하는 컬럼만 선별
+    actual_view = [c for c in final_view_cols if c in df_hist_filtered.columns]
+
+    # 4. 결과 출력
+    if not df_hist_filtered.empty:
+        # 최신 저장 시간이 위로 오도록 정렬 (날짜 기준 내림차순)
+        st.dataframe(
+            df_hist_filtered[actual_view].sort_values(by='날짜', ascending=False), 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "발주수량": st.column_config.NumberColumn(format="%d") # 콤마 적용
+            }
+        )
         
+        # 5. 📥 엑셀(CSV) 다운로드 버튼
+        csv_hist = df_hist_filtered[actual_view].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        st.download_button(
+            label=f"📥 {h_date} 발주 내역 다운로드",
+            data=csv_hist,
+            file_name=f"발주히스토리_{h_date}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    else:
+        st.info(f"📅 {h_date} 날짜에는 저장된 기록이 없습니다. 다른 날짜를 선택해 주세요.")
+else:
+    st.warning("아직 저장된 히스토리 기록이 없습니다. 5단계에서 '저장' 버튼을 먼저 눌러주세요.")
+    
+
 # --- [🌙 탭 2: 동대문 사입 관리] ---
 with tab2:
     st.subheader("🌙 동대문 사입 및 미납 관리")
