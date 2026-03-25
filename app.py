@@ -5,67 +5,66 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import time
 
-# --- [0. 상수 설정] ---
-KST = timezone(timedelta(hours=9)) # 한국 시간대 설정
+# --- [0. 상수 및 시간대 설정] ---
+KST = timezone(timedelta(hours=9))
 
-# --- [1. 공통 함수 정의] ---
+# --- [1. 구글 시트 공통 함수] ---
 def get_sheet():
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
         scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
+        # 사장님의 시트 키 (그대로 유지)
         return client.open_by_key("1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg")
     except Exception as e:
         st.error(f"구글 시트 연결 실패: {e}")
         return None
 
 def save_reorder_data(df, item_col, opt_col):
-    """현재 세션의 리오더 수량을 구글 시트 메인 탭에 덮어쓰기 (보존용)"""
+    """현재 분석 데이터를 구글 시트에 저장"""
     try:
         spreadsheet = get_sheet()
         if spreadsheet:
             sheet = spreadsheet.sheet1
             sheet.clear()
-            # 상품명, 옵션, 리오더 수량 컬럼만 추출하여 저장
+            # 필요한 컬럼만 추출하여 저장
             save_df = df[[item_col, opt_col, '리오더 수량']].copy()
             save_df.columns = ['상품명', '옵션', '리오더 수량']
             sheet.update([save_df.columns.values.tolist()] + save_df.values.tolist())
     except Exception as e:
-        st.error(f"데이터 보존 실패: {e}")
+        st.error(f"데이터 저장 실패: {e}")
 
-# --- [2. 앱 설정] ---
+# --- [2. 앱 설정 및 세션 초기화] ---
 st.set_page_config(layout="wide", page_title="저스트원 재고관리")
 st.title("📦 저스트원 통합 재고 관리 시스템")
 
+# 세션 상태 초기화 (먹통 방지 핵심)
+if 'df_raw' not in st.session_state: st.session_state.df_raw = None
+if 'analyzed' not in st.session_state: st.session_state.analyzed = False
+if 'params' not in st.session_state: st.session_state.params = None
+
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
+# ---------------------------------------------------------
+# 🔥 제작 상품 관리 (Tab 1)
+# ---------------------------------------------------------
 with tab1:
-    if 'df_raw' not in st.session_state: st.session_state.df_raw = None
-    if 'analyzed' not in st.session_state: st.session_state.analyzed = False
-
-with tab1:
-    # 1. 초기 세션 설정 (없으면 생성)
-    if 'df_raw' not in st.session_state: st.session_state.df_raw = None
-    if 'analyzed' not in st.session_state: st.session_state.analyzed = False
-    if 'params' not in st.session_state: st.session_state.params = None
-
-    # --- [1단계: 데이터 업로드 구역] ---
+    # --- [1단계: 데이터 업로드] ---
     st.subheader("📁 1단계: 데이터 업로드")
     uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
 
-    # 💡 [초기화 버튼] 모든 기억을 지우고 첫 화면으로!
-    if st.button("🗑️ 업로드 파일 초기화", key="reset_full_system"):
+    # 💡 [초기화 버튼] 모든 세션을 깨끗하게 지웁니다.
+    if st.button("🗑️ 모든 설정 및 파일 초기화", key="total_reset"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
-        st.success("🔄 모든 설정이 초기화되었습니다.")
+        st.success("🔄 초기화되었습니다. 다시 시작해 주세요.")
         time.sleep(0.5)
         st.rerun()
 
-    # 파일이 실제로 올라왔을 때 실행
     if uploaded_file is not None:
         try:
-            # 데이터 읽기 및 공백 제거
+            # 파일 읽기 (최초 1회만 실행)
             if st.session_state.df_raw is None:
                 df_read = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
                 df_read.columns = df_read.columns.str.strip()
@@ -83,14 +82,14 @@ with tab1:
                 return options[0] if options else ""
 
             # ---------------------------------------------------------
-            # ✅ 화면 분기: 분석 전(설정창) / 분석 후(결과창)
+            # ✅ [화면 분기점] 중복 출현 방지 로직
             # ---------------------------------------------------------
             if not st.session_state.analyzed:
-                # --- [2단계: 매핑 설정] ---
+                # 🚀 [분석 전 화면] 매핑 및 파라미터 설정
                 st.divider()
                 st.subheader("⚙️ 2단계: 매핑 설정")
                 
-                # 자동 매칭 제안 값들
+                # 자동 매칭 제안
                 s_c = find_best_col(["품절", "상태"], all_cols)
                 v_c = find_best_col(["공급처", "거래처"], all_cols)
                 vi_c = find_best_col(["공급처상품명", "공급명"], all_cols)
@@ -114,14 +113,14 @@ with tab1:
                     sel_t3 = st.selectbox("3일 발주합계", all_cols, index=all_cols.index(t3_c))
                     sel_t7 = st.selectbox("7일 발주합계", all_cols, index=all_cols.index(t7_c))
 
-                # --- [3단계: 분석 설정] ---
                 st.divider()
                 st.subheader("📊 3단계: 분석 파라미터 설정")
                 p1, p2 = st.columns(2)
-                in_lt = p1.number_input("🚚 리드타임", min_value=1, value=7)
-                in_ss = p2.number_input("🛡️ 안전재고", min_value=0, value=3)
+                in_lt = p1.number_input("🚚 리드타임 (입고 소요 기간)", min_value=1, value=7)
+                in_ss = p2.number_input("🛡️ 안전재고 (여유 재고)", min_value=0, value=3)
 
                 if st.button("🚀 데이터 분석 및 계산 실행", use_container_width=True, type="primary"):
+                    # 모든 설정을 params에 저장하고 화면 전환
                     st.session_state.params = {
                         'lt': in_lt, 'ss': in_ss,
                         'so': sel_so, 'vn': sel_vn, 'vi': sel_vi, 'it': sel_it, 'op': sel_op,
@@ -131,11 +130,11 @@ with tab1:
                     st.rerun()
 
             else:
-                # --- [4단계: 결과 화면] ---
+                # 🚀 [분석 후 화면] 4단계 결과창만 단독 노출
                 st.divider()
-                h1, h2 = st.columns([5, 1])
-                h1.subheader("📋 4단계: 재고 관리 및 발주 결과")
-                if h2.button("🔄 설정 다시하기"):
+                head1, head2 = st.columns([5, 1])
+                head1.subheader("📋 4단계: 재고 관리 및 발주 결과")
+                if head2.button("🔄 매핑 다시하기"):
                     st.session_state.analyzed = False
                     st.rerun()
 
@@ -149,7 +148,8 @@ with tab1:
                 if "리오더 수량" not in df_work.columns: df_work["리오더 수량"] = 0
                 
                 # 계산 (일판매량: 7일 우선)
-                df_work['일판매량'] = (df_work[p['t7']] / 7 if df_work[p['t7']].sum() > 0 else df_work[p['t3']] / 3).round(0).astype(int)
+                v7_sum = df_work[p['t7']].sum()
+                df_work['일판매량'] = (df_work[p['t7']] / 7 if v7_sum > 0 else df_work[p['t3']] / 3).round(0).astype(int)
                 df_work['권장발주량'] = ((df_work['일판매량'] * (p['lt'] + p['ss'])) - (df_work[p['av']] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
                 # 검색 및 필터 UI
@@ -172,16 +172,25 @@ with tab1:
                 })
                 cols = ["품절", "공급처", "상품명", "옵션", "정상재고", "가용재고", "리오더 수량", "일판매량", "권장발주량"]
                 
-                with st.form("save_form_final"):
-                    ed_df = st.data_editor(df_disp[cols], use_container_width=True, hide_index=True)
-                    if st.form_submit_button("💾 구글 시트 저장", use_container_width=True, type="primary"):
+                with st.form("final_save_form"):
+                    # 데이터 에디터 출력
+                    edited_df = st.data_editor(df_disp[cols], use_container_width=True, hide_index=True)
+                    if st.form_submit_button("💾 구글 시트 저장 및 동기화", use_container_width=True, type="primary"):
                         save_reorder_data(st.session_state.df_raw, p['it'], p['op'])
-                        st.success("✅ 저장이 완료되었습니다!")
+                        st.success("✅ 구글 시트 저장 완료!")
                         time.sleep(1)
                         st.rerun()
 
         except Exception as e:
-            st.error(f"⚠️ 오류 발생: {e}")
+            st.error(f"⚠️ 시스템 오류: {e}")
+    else:
+        st.info("👆 먼저 엑셀 파일을 업로드하여 분석을 시작해 주세요.")
+
+# ---------------------------------------------------------
+# 🔥 동대문 사입 관리 (Tab 2) - 필요시 구현
+# ---------------------------------------------------------
+with tab2:
+    st.write("🌙 동대문 사입 관리 기능 준비 중입니다.")
     
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
