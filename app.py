@@ -7,7 +7,7 @@ import time
 KST = timezone(timedelta(hours=9))
 now = datetime.now(KST)
 
-st.set_page_config(layout="wide", page_title="저스트원 재고관리 v3.2")
+st.set_page_config(layout="wide", page_title="저스트원 재고관리 v3.3")
 
 # --- [공통 함수: 구글 시트 연동] ---
 def get_sheet():
@@ -22,13 +22,24 @@ def get_sheet():
     except:
         return None
 
+# 저장된 날짜 리스트 가져오기 (시각화용)
+def get_saved_dates():
+    sheet = get_sheet()
+    if sheet:
+        try:
+            df_hist = pd.DataFrame(sheet.worksheet("발주기록").get_all_records())
+            if not df_hist.empty and '날짜' in df_hist.columns:
+                return df_hist['날짜'].unique().tolist()
+        except: pass
+    return []
+
 # --- [세션 상태 초기화] ---
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 if 'p' not in st.session_state: st.session_state.p = {}
 if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
 
-st.title("📦 저스트원 통합 재고 관리 v3.2")
+st.title("📦 저스트원 통합 재고 관리 v3.3")
 
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
@@ -77,14 +88,14 @@ with tab1:
             st.rerun()
 
     # --- [4단계: 데이터 편집 및 재고 관리] ---
-    if st.session_state.get('analyzed') and st.session_state.get('p'):
+    if st.session_state.get('analyzed'):
         st.divider()
         st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
         
         p = st.session_state.p
         df_work = st.session_state.df_raw.copy()
         
-        # 숫자형 변환 및 초기화
+        # 숫자형 변환
         for c in [p['st'], p['av'], p['t7'], p['t3']]:
             df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
         
@@ -92,21 +103,27 @@ with tab1:
         df_work["리오더 수량"] = pd.to_numeric(df_work["리오더 수량"], errors='coerce').fillna(0).astype(int)
         df_work["리오더 입고수량"] = 0
 
-        # [수정] 일판매량 계산 로직: 3일 판매 합계를 3으로 나눔
-        df_work['일판매량'] = (df_work[p['t3']] / 3).round(1) # 소수점 첫째자리까지 표시
+        # 일판매량 계산 (3일 판매 합계 기준)
+        df_work['일판매량'] = (df_work[p['t3']] / 3).round(1)
         df_work['권장발주량'] = ((df_work['일판매량'] * (p['lt'] + p['ss'])) - (df_work[p['av']] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
-        # 필터링 UI
+        # 4단계 필터 및 기록 날짜 확인
+        saved_dates = get_saved_dates()
         f4_c1, f4_c2, f4_c3 = st.columns([2, 1, 1])
-        s4_q = f4_c1.text_input("🔍 4단계 상품명/옵션 검색", key="s4_search")
+        s4_q = f4_c1.text_input("🔍 4단계 상품명 검색", key="s4_search")
         m4_f = f4_c2.selectbox("4단계 상태 필터", ["전체보기", "정상만", "품절만"], index=1, key="m4_filter")
-        d4_h = f4_c3.date_input("🗓️ 4단계 입고 기록 날짜", now.date(), key="d4_date")
+        
+        with f4_c3:
+            d4_h = st.date_input("🗓️ 입고 기록 날짜", now.date(), key="d4_date")
+            if d4_h.strftime('%Y-%m-%d') in saved_dates:
+                st.caption("✅ 선택한 날짜에 저장된 기록이 있습니다.")
+            else:
+                st.caption("⚪ 기록 없음")
 
         if m4_f == "정상만": df_work = df_work[~df_work[p['so']].astype(str).str.contains('품절', na=False)]
         elif m4_f == "품절만": df_work = df_work[df_work[p['so']].astype(str).str.contains('품절', na=False)]
         if s4_q: df_work = df_work[df_work[p['it']].astype(str).str.contains(s4_q, case=False) | df_work[p['op']].astype(str).str.contains(s4_q, case=False)]
 
-        # [수정] 4단계 표시 컬럼: 과거리오더입고 다음에 '3일 판매 합계' 추가
         df_disp4 = df_work.rename(columns={p['so']: "품절", p['vn']: "공급쳐", p['vi']: "공급쳐 상품명", p['it']: "상품명", p['op']: "옵션", p['st']: "정상재고", p['av']: "가용재고", p['t3']: "3일 판매 합계"})
         cols4 = ["품절", "공급쳐", "상품명", "옵션", "공급쳐 상품명", "정상재고", "가용재고", "리오더 수량", "리오더 입고수량", "3일 판매 합계", "일판매량", "권장발주량"]
 
@@ -120,29 +137,35 @@ with tab1:
                     if "리오더 입고수량" in change:
                         in_qty = int(change["리오더 입고수량"])
                         st.session_state.df_raw.at[o_idx, "리오더 수량"] = max(0, int(st.session_state.df_raw.at[o_idx, "리오더 수량"]) - in_qty)
-                st.success("✅ 4단계 데이터 반영 완료!"); time.sleep(1); st.rerun()
+                st.success("✅ 리오더 차감 완료!"); time.sleep(1); st.rerun()
 
         # ==========================================
-        # --- [5단계: 최종 발주 및 필터] ---
+        # --- [5단계: 최종 발주 및 기록 날짜 시각화] ---
         # ==========================================
         st.divider()
         st.subheader("📋 5단계: 최종 발주 리스트 요약")
 
         df_5 = st.session_state.df_raw.copy()
+        # [원본 소스 데이터 매칭 유지] p 변수를 사용하여 데이터 로드
         for c in [p['av'], p['t3']]:
             df_5[c] = pd.to_numeric(df_5[c], errors='coerce').fillna(0).astype(int)
 
-        # 5단계 필터
+        # 5단계 필터 및 날짜 확인
         f5_c1, f5_c2, f5_c3 = st.columns([2, 1, 1])
-        s5_q = f5_c1.text_input("🔍 5단계 상품명/옵션 검색", key="s5_search")
+        s5_q = f5_c1.text_input("🔍 5단계 상품명 검색", key="s5_search")
         m5_f = f5_c2.selectbox("5단계 상태 필터", ["전체보기", "정상만", "품절만"], index=1, key="m5_filter")
-        d5_h = f5_c3.date_input("🗓️ 5단계 발주 기록 날짜", now.date(), key="d5_date")
+        
+        with f5_c3:
+            d5_h = st.date_input("🗓️ 발주 기록 날짜", now.date(), key="d5_date")
+            if d5_h.strftime('%Y-%m-%d') in saved_dates:
+                st.markdown(f"<span style='color:green; font-weight:bold;'>● {d5_h.strftime('%m/%d')} 기록 있음</span>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<span style='color:gray;'>○ 기록 없음</span>", unsafe_allow_html=True)
 
         if m5_f == "정상만": df_5 = df_5[~df_5[p['so']].astype(str).str.contains('품절', na=False)]
         elif m5_f == "품절만": df_5 = df_5[df_5[p['so']].astype(str).str.contains('품절', na=False)]
         if s5_q: df_5 = df_5[df_5[p['it']].astype(str).str.contains(s5_q, case=False) | df_5[p['op']].astype(str).str.contains(s5_q, case=False)]
 
-        # [수정] 5단계 일판매량도 3일 합계 기준 계산
         df_5['일판매량'] = (df_5[p['t3']] / 3).round(1)
         df_5['권장발주량'] = ((df_5['일판매량'] * (p['lt'] + p['ss'])) - (df_5[p['av']] + df_5['리오더 수량'])).clip(lower=0).astype(int)
         df_5['추가발주수량'] = df_5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
@@ -155,6 +178,7 @@ with tab1:
             return "✅ 정상"
         df_5['상태'] = df_5.apply(get_stat5, axis=1)
 
+        # 화면 표시용 컬럼 재매칭 (사장님 원본 소스값 유지)
         df_disp5 = df_5.rename(columns={p['it']: "상품명", p['op']: "옵션", p['vi']: "공급쳐상품명", p['av']: "가용재고", "리오더 수량": "리오더수량", p['t3']: "3일 판매 합계"})
         cols5 = ["상태", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "3일 판매 합계", "일판매량", "추가발주수량", "권장발주량"]
 
@@ -168,9 +192,8 @@ with tab1:
                         add_v = int(val["추가발주수량"])
                         st.session_state.df_raw.at[o_idx, "리오더 수량"] += add_v
                         st.session_state.add_order_dict[o_idx] = add_v
-                st.success("✅ 리오더 수량 합산 완료!"); time.sleep(1); st.rerun()
+                st.success("✅ 리오더 수량 업데이트 완료!"); time.sleep(1); st.rerun()
 
-        # 저장 버튼 (6단계 연동)
         if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
             ready = df_5[(df_5['권장발주량'] + df_5['추가발주수량']) > 0]
             if not ready.empty:
@@ -178,8 +201,7 @@ with tab1:
                 sheet = get_sheet()
                 if sheet: 
                     sheet.worksheet("발주기록").append_rows(log_rows)
-                    st.success(f"✅ 히스토리에 저장되었습니다.")
-            else: st.warning("발주할 내역이 없습니다.")
+                    st.success(f"✅ {d5_h.strftime('%m/%d')} 기록 저장 완료!"); time.sleep(1); st.rerun()
 
         # --- [6단계: 전체 히스토리 내역] ---
         st.divider()
