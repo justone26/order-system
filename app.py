@@ -47,33 +47,36 @@ with tab1:
 # --- [1단계: 데이터 업로드 구역] ---
 st.subheader("📁 1단계: 데이터 업로드")
 
-# 1. 업로드 박스 (딱 한 번만 나와야 합니다!)
 uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
 
-# 2. 업로드 파일만 초기화하는 버튼 (왼쪽 배치)
 if st.button("🗑️ 업로드 파일 초기화", key="reset_upload_only"):
-    # 리오더 수량은 유지하고 분석 화면만 숨깁니다.
     st.session_state.analyzed = False 
-    st.success("업로드된 파일 정보가 초기화되었습니다. (리오더 수량은 유지됨)")
+    st.success("업로드된 파일 정보가 초기화되었습니다.")
     st.rerun()
 
-# --- [데이터 처리 시작] ---
-# 이제 이름이 'uploaded_file'로 통일되어 아래쪽 코드들도 잘 돌아갈 겁니다.
+# --- [데이터 처리 및 2단계 매핑 시작] ---
 if uploaded_file is not None:
-    # (이후 사장님의 기존 로직 시작...)
-    pass
-# --- [항목별 매칭 로직 보강] ---
-        # options는 엑셀의 실제 컬럼명 리스트입니다.
+    # 💡 여기서부터는 'if'문 안쪽이므로 무조건 한 칸(Tab) 들여쓰기가 되어야 합니다.
+    try:
+        # 1. 파일 읽기 및 컬럼 정리
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+        
+        df.columns = [str(c).strip() for c in df.columns]
+        all_cols = list(df.columns)
+
+        # 2. 자동 매칭 함수 (들여쓰기 주의!)
         def find_best_col(targets, options):
             for opt in options:
-                # 제목에서 공백을 다 지우고 대문자로 바꿔서 비교 (정확도 향상)
                 clean_opt = str(opt).replace(" ", "").upper()
                 for t in targets:
                     if t.upper() in clean_opt: 
                         return opt
             return options[0] if options else ""
 
-        # 매칭 후보 단어 추가 (사장님 엑셀에 있을 법한 단어들 다 넣었습니다)
+        # 3. 항목별 매칭 (7일 발주합계 보강)
         sold_out_col = find_best_col(["품절", "상태"], all_cols)
         vendor_col = find_best_col(["공급처", "거래처"], all_cols)
         v_item_col = find_best_col(["공급처상품명", "공급명"], all_cols)
@@ -82,18 +85,15 @@ if uploaded_file is not None:
         reg_date_col = find_best_col(["등록일"], all_cols)
         stock_col = find_best_col(["정상재고", "현재고"], all_cols)
         avail_col = find_best_col(["가용재고", "판매가능"], all_cols)
-        
-        # 💡 [집중 보강] 3일/7일 발주합계 매칭 단어 확장
-        t3_col = find_best_col(["3일", "3DAY", "3일발주"], all_cols)
-        t7_col = find_best_col(["7일", "7DAY", "7일발주", "일주일"], all_cols)
+        t3_col = find_best_col(["3일", "3DAY"], all_cols)
+        t7_col = find_best_col(["7일", "7DAY", "일주일"], all_cols)
 
-        # --- [2단계 UI 출력] ---
+        # 4. 2단계 UI 출력
         st.divider()
         st.subheader("⚙️ 2단계: 매핑 설정")
         
         m1, m2 = st.columns(2)
         with m1:
-            # index=all_cols.index(변수명) 코드가 있어야 자동으로 선택됩니다.
             sold_out = st.selectbox("품절 여부", all_cols, index=all_cols.index(sold_out_col))
             vendor = st.selectbox("공급처", all_cols, index=all_cols.index(vendor_col))
             v_item = st.selectbox("공급처 상품명", all_cols, index=all_cols.index(v_item_col))
@@ -104,9 +104,17 @@ if uploaded_file is not None:
             reg_date = st.selectbox("등록일", all_cols, index=all_cols.index(reg_date_col))
             stock = st.selectbox("정상재고", all_cols, index=all_cols.index(stock_col))
             avail = st.selectbox("가용재고", all_cols, index=all_cols.index(avail_col))
-            # 💡 여기서 t3day, t7day가 엑셀 제목을 자동으로 물고 들어갑니다.
             t3day = st.selectbox("3일 발주합계", all_cols, index=all_cols.index(t3_col))
             t7day = st.selectbox("7일 발주합계", all_cols, index=all_cols.index(t7_col))
+
+        # 분석 실행 버튼
+        if st.button("🚀 분석 실행", use_container_width=True, type="primary"):
+            st.session_state.df_raw = df
+            st.session_state.analyzed = True
+            st.rerun()
+
+    except Exception as e:
+        st.error(f"⚠️ 데이터를 읽는 중 오류가 발생했습니다: {e}")
         
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
