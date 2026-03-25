@@ -92,7 +92,7 @@ with tab1:
                 st.session_state.last_fn = up_file.name
                 st.rerun()
 
-    # --- 2, 3단계: 매핑 및 설정 (고정 표시) ---
+  # --- 2, 3단계: 매핑 및 설정 (5:5 비율 최적화) ---
     if st.session_state.df_raw is not None:
         all_cols = list(st.session_state.df_raw.columns)
         st.divider()
@@ -105,20 +105,26 @@ with tab1:
                     if t.upper() in c_o: return o
             return opts[0]
         
-        c1, c2 = st.columns(2)
-        with c1:
-            s_so = st.selectbox("품절 여부", all_cols, index=all_cols.index(find_c(["품절", "상태"], all_cols)))
+        # 5:5 비율로 컬럼 나누기
+        col_left, col_right = st.columns(2)
+        
+        with col_left:
+            st.markdown("##### 🔍 상품 식별 정보")
             s_vn = st.selectbox("공급처", all_cols, index=all_cols.index(find_c(["공급처", "거래처"], all_cols)))
             s_vi = st.selectbox("공급처 상품명", all_cols, index=all_cols.index(find_c(["공급처상품명", "공급명"], all_cols)))
-            s_it = st.selectbox("상품명", all_cols, index=all_cols.index(find_c(["상품명", "자체상품"], all_cols)))
+            s_it = st.selectbox("상품명 (자체)", all_cols, index=all_cols.index(find_c(["상품명", "자체상품"], all_cols)))
             s_op = st.selectbox("옵션", all_cols, index=all_cols.index(find_c(["옵션"], all_cols)))
+            s_so = st.selectbox("품절 여부", all_cols, index=all_cols.index(find_c(["품절", "상태"], all_cols)))
+
+        with col_right:
+            st.markdown("##### 📊 재고 및 판매 데이터")
             s_rd = st.selectbox("등록일", all_cols, index=all_cols.index(find_c(["등록일", "생성일"], all_cols)))
-        with c2:
             s_st = st.selectbox("정상재고", all_cols, index=all_cols.index(find_c(["정상재고", "현재고"], all_cols)))
             s_av = st.selectbox("가용재고", all_cols, index=all_cols.index(find_c(["가용재고", "판매가능"], all_cols)))
             s_t3 = st.selectbox("3일 발주합계", all_cols, index=all_cols.index(find_c(["3일", "3D"], all_cols)))
             s_t7 = st.selectbox("7일 발주합계", all_cols, index=all_cols.index(find_c(["7일", "7D", "발주합계"], all_cols)))
 
+        st.divider()
         st.subheader("📊 3단계: 분석 설정")
         p1, p2 = st.columns(2)
         v_lt = p1.number_input("🚚 리드타임 (입고 소요일)", 1, 100, 3)
@@ -130,6 +136,7 @@ with tab1:
                 'it':s_it, 'op':s_op, 'st':s_st, 'av':s_av, 't3':s_t3, 't7':s_t7, 'rd':s_rd
             }
             st.session_state.analyzed = True
+            st.rerun()
 
         # --- 4단계: 결과창 (분석 완료 시 표시) ---
         if st.session_state.analyzed and st.session_state.p:
