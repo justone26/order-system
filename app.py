@@ -130,6 +130,7 @@ with tab1:
             st.divider()
     
 # --- [결과 화면 및 4단계 로직 시작] ---
+        # 아래 if문 다음 줄부터는 무조건 '들여쓰기(Tab)'가 되어야 합니다.
         if st.session_state.analyzed and st.session_state.df_raw is not None:
             st.divider()
             st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
@@ -137,25 +138,26 @@ with tab1:
             # 1. 데이터 복사 및 수치형 변환
             df_work = st.session_state.df_raw.copy()
 
-            # 수치 데이터 컬럼 변환 (에러 방지)
+            # 수치 데이터 컬럼 변환 (에러 방지용 안전장치)
             num_cols = [stock, avail, "리오더 수량", t7day, t3day]
             for c in num_cols:
                 if c in df_work.columns:
                     df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
 
-            # 리오더 입고수량 컬럼이 없으면 생성
+            # 리오더 입고수량 컬럼이 없으면 0으로 생성
             if "리오더 입고수량" not in df_work.columns:
                 df_work["리오더 입고수량"] = 0
 
             # 2. [계산식] 일판매량 및 권장발주량 (lt=리드타임, ss=안전재고)
-            lt = 3; ss = 2 
+            lt = 3
+            ss = 2 
             v7 = df_work[t7day]
             v3 = df_work[t3day]
 
             # 일판매량: 7일 우선, 데이터 없으면 3일 기준 반올림
             df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
 
-            # 권장발주량 계산: (일판매량 * (리드타임+안전재고)) - (가용재고 + 리오더수량)
+            # 권장발주량 계산
             df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
             df_work['3일발주합계'] = df_work[t3day]
 
@@ -163,6 +165,8 @@ with tab1:
             f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
             search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4_input_final_v2")
             filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_v4_select_final_v2")
+            
+            # 한국 시간(KST)이 적용된 오늘 날짜
             hist_date_4 = f_c3.date_input("🗓️ 입고 매핑 날짜", datetime.now(KST).date(), key="date_v4_input_final_v2")
 
             # 필터 적용 로직
@@ -173,7 +177,7 @@ with tab1:
             if search_q: 
                 df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
 
-            # 🎯 컬럼명 정리
+            # 🎯 표시용 컬럼명 정리 (사장님이 찍어주신 순서)
             df_display = df_work.rename(columns={
                 sold_out: "품절", vendor: "공급쳐", v_item: "공급쳐 상품명",
                 item: "상품명", option: "옵션", stock: "정상재고", avail: "가용재고"
@@ -184,8 +188,45 @@ with tab1:
                 "정상재고", "가용재고", "리오더 수량", "리오더 입고수량", 
                 "3일발주합계", "일판매량", "권장발주량"
             ]
-            actual_final_cols = [c for c in final_cols
+            actual_final_cols = [c for c in final_cols if c in df_display.columns]
 
+            # 4. 저장 폼 및 차감 로직
+            with st.form("form_step_4_reorder_only_fix"):
+                # 데이터를 편집할 수 있는 에디터 실행
+                edited_v4 = st.data_editor(df_display[actual_final_cols], use_container_width=True, key="editor_v4_reorder_fix", hide_index=True)
+                submit_v4 = st.form_submit_button("💾 입고량 반영 및 저장 (구글 시트 동기화)", use_container_width=True, type="primary")
+                
+                if submit_v4:
+                    with st.spinner('📡 리오더 수량을 차감하고 구글 시트에 실시간 저장 중입니다...'):
+                        # 변경된 내용(edits) 추출
+                        edits = st.session_state["editor_v4_reorder_fix"].get("edited_rows", {})
+                        
+                        if edits:
+                            for r_idx_str, change in edits.items():
+                                # 현재 화면의 인덱스를 실제 데이터 인덱스로 변환
+                                orig_idx = df_work.index[int(r_idx_str)]
+                                
+                                # 1) 리오더 수량을 직접 숫자로 수정한 경우
+                                if "리오더 수량" in change:
+                                    st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
+                                
+                                # 2) 리오더 입고수량을 입력한 경우 (기존 리오더 수량에서 차감)
+                                if "리오더 입고수량" in change:
+                                    in_qty = int(change["리오더 입고수량"])
+                                    if in_qty > 0:
+                                        curr_val = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
+                                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr_val - in_qty)
+
+                            # --- [유실 방지 핵심] ---
+                            # 수정이 완료된 즉시 구글 시트의 메인 탭에 덮어쓰기 합니다.
+                            save_reorder_data(st.session_state.df_raw, item, option)
+                            
+                            st.success("✅ 리오더 수량이 안전하게 저장되었습니다!")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.warning("수정된 내용이 없습니다.")
+                            
 # --- [5단계: 최종 발주 리스트 요약 - 저장 및 엑셀 버튼 복구] ---
 st.divider()
 st.subheader("📋 5단계: 최종 발주 리스트 요약")
