@@ -445,69 +445,89 @@ def load_v6_history_final():
         return pd.DataFrame()
 
 # ==========================================
-# 6단계: 전체 히스토리 내역 (5단계 항목 완벽 재현)
+# 6단계: 전체 히스토리 내역 (분석 완료 시에만 노출 & 8대 항목 완벽 재현)
 # ==========================================
-st.divider()
-st.subheader("📜 6단계: 전체 히스토리 내역")
 
-# 데이터 불러오기
-with st.spinner('📡 구글 시트에서 히스토리 기록을 가져오는 중...'):
-    df_hist = load_v6_history_final()
+# 🎯 분석 상태(analyzed)가 True일 때만 화면에 나타나도록 설정 (초기화 시 같이 사라짐)
+if st.session_state.get('analyzed', False) and st.session_state.df_raw is not None:
+    st.divider()
+    st.subheader("📜 6단계: 전체 히스토리 내역")
 
-if not df_hist.empty:
-    # 1. 상단 필터 UI
-    h_c1, h_c2 = st.columns([1, 2])
-    
-    # 한국 시간 기준 오늘 날짜
-    today_kst = datetime.now(KST).date()
-    h_date = h_c1.date_input("🗓️ 조회 날짜 선택", today_kst, key="v6_final_date_input")
-    h_search = h_c2.text_input("🔍 상품명 검색 (히스토리)", key="v6_final_search_input")
+    # [내부 함수] 구글 시트에서 '발주기록' 데이터를 읽어오는 전용 함수
+    def load_v6_history_complete():
+        try:
+            sheet = get_sheet() 
+            # 5단계에서 저장한 '발주기록' 시트를 불러옵니다.
+            record_sheet = sheet.worksheet("발주기록")
+            data = record_sheet.get_all_records()
+            return pd.DataFrame(data)
+        except Exception as e:
+            # 시트가 없거나 연결 오류 시 빈 표 반환
+            return pd.DataFrame()
 
-    # 2. 날짜 및 검색어 필터링
-    # 시트의 '날짜' 컬럼에서 날짜 정보만 추출
-    if '날짜' in df_hist.columns:
-        df_hist['날짜_only'] = pd.to_datetime(df_hist['날짜']).dt.date
-        df_filtered = df_hist[df_hist['날짜_only'] == h_date].copy()
-    else:
-        df_filtered = df_hist.copy()
-    
-    if h_search:
-        df_filtered = df_filtered[df_filtered['상품명'].astype(str).str.contains(h_search, case=False, na=False)]
+    # 데이터 로딩 애니메이션
+    with st.spinner('📡 구글 시트에서 히스토리 기록을 가져오는 중...'):
+        df_hist = load_v6_history_complete()
 
-    # 3. 사장님이 요청하신 8~9대 항목 순서 고정
-    # 저장할 때 넣은 순서: 날짜, 상태, 상품명, 옵션, 공급쳐상품명, 가용재고, 리오더수량, 추가발주수량, 권장발주량
-    view_cols = ["날짜", "상태", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장발주량"]
-    
-    # 실제 시트에 존재하는 컬럼만 선별 (에러 방지)
-    actual_show_cols = [c for c in view_cols if c in df_filtered.columns]
-
-    # 4. 결과 데이터프레임 출력
-    if not df_filtered.empty:
-        st.dataframe(
-            df_filtered[actual_show_cols].sort_values(by="날짜", ascending=False), 
-            use_container_width=True, 
-            hide_index=True,
-            column_config={
-                "가용재고": st.column_config.NumberColumn(format="%d"),
-                "리오더수량": st.column_config.NumberColumn(format="%d"),
-                "추가발주수량": st.column_config.NumberColumn(format="%d"),
-                "권장발주량": st.column_config.NumberColumn(format="%d")
-            }
-        )
+    if not df_hist.empty:
+        # 1. 상단 필터 UI (날짜 선택 및 검색)
+        h_c1, h_c2 = st.columns([1, 2])
         
-        # 5. 📥 현재 조회된 내역 다운로드
-        csv_data_v6 = df_filtered[actual_show_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        st.download_button(
-            label=f"📥 {h_date} 히스토리 다운로드 (CSV)",
-            data=csv_data_v6,
-            file_name=f"발주기록_{h_date}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+        # 한국 시간(KST) 기준 오늘 날짜 설정
+        today_kst = datetime.now(KST).date()
+        h_date = h_c1.date_input("🗓️ 조회 날짜 선택", today_kst, key="v6_final_date_input")
+        h_search = h_c2.text_input("🔍 상품명 검색 (히스토리)", key="v6_final_search_input")
+
+        # 2. 데이터 필터링 로직
+        # '날짜' 컬럼에서 날짜 정보만 추출하여 달력과 비교
+        if '날짜' in df_hist.columns:
+            df_hist['날짜_only'] = pd.to_datetime(df_hist['날짜']).dt.date
+            df_filtered = df_hist[df_hist['날짜_only'] == h_date].copy()
+        else:
+            # 혹시 컬럼명이 다를 경우를 대비한 방어 로직
+            df_filtered = df_hist.copy()
+        
+        # 상품명 검색어 필터링
+        if h_search:
+            df_filtered = df_filtered[df_filtered['상품명'].astype(str).str.contains(h_search, case=False, na=False)]
+
+        # 3. 🎯 사장님이 요청하신 8~9대 항목 순서 고정 표시
+        # 저장 시점의 데이터: 날짜, 상태, 상품명, 옵션, 공급쳐상품명, 가용재고, 리오더수량, 추가발주수량, 권장발주량
+        view_cols = ["날짜", "상태", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장발주량"]
+        
+        # 실제 시트에 존재하는 컬럼만 선별하여 에러 방지
+        actual_show_cols = [c for c in view_cols if c in df_filtered.columns]
+
+        # 4. 결과 출력
+        if not df_filtered.empty:
+            # 최신 기록이 위로 오도록 정렬하여 출력
+            st.dataframe(
+                df_filtered[actual_show_cols].sort_values(by="날짜", ascending=False), 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "가용재고": st.column_config.NumberColumn(format="%d"),
+                    "리오더수량": st.column_config.NumberColumn(format="%d"),
+                    "추가발주수량": st.column_config.NumberColumn(format="%d"),
+                    "권장발주량": st.column_config.NumberColumn(format="%d")
+                }
+            )
+            
+            # 5. 📥 조회된 내역 CSV 다운로드 기능
+            csv_data_v6 = df_filtered[actual_show_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button(
+                label=f"📥 {h_date} 히스토리 다운로드 (엑셀용 CSV)",
+                data=csv_data_v6,
+                file_name=f"발주히스토리_{h_date}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        else:
+            st.info(f"📅 {h_date} 날짜에는 저장된 기록이 없습니다. 날짜를 변경하거나 5단계에서 저장을 먼저 해주세요.")
     else:
-        st.info(f"📅 {h_date} 에 저장된 기록이 없습니다. 날짜를 변경하거나 5단계에서 저장을 먼저 진행해 주세요.")
-else:
-    st.warning("📡 아직 저장된 히스토리 데이터가 없습니다. 5단계에서 '기록 저장' 버튼을 눌러주세요.")
+        st.warning("📡 아직 저장된 히스토리 데이터가 없습니다. 5단계에서 '기록 저장' 버튼을 눌러주세요.")
+
+# --- 6단계 끝 ---
     
 
 # --- [🌙 탭 2: 동대문 사입 관리] ---
