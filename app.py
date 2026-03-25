@@ -47,23 +47,24 @@ with tab1:
 # --- [1단계: 데이터 업로드 구역] ---
 st.subheader("📁 1단계: 데이터 업로드")
 
-# 1. 업로드 박스 (변수명: upload_file)
+# 1. 업로드 박스 (변수명을 'upload_file'로 고정)
 upload_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
 
 # 2. 업로드 데이터만 초기화하는 버튼 (왼쪽 배치)
-# st.columns를 쓰지 않고 바로 만들면 왼쪽으로 붙습니다.
 if st.button("🗑️ 업로드 파일 초기화", key="reset_upload_only"):
-    # 리오더 수량(df_raw)은 건드리지 않고, 업로드 관련 상태만 초기화합니다.
+    # 리오더 수량은 건드리지 않고, 업로드 위젯과 분석 상태만 초기화
     if "main_upload" in st.session_state:
-        del st.session_state["main_upload"] # 업로드 위젯 비우기
+        st.session_state["main_upload"] = None # 위젯 비우기 시도
     
-    st.session_state.analyzed = False # 분석 결과 화면만 숨기기
+    st.session_state.analyzed = False # 분석 화면 숨기기
     st.success("업로드된 파일 정보가 초기화되었습니다. (리오더 수량은 유지됨)")
     st.rerun()
 
 # --- [데이터 처리 시작] ---
+# 바로 여기서 70번 줄 에러가 났던 건데, 이제 이름이 'upload_file'로 똑같아졌습니다!
 if upload_file is not None:
-    # 사장님의 기존 데이터 분석 로직...
+    # 사장님의 기존 데이터 읽기 및 분석 로직이 여기서부터 시작됩니다.
+    # (예: df = pd.read_excel(upload_file) ...)
     pass
 
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
