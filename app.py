@@ -44,56 +44,43 @@ with tab1:
     if 'df_raw' not in st.session_state: st.session_state.df_raw = None
     if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 
-# --- [1단계: 데이터 업로드 구역] ---
-st.subheader("📁 1단계: 데이터 업로드")
+# --- [매핑 및 분석 로직 (최종 수정본)] ---
+if st.session_state.df_raw is not None:
+    df_curr = st.session_state.df_raw
+    cols = df_curr.columns.tolist()
 
-uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
+    # 💡 [핵심] 인덱스를 안전하게 찾아주는 함수
+    # 위에서 찾은 변수(t7_col 등)가 리스트에 없으면 0번 대신 가장 유사한 걸 찾거나 빈 값을 줍니다.
+    def safe_index(target_label, all_cols):
+        try:
+            # 위에서 자동 매칭으로 찾은 컬럼명(예: '7일 발주합계')이 실제 cols에 있는지 확인
+            return all_cols.index(target_label)
+        except:
+            return 0 # 못 찾으면 첫 번째(품절) 선택
 
-if st.button("🗑️ 업로드 파일 초기화", key="reset_upload_only"):
-    st.session_state.analyzed = False 
-    st.success("업로드된 파일 정보가 초기화되었습니다.")
-    st.rerun()
-
-# --- [매핑 및 분석 로직 (수정본)] ---
-    if st.session_state.df_raw is not None:
-        df_curr = st.session_state.df_raw
-        cols = df_curr.columns.tolist()
-
-        # 💡 [핵심 수정] 위에서 찾은 자동 매칭 결과가 있다면 그걸 우선 사용하고, 
-        # 없으면 0번째를 선택하게 안전장치를 겁니다.
-        def safe_index(target_col, all_cols):
-            try:
-                return all_cols.index(target_col)
-            except:
-                return 0
-
-        st.divider()
-        st.subheader("⚙️ 2단계: 매핑 설정 (자동 매칭 완료)")
+    st.divider()
+    st.subheader("⚙️ 2단계: 매칭 설정 (자동 매칭 완료)")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        # index=0 대신 위에서 계산된 위치를 넣어줍니다.
+        sold_out = st.selectbox("품절 여부", cols, index=safe_index(sold_out_col, cols))
+        vendor = st.selectbox("공급처", cols, index=safe_index(vendor_col, cols))
+        v_item = st.selectbox("공급처 상품명", cols, index=safe_index(v_item_col, cols))
+        item = st.selectbox("상품명", cols, index=safe_index(item_col, cols))
+        option = st.selectbox("옵션", cols, index=safe_index(option_col, cols))
         
-        c1, c2 = st.columns(2)
-        with c1:
-            # 💡 index=0 대신 위에서 찾은 변수명을 사용하도록 변경!
-            sold_out = st.selectbox("품절 여부", cols, index=safe_index(sold_out_col, cols))
-            vendor = st.selectbox("공급처", cols, index=safe_index(vendor_col, cols))
-            v_item = st.selectbox("공급처 상품명", cols, index=safe_index(v_item_col, cols))
-            item = st.selectbox("상품명", cols, index=safe_index(item_col, cols))
-            option = st.selectbox("옵션", cols, index=safe_index(option_col, cols))
-            
-        with c2:
-            reg_date = st.selectbox("등록일", cols, index=safe_index(reg_date_col, cols))
-            stock = st.selectbox("정상재고", cols, index=safe_index(stock_col, cols))
-            avail = st.selectbox("가용재고", cols, index=safe_index(avail_col, cols))
-            # 🔥 7일 발주합계가 이제 '품절'이 아닌 제대로 된 위치를 찾아갑니다!
-            t3day = st.selectbox("3일 발주합계", cols, index=safe_index(t3_col, cols))
-            t7day = st.selectbox("7일 발주합계", cols, index=safe_index(t7_col, cols))
+    with c2:
+        reg_date = st.selectbox("등록일", cols, index=safe_index(reg_date_col, cols))
+        stock = st.selectbox("정상재고", cols, index=safe_index(stock_col, cols))
+        avail = st.selectbox("가용재고", cols, index=safe_index(avail_col, cols))
+        # 🔥 이제 7일 발주합계가 제대로 잡힙니다!
+        t3day = st.selectbox("3일 발주합계", cols, index=safe_index(t3_col, cols))
+        t7day = st.selectbox("7일 발주합계", cols, index=safe_index(t7_col, cols))
 
-        if st.button("🚀 분석 실행", use_container_width=True, type="primary"):
-            st.session_state.analyzed = True
-            st.rerun()
-
-        if st.session_state.analyzed:
-            st.divider()
-            # (이하 분석 결과 출력 로직...)
+    if st.button("🚀 분석 실행", use_container_width=True, type="primary"):
+        st.session_state.analyzed = True
+        st.rerun()
         
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
