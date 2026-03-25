@@ -48,7 +48,6 @@ with tab1:
     st.subheader("📁 1단계: 데이터 업로드")
     uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
 
-    # 초기화 버튼: 다시 시작하고 싶을 때 누르세요.
     if st.button("🗑️ 업로드 파일 초기화", key="reset_all"):
         st.session_state.df_raw = None
         st.session_state.analyzed = False 
@@ -57,12 +56,12 @@ with tab1:
 
     if uploaded_file is not None:
         try:
-            # 1. 파일 읽기 (엑셀/CSV 대응)
+            # 1. 파일 읽기
             df_new = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
             df_new.columns = df_new.columns.str.strip()
             all_cols = list(df_new.columns)
 
-            # 2. 자동 컬럼 매칭 함수 (똑똑하게 찾기)
+            # 2. 자동 매칭 (이 부분은 뒤에서 변수 중복을 막기 위해 버튼 클릭 시에만 저장하도록 합니다)
             def find_best_col(targets, options):
                 for opt in options:
                     clean_opt = str(opt).replace(" ", "").upper()
@@ -70,24 +69,25 @@ with tab1:
                         if t.upper() in clean_opt: return opt
                 return options[0] if options else ""
 
-            # 미리 계산해두는 매칭 결과
-            s_col = find_best_col(["품절", "상태"], all_cols)
-            v_col = find_best_col(["공급처", "거래처"], all_cols)
-            vi_col = find_best_col(["공급처상품명", "공급명"], all_cols)
-            i_col = find_best_col(["상품명", "자체상품"], all_cols)
-            o_col = find_best_col(["옵션"], all_cols)
-            st_col = find_best_col(["정상재고", "현재고"], all_cols)
-            a_col = find_best_col(["가용재고", "판매가능"], all_cols)
-            t3_c = find_best_col(["3일", "3D"], all_cols)
-            t7_c = find_best_col(["7일", "7D", "발주합계"], all_cols)
-
             # ---------------------------------------------------------
-            # 💡 [화면 분기점] 분석 전(설정창) / 분석 후(결과창)
+            # ✅ [화면 분기점] 이 부분이 중복 출현을 막는 핵심입니다!
             # ---------------------------------------------------------
             if not st.session_state.get('analyzed'):
-                # --- [2단계: 매핑 설정] ---
+                # 🚀 [A화면] 분석 전: 설정창만 보여줌
                 st.divider()
                 st.subheader("⚙️ 2단계: 매핑 설정")
+                
+                # 매칭 자동 제안
+                s_col = find_best_col(["품절", "상태"], all_cols)
+                v_col = find_best_col(["공급처", "거래처"], all_cols)
+                vi_col = find_best_col(["공급처상품명", "공급명"], all_cols)
+                i_col = find_best_col(["상품명", "자체상품"], all_cols)
+                o_col = find_best_col(["옵션"], all_cols)
+                st_col = find_best_col(["정상재고", "현재고"], all_cols)
+                a_col = find_best_col(["가용재고", "판매가능"], all_cols)
+                t3_c = find_best_col(["3일", "3D"], all_cols)
+                t7_c = find_best_col(["7일", "7D", "발주합계", "1주"], all_cols)
+
                 c1, c2 = st.columns(2)
                 with c1:
                     sel_so = st.selectbox("품절 여부", all_cols, index=all_cols.index(s_col))
@@ -101,56 +101,54 @@ with tab1:
                     sel_t3 = st.selectbox("3일 발주합계", all_cols, index=all_cols.index(t3_c))
                     sel_t7 = st.selectbox("7일 발주합계", all_cols, index=all_cols.index(t7_c))
 
-                # --- [3단계: 분석 설정] ---
                 st.divider()
                 st.subheader("📊 3단계: 분석 파라미터 설정")
                 p1, p2 = st.columns(2)
-                input_lt = p1.number_input("🚚 리드타임 (입고 소요 기간)", min_value=1, value=7)
-                input_ss = p2.number_input("🛡️ 안전재고 (여유 재고)", min_value=0, value=3)
+                input_lt = p1.number_input("🚚 리드타임", min_value=1, value=7)
+                input_ss = p2.number_input("🛡️ 안전재고", min_value=0, value=3)
 
                 if st.button("🚀 데이터 분석 및 계산 실행", use_container_width=True, type="primary"):
-                    st.session_state.analyzed = True
-                    # 선택한 모든 정보를 'params' 주머니에 쏙 넣기
+                    # 버튼을 누르는 순간 모든 정보를 금고(session_state)에 넣고 화면을 전환합니다.
                     st.session_state.params = {
                         'lt': input_lt, 'ss': input_ss,
                         't7': sel_t7, 't3': sel_t3, 'av': sel_av, 'st': sel_st,
                         'so': sel_so, 'vn': sel_vn, 'it': sel_it, 'op': sel_op, 'vi': sel_vi
                     }
                     st.session_state.df_raw = df_new
+                    st.session_state.analyzed = True
                     st.rerun()
 
             else:
-                # --- [4단계: 결과 화면] ---
+                # 🚀 [B화면] 분석 후: 결과창만 보여줌 (2, 3단계는 숨김)
                 st.divider()
-                col_head1, col_head2 = st.columns([5, 1])
-                col_head1.subheader("📋 4단계: 재고 관리 및 발주 결과")
-                if col_head2.button("🔄 설정 다시하기"):
+                h1, h2 = st.columns([5, 1])
+                h1.subheader("📋 4단계: 재고 관리 및 발주 결과")
+                if h2.button("🔄 설정 다시하기"):
                     st.session_state.analyzed = False
                     st.rerun()
 
                 p = st.session_state.params
                 df_work = st.session_state.df_raw.copy()
 
-                # 숫자 변환 및 기본 컬럼 생성
-                if "리오더 수량" not in df_work.columns: df_work["리오더 수량"] = 0
-                if "리오더 입고수량" not in df_work.columns: df_work["리오더 입고수량"] = 0
-                
-                num_cols = [p['st'], p['av'], p['t7'], p['t3'], "리오더 수량"]
+                # 숫자 변환 및 계산
+                num_cols = [p['st'], p['av'], p['t7'], p['t3']]
                 for nc in num_cols:
                     df_work[nc] = pd.to_numeric(df_work[nc], errors='coerce').fillna(0).astype(int)
 
-                # 일판매량 및 권장발주량 계산
+                if "리오더 수량" not in df_work.columns: df_work["리오더 수량"] = 0
+                
+                # 계산 로직
                 v7, v3 = df_work[p['t7']], df_work[p['t3']]
                 df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
                 df_work['권장발주량'] = ((df_work['일판매량'] * (p['lt'] + p['ss'])) - (df_work[p['av']] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
-                # 필터 UI
+                # 검색 및 필터
                 f1, f2, f3 = st.columns([2, 1, 1])
-                search_q = f1.text_input("🔍 상품명 검색", key="search_box")
+                search_q = f1.text_input("🔍 상품명 검색")
                 filter_m = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
                 hist_date = f3.date_input("🗓️ 입고 날짜", datetime.now(KST).date())
 
-                # 필터 적용 로직
+                # 필터 적용
                 if filter_m == "정상만":
                     df_work = df_work[~df_work[p['so']].astype(str).str.contains('품절', na=False)]
                 elif filter_m == "품절만":
@@ -158,27 +156,22 @@ with tab1:
                 if search_q:
                     df_work = df_work[df_work[p['it']].astype(str).str.contains(search_q, case=False, na=False)]
 
-                # 화면 표시용 컬럼명 변경
+                # 화면 표시용 정리
                 df_display = df_work.rename(columns={
                     p['so']:"품절", p['vn']:"공급처", p['it']:"상품명", p['op']:"옵션", p['st']:"정상재고", p['av']:"가용재고"
                 })
+                show_cols = ["품절", "공급처", "상품명", "옵션", "정상재고", "가용재고", "리오더 수량", "일판매량", "권장발주량"]
                 
-                final_cols = ["품절", "공급처", "상품명", "옵션", "정상재고", "가용재고", "리오더 수량", "리오더 입고수량", "일판매량", "권장발주량"]
-                
-                # 데이터 에디터 및 저장 버튼
-                with st.form("final_form"):
-                    edited_df = st.data_editor(df_display[final_cols], use_container_width=True, hide_index=True)
-                    if st.form_submit_button("💾 데이터 저장 및 시트 동기화", use_container_width=True, type="primary"):
-                        # 사장님의 저장 함수 실행
+                with st.form("final_save_form"):
+                    edited_df = st.data_editor(df_display[show_cols], use_container_width=True, hide_index=True)
+                    if st.form_submit_button("💾 구글 시트 저장 및 동기화", use_container_width=True, type="primary"):
                         save_reorder_data(st.session_state.df_raw, p['it'], p['op'])
-                        st.success("✅ 구글 시트 저장 및 동기화 완료!")
+                        st.success("✅ 저스트원 구글 시트에 저장이 완료되었습니다!")
                         time.sleep(1)
                         st.rerun()
 
         except Exception as e:
             st.error(f"⚠️ 오류 발생: {e}")
-    else:
-        st.info("👆 재고 파일을 업로드하시면 관리를 시작할 수 있습니다.")
     
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
