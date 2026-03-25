@@ -24,9 +24,10 @@ def load_reorder_data():
         return pd.DataFrame(ss.sheet1.get_all_records()) if ss else pd.DataFrame()
     except: return pd.DataFrame()
 
-# 3. 세션 상태 관리
+# 3. 세션 상태 관리 (자동 초기화 로직 포함)
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'df_final' not in st.session_state: st.session_state.df_final = None
+if 'last_file_name' not in st.session_state: st.session_state.last_file_name = None
 
 st.title("📦 저스트원 통합 재고 관리 시스템")
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
@@ -36,15 +37,23 @@ with tab1:
     st.subheader("📁 1단계: 엑셀 데이터 업로드")
     up_file = st.file_uploader("파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="up_key")
     
-    # 파일이 올라오면 세션에 저장 (불필요한 메시지 삭제)
+    # [핵심] 새로운 파일이 올라오면 이전 데이터를 자동으로 지우는 로직
     if up_file:
-        if st.session_state.df_raw is None:
-            df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
-            df.columns = df.columns.str.strip()
-            st.session_state.df_raw = df
-            st.rerun()
+        if st.session_state.last_file_name != up_file.name:
+            st.session_state.df_raw = None
+            st.session_state.df_final = None
+            st.session_state.last_file_name = up_file.name
+            
+            # 파일 읽기
+            try:
+                df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
+                df.columns = df.columns.str.strip()
+                st.session_state.df_raw = df
+                st.rerun() # 새 파일 인식 후 화면 갱신
+            except Exception as e:
+                st.error(f"파일 읽기 오류: {e}")
 
-    # --- [2~3단계: 매핑 및 분석 설정 - 업로드 시 즉시 노출] ---
+    # --- [2~3단계: 매핑 및 분석 설정] ---
     if st.session_state.df_raw is not None:
         st.divider()
         st.subheader("🔗 2단계: 컬럼 매핑 설정")
@@ -59,7 +68,7 @@ with tab1:
         st.divider()
         st.subheader("⚙️ 3단계: 데이터 분석 실행")
         if st.button("🚀 분석 시작 (리오더 수치 동기화)", use_container_width=True):
-            with st.spinner("분석 중..."):
+            with st.spinner("구글 시트 연동 중..."):
                 df = st.session_state.df_raw.copy()
                 gs_data = load_reorder_data()
                 if not gs_data.empty:
@@ -69,6 +78,7 @@ with tab1:
                     df['t_o'] = df[sel_opt].astype(str).str.strip()
                     df = pd.merge(df, gs_data[['상품명', '옵션', '리오더 수량']], left_on=['t_n', 't_o'], right_on=['상품명', '옵션'], how='left')
                     df['리오더 수량'] = df['리오더 수량'].fillna(0).astype(int)
+                    df.drop(columns=['상품명_gs', '옵션_gs', 't_n', 't_o'], inplace=True, errors='ignore')
                 else:
                     df['리오더 수량'] = 0
                 
@@ -78,7 +88,7 @@ with tab1:
                 st.session_state.df_final = df
                 st.rerun()
 
-    # --- [4~6단계: 수정 및 저장 - 분석 버튼 클릭 후 노출] ---
+    # --- [4~6단계: 수정 및 저장] ---
     if st.session_state.df_final is not None:
         st.divider()
         st.subheader("📝 4~5단계: 수량 검토 및 수정")
@@ -105,9 +115,11 @@ with tab1:
             except Exception as e:
                 st.error(f"저장 오류: {e}")
 
-    # 화면 초기화
+    # 수동 초기화 버튼
     if st.session_state.df_raw is not None:
-        if st.button("🗑️ 화면 초기화"):
+        st.divider()
+        if st.button("🗑️ 전체 데이터 초기화"):
             st.session_state.df_raw = None
             st.session_state.df_final = None
+            st.session_state.last_file_name = None
             st.rerun()
