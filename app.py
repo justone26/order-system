@@ -133,11 +133,18 @@ with tab1:
     up_file = st.file_uploader("엑셀 파일을 업로드하세요 (업체가 달라도 리오더 수량은 보존됩니다)", type=['xlsx', 'xls', 'csv'], key="up_key")
 
     # [초기화 버튼] 화면상의 분석 데이터를 지웁니다 (시트 데이터는 삭제 안됨)
-    if st.button("🗑️ 화면 데이터 초기화"):
-        # 👇 여기 줄 시작점이 반드시 안으로 들어가야 합니다! (스페이스 4칸)
+    if st.button("🗑️ 화면 데이터 초기화", use_container_width=True):
+        # 1. 모든 세션 상태를 초기 상태로 강제 전환
         st.session_state.df_raw = None
-        st.session_state.analyzed = False
+        st.session_state.analyzed = False  # 👈 이 스위치가 꺼져야 아래 단계들이 사라집니다.
         st.session_state.add_order_dict = {}
+        
+        # 2. 업로드된 파일 정보도 삭제 (필요 시)
+        if "up_key" in st.session_state:
+            del st.session_state["up_key"]
+            
+        # 3. 💡 [가장 중요] 즉시 새로고침 실행
+        # 이 명령어가 실행되어야 코드가 처음부터 다시 읽히면서 2~6단계가 사라집니다.
         st.rerun()
         
     # 2. 💡 [가장 중요] 즉시 새로고침을 명령합니다.
