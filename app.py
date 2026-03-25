@@ -40,110 +40,22 @@ tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리
 with tab1:
     # --- 1단계: 업로드 & 초기화 ---
     st.subheader("📁 1단계: 데이터 업로드")
+    # 변수명을 하나로 통일 (up_file)
     up_file = st.file_uploader("엑셀/CSV 파일 업로드", type=['xlsx', 'xls', 'csv'], key="up_key")
 
     if st.button("🗑️ 초기화 (새로고침)"):
-        for key in list(st.session_state.keys()): del st.session_state[key]
+        for key in list(st.session_state.keys()):
+            if key != "up_key": del st.session_state[key]
+        st.session_state.analyzed = False
+        st.session_state.df_raw = None
         st.rerun()
 
-    if up_file:
-        # 데이터 로드 (한 번만)
-        if st.session_state.df_raw is None:
-            df = pd.read_excel(up_file) if not up_file.name.endswith('.csv') else pd.read_csv(up_file)
-            df.columns = df.columns.str.strip()
-            st.session_state.df_raw = df
-
-        all_cols = list(st.session_state.df_raw.columns)
-
-        # ---------------------------------------------------------
-        # ✅ 핵심: analyzed 상태에 따라 화면을 '완전히' 갈라치기 합니다.
-        # ---------------------------------------------------------
-        if not st.session_state.analyzed:
-            # 🚀 [분석 전] 설정창 (여기서만 2, 3단계가 나옵니다)
-            st.divider()
-            st.subheader("⚙️ 2단계: 매핑 설정")
-            
-            # 자동 찾기 로직
-            def find_c(ts, opts):
-                for o in opts:
-                    c_o = str(o).replace(" ", "").upper()
-                    for t in ts:
-                        if t.upper() in c_o: return o
-                return opts[0]
-            
-            c1, c2 = st.columns(2)
-            with c1:
-                s_so = st.selectbox("품절 여부", all_cols, index=all_cols.index(find_c(["품절", "상태"], all_cols)))
-                s_vn = st.selectbox("공급처", all_cols, index=all_cols.index(find_c(["공급처", "거래처"], all_cols)))
-                s_vi = st.selectbox("공급처 상품명", all_cols, index=all_cols.index(find_c(["공급처상품명", "공급명"], all_cols)))
-                s_it = st.selectbox("상품명", all_cols, index=all_cols.index(find_c(["상품명", "자체상품"], all_cols)))
-                s_op = st.selectbox("옵션", all_cols, index=all_cols.index(find_c(["옵션"], all_cols)))
-            with c2:
-                s_st = st.selectbox("정상재고", all_cols, index=all_cols.index(find_c(["정상재고", "현재고"], all_cols)))
-                s_av = st.selectbox("가용재고", all_cols, index=all_cols.index(find_c(["가용재고", "판매가능"], all_cols)))
-                s_t3 = st.selectbox("3일 합계", all_cols, index=all_cols.index(find_c(["3일", "3D"], all_cols)))
-                s_t7 = st.selectbox("7일 합계", all_cols, index=all_cols.index(find_c(["7일", "7D", "발주합계"], all_cols)))
-
-            st.divider()
-            st.subheader("📊 3단계: 분석 설정")
-            p1, p2 = st.columns(2)
-            v_lt = p1.number_input("🚚 리드타임", 1, 100, 7)
-            v_ss = p2.number_input("🛡️ 안전재고", 0, 100, 3)
-
-            if st.button("🚀 데이터 분석 실행", use_container_width=True, type="primary"):
-                st.session_state.p = {'lt':v_lt, 'ss':v_ss, 'so':s_so, 'vn':s_vn, 'vi':s_vi, 'it':s_it, 'op':s_op, 'st':s_st, 'av':s_av, 't3':s_t3, 't7':s_t7}
-                st.session_state.analyzed = True
-                st.rerun()
-
-        else:
-            # 🚀 [분석 후] 결과창 (여기는 4단계만 나옵니다)
-            st.divider()
-            head1, head2 = st.columns([5, 1])
-            head1.subheader("📋 4단계: 재고 관리 결과")
-            if head2.button("🔄 매핑 다시하기"):
-                st.session_state.analyzed = False
-                st.rerun()
-
-            p = st.session_state.p
-            df_work = st.session_state.df_raw.copy()
-
-            # 숫자 변환
-            for n in [p['st'], p['av'], p['t7'], p['t3']]:
-                df_work[n] = pd.to_numeric(df_work[n], errors='coerce').fillna(0).astype(int)
-            
-            if "리오더 수량" not in df_work.columns: df_work["리오더 수량"] = 0
-            
-            # 계산
-            df_work['일판매량'] = (df_work[p['t7']] / 7 if df_work[p['t7']].sum() > 0 else df_work[p['t3']] / 3).round(0).astype(int)
-            df_work['권장발주량'] = ((df_work['일판매량'] * (p['lt'] + p['ss'])) - (df_work[p['av']] + df_work['리오더 수량'])).clip(lower=0).astype(int)
-
-            # 필터
-            f1, f2, f3 = st.columns([2, 1, 1])
-            sq = f1.text_input("🔍 검색")
-            fm = f2.selectbox("필터", ["전체", "정상", "품절"], index=1)
-            
-            if fm == "정상": df_work = df_work[~df_work[p['so']].astype(str).str.contains('품절', na=False)]
-            elif fm == "품절": df_work = df_work[df_work[p['so']].astype(str).str.contains('품절', na=False)]
-            if sq: df_work = df_work[df_work[p['it']].astype(str).str.contains(sq, case=False)]
-
-            disp_df = df_work.rename(columns={p['so']:"품절", p['vn']:"공급처", p['it']:"상품명", p['op']:"옵션", p['st']:"정상재고", p['av']:"가용재고"})
-            cols = ["품절", "공급처", "상품명", "옵션", "정상재고", "가용재고", "리오더 수량", "일판매량", "권장발주량"]
-
-            with st.form("final_form"):
-                ed_df = st.data_editor(disp_df[cols], use_container_width=True, hide_index=True)
-                if st.form_submit_button("💾 구글 시트 저장"):
-                    save_reorder_data(st.session_state.df_raw, p['it'], p['op'])
-                    st.success("✅ 저장 완료!")
-                    time.sleep(1)
-                    st.rerun()
-
-    
-# --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
-    if uploaded_file is not None:
-        if st.session_state.get('last_fn') != uploaded_file.name:
-            with st.spinner(f'{uploaded_file.name} 데이터를 처리 중입니다...'):
+    # --- [핵심] 업체별 데이터 누적 및 로드 로직 ---
+    if up_file is not None:
+        if st.session_state.get('last_fn') != up_file.name:
+            with st.spinner(f'{up_file.name} 데이터를 처리 중입니다...'):
                 # 1. 새 파일 읽기
-                df_new = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
+                df_new = pd.read_excel(up_file) if not up_file.name.endswith('.csv') else pd.read_csv(up_file)
                 df_new.columns = df_new.columns.str.strip()
                 df_new = df_new.loc[:, ~df_new.columns.duplicated()]
 
@@ -170,148 +82,123 @@ with tab1:
                 except:
                     if '리오더 수량' not in df_new.columns: df_new['리오더 수량'] = 0
 
-                # 3. [데이터 누적] 기존 데이터가 있으면 합치기
+                # 3. [데이터 누적]
                 if st.session_state.df_raw is not None:
-                    # 기존 데이터 + 새 데이터 합치기
                     st.session_state.df_raw = pd.concat([st.session_state.df_raw, df_new], ignore_index=True)
-                    # 중복 제거 (상품명/옵션 기준)
-                    target_n = next((c for c in st.session_state.df_raw.columns if '상품명' in c), st.session_state.df_raw.columns[0])
-                    target_o = next((c for c in st.session_state.df_raw.columns if '옵션' in c), st.session_state.df_raw.columns[1])
-                    st.session_state.df_raw.drop_duplicates(subset=[target_n, target_o], keep='last', inplace=True)
-                    st.success(f"✅ 기존 데이터에 {uploaded_file.name} 업체가 추가되었습니다!")
+                    t_n = next((c for c in st.session_state.df_raw.columns if '상품명' in c), st.session_state.df_raw.columns[0])
+                    t_o = next((c for c in st.session_state.df_raw.columns if '옵션' in c), st.session_state.df_raw.columns[1])
+                    st.session_state.df_raw.drop_duplicates(subset=[t_n, t_o], keep='last', inplace=True)
+                    st.success(f"✅ 기존 데이터에 {up_file.name} 업체가 추가되었습니다!")
                 else:
                     st.session_state.df_raw = df_new
-                    st.success(f"✅ {uploaded_file.name} 데이터가 로드되었습니다.")
+                    st.success(f"✅ {up_file.name} 데이터가 로드되었습니다.")
 
-                st.session_state.last_fn = uploaded_file.name
+                st.session_state.last_fn = up_file.name
                 st.session_state.analyzed = False
                 st.rerun()
 
-    # --- [매핑 및 분석 로직] ---
+    # --- [매핑 및 분석 결과 표시 화면] ---
     if st.session_state.df_raw is not None:
-        df_curr = st.session_state.df_raw
-        cols = df_curr.columns.tolist()
+        all_cols = list(st.session_state.df_raw.columns)
 
-        st.divider()
-        st.subheader("⚙️ 2단계: 매핑 설정")
-        c1, c2 = st.columns(2)
-        with c1:
-            sold_out = st.selectbox("품절 여부", cols, index=0)
-            vendor = st.selectbox("공급처", cols, index=0)
-            v_item = st.selectbox("공급처 상품명", cols, index=0)
-            item = st.selectbox("상품명", cols, index=0)
-            option = st.selectbox("옵션", cols, index=0)
-        with c2:
-            reg_date = st.selectbox("등록일", cols, index=0)
-            stock = st.selectbox("정상재고", cols, index=0)
-            avail = st.selectbox("가용재고", cols, index=0)
-            t3day = st.selectbox("3일 발주합계", cols, index=0)
-            t7day = st.selectbox("7일 발주합계", cols, index=0)
-
-        if st.button("🚀 분석 실행", use_container_width=True, type="primary"):
-            st.session_state.analyzed = True
-            st.rerun()
-
-        if st.session_state.analyzed:
+        if not st.session_state.analyzed:
+            # 🚀 [분석 전] 설정창
             st.divider()
-    
-# --- [결과 화면 및 4단계 로직 시작] ---
-        # 아래 if문 다음 줄부터는 무조건 '들여쓰기(Tab)'가 되어야 합니다.
-        if st.session_state.analyzed and st.session_state.df_raw is not None:
-            st.divider()
-            st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
+            st.subheader("⚙️ 2단계: 매핑 설정")
+            
+            def find_c(ts, opts):
+                for o in opts:
+                    c_o = str(o).replace(" ", "").upper()
+                    for t in ts:
+                        if t.upper() in c_o: return o
+                return opts[0]
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                s_so = st.selectbox("품절 여부", all_cols, index=all_cols.index(find_c(["품절", "상태"], all_cols)))
+                s_vn = st.selectbox("공급처", all_cols, index=all_cols.index(find_c(["공급처", "거래처"], all_cols)))
+                s_vi = st.selectbox("공급처 상품명", all_cols, index=all_cols.index(find_c(["공급처상품명", "공급명"], all_cols)))
+                s_it = st.selectbox("상품명", all_cols, index=all_cols.index(find_c(["상품명", "자체상품"], all_cols)))
+                s_op = st.selectbox("옵션", all_cols, index=all_cols.index(find_c(["옵션"], all_cols)))
+            with c2:
+                # 등록일 등 사장님이 추가하신 컬럼 대응
+                s_st = st.selectbox("정상재고", all_cols, index=all_cols.index(find_c(["정상재고", "현재고"], all_cols)))
+                s_av = st.selectbox("가용재고", all_cols, index=all_cols.index(find_c(["가용재고", "판매가능"], all_cols)))
+                s_t3 = st.selectbox("3일 합계", all_cols, index=all_cols.index(find_c(["3일", "3D"], all_cols)))
+                s_t7 = st.selectbox("7일 합계", all_cols, index=all_cols.index(find_c(["7일", "7D", "발주합계"], all_cols)))
 
-            # 1. 데이터 복사 및 수치형 변환
+            st.divider()
+            st.subheader("📊 3단계: 분석 설정")
+            p1, p2 = st.columns(2)
+            v_lt = p1.number_input("🚚 리드타임", 1, 100, 3)
+            v_ss = p2.number_input("🛡️ 안전재고", 0, 100, 2)
+
+            if st.button("🚀 데이터 분석 실행", use_container_width=True, type="primary"):
+                st.session_state.p = {'lt':v_lt, 'ss':v_ss, 'so':s_so, 'vn':s_vn, 'vi':s_vi, 'it':s_it, 'op':s_op, 'st':s_st, 'av':s_av, 't3':s_t3, 't7':s_t7}
+                st.session_state.analyzed = True
+                st.rerun()
+
+        else:
+            # 🚀 [분석 후] 4단계 결과 화면
+            st.divider()
+            head1, head2 = st.columns([5, 1])
+            head1.subheader("📋 4단계: 재고 관리 결과")
+            if head2.button("🔄 매핑 다시하기"):
+                st.session_state.analyzed = False
+                st.rerun()
+
+            p = st.session_state.p
             df_work = st.session_state.df_raw.copy()
 
-            # 수치 데이터 컬럼 변환 (에러 방지용 안전장치)
-            num_cols = [stock, avail, "리오더 수량", t7day, t3day]
-            for c in num_cols:
-                if c in df_work.columns:
-                    df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
-
-            # 리오더 입고수량 컬럼이 없으면 0으로 생성
-            if "리오더 입고수량" not in df_work.columns:
-                df_work["리오더 입고수량"] = 0
-
-            # 2. [계산식] 일판매량 및 권장발주량 (lt=리드타임, ss=안전재고)
-            lt = 3
-            ss = 2 
-            v7 = df_work[t7day]
-            v3 = df_work[t3day]
-
-            # 일판매량: 7일 우선, 데이터 없으면 3일 기준 반올림
-            df_work['일판매량'] = (v7 / 7 if v7.sum() > 0 else v3 / 3).round(0).astype(int)
-
-            # 권장발주량 계산
-            df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
-            df_work['3일발주합계'] = df_work[t3day]
-
-            # 3. 상단 UI 및 필터
-            f_c1, f_c2, f_c3 = st.columns([2, 1, 1])
-            search_q = f_c1.text_input("🔍 상품명 검색", key="search_v4_input_final_v2")
-            filter_m = f_c2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1, key="filter_v4_select_final_v2")
+            # 숫자 변환
+            num_targets = [p['st'], p['av'], p['t7'], p['t3']]
+            for n in num_targets:
+                df_work[n] = pd.to_numeric(df_work[n], errors='coerce').fillna(0).astype(int)
             
-            # 한국 시간(KST)이 적용된 오늘 날짜
-            hist_date_4 = f_c3.date_input("🗓️ 입고 매핑 날짜", datetime.now(KST).date(), key="date_v4_input_final_v2")
+            if "리오더 수량" not in df_work.columns: df_work["리오더 수량"] = 0
+            if "리오더 입고수량" not in df_work.columns: df_work["리오더 입고수량"] = 0
+            
+            # 계산
+            df_work['일판매량'] = (df_work[p['t7']] / 7 if df_work[p['t7']].sum() > 0 else df_work[p['t3']] / 3).round(0).astype(int)
+            df_work['권장발주량'] = ((df_work['일판매량'] * (p['lt'] + p['ss'])) - (df_work[p['av']] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
-            # 필터 적용 로직
-            if filter_m == "정상만": 
-                df_work = df_work[~df_work[sold_out].astype(str).str.contains('품절', na=False)]
-            elif filter_m == "품절만": 
-                df_work = df_work[df_work[sold_out].astype(str).str.contains('품절', na=False)]
-            if search_q: 
-                df_work = df_work[df_work[item].astype(str).str.contains(search_q, case=False, na=False)]
+            # 필터/UI
+            f1, f2, f3 = st.columns([2, 1, 1])
+            sq = f1.text_input("🔍 상품명 검색")
+            fm = f2.selectbox("품절 필터", ["전체보기", "정상만", "품절만"], index=1)
+            hist_date = f3.date_input("🗓️ 입고 매핑 날짜", datetime.now(KST).date())
+            
+            if fm == "정상만": df_work = df_work[~df_work[p['so']].astype(str).str.contains('품절', na=False)]
+            elif fm == "품절만": df_work = df_work[df_work[p['so']].astype(str).str.contains('품절', na=False)]
+            if sq: df_work = df_work[df_work[p['it']].astype(str).str.contains(sq, case=False, na=False)]
 
-            # 🎯 표시용 컬럼명 정리 (사장님이 찍어주신 순서)
-            df_display = df_work.rename(columns={
-                sold_out: "품절", vendor: "공급쳐", v_item: "공급쳐 상품명",
-                item: "상품명", option: "옵션", stock: "정상재고", avail: "가용재고"
-            })
-
-            final_cols = [
-                "품절", "공급쳐", "상품명", "옵션", "공급쳐 상품명", 
-                "정상재고", "가용재고", "리오더 수량", "리오더 입고수량", 
-                "3일발주합계", "일판매량", "권장발주량"
-            ]
-            actual_final_cols = [c for c in final_cols if c in df_display.columns]
-
-            # 4. 저장 폼 및 차감 로직
-            with st.form("form_step_4_reorder_only_fix"):
-                # 데이터를 편집할 수 있는 에디터 실행
-                edited_v4 = st.data_editor(df_display[actual_final_cols], use_container_width=True, key="editor_v4_reorder_fix", hide_index=True)
+            # 사장님이 원하시는 컬럼 순서로 정리
+            df_disp = df_work.rename(columns={p['so']:"품절", p['vn']:"공급쳐", p['vi']:"공급쳐 상품명", p['it']:"상품명", p['op']:"옵션", p['st']:"정상재고", p['av']:"가용재고"})
+            final_cols = ["품절", "공급쳐", "상품명", "옵션", "공급쳐 상품명", "정상재고", "가용재고", "리오더 수량", "리오더 입고수량", "일판매량", "권장발주량"]
+            
+            with st.form("form_step_4_final"):
+                edited_v4 = st.data_editor(df_disp[final_cols], use_container_width=True, hide_index=True, key="editor_final")
                 submit_v4 = st.form_submit_button("💾 입고량 반영 및 저장 (구글 시트 동기화)", use_container_width=True, type="primary")
                 
                 if submit_v4:
-                    with st.spinner('📡 리오더 수량을 차감하고 구글 시트에 실시간 저장 중입니다...'):
-                        # 변경된 내용(edits) 추출
-                        edits = st.session_state["editor_v4_reorder_fix"].get("edited_rows", {})
-                        
+                    with st.spinner('📡 데이터 저장 및 리오더 차감 중...'):
+                        edits = st.session_state["editor_final"].get("edited_rows", {})
                         if edits:
                             for r_idx_str, change in edits.items():
-                                # 현재 화면의 인덱스를 실제 데이터 인덱스로 변환
                                 orig_idx = df_work.index[int(r_idx_str)]
-                                
-                                # 1) 리오더 수량을 직접 숫자로 수정한 경우
+                                # 1) 리오더 수량 직접 수정
                                 if "리오더 수량" in change:
                                     st.session_state.df_raw.at[orig_idx, "리오더 수량"] = int(change["리오더 수량"])
-                                
-                                # 2) 리오더 입고수량을 입력한 경우 (기존 리오더 수량에서 차감)
+                                # 2) 입고수량 입력 시 차감 로직
                                 if "리오더 입고수량" in change:
                                     in_qty = int(change["리오더 입고수량"])
-                                    if in_qty > 0:
-                                        curr_val = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
-                                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr_val - in_qty)
+                                    curr_val = int(st.session_state.df_raw.at[orig_idx, "리오더 수량"])
+                                    st.session_state.df_raw.at[orig_idx, "리오더 수량"] = max(0, curr_val - in_qty)
 
-                            # --- [유실 방지 핵심] ---
-                            # 수정이 완료된 즉시 구글 시트의 메인 탭에 덮어쓰기 합니다.
-                            save_reorder_data(st.session_state.df_raw, item, option)
-                            
-                            st.success("✅ 리오더 수량이 안전하게 저장되었습니다!")
+                            save_reorder_data(st.session_state.df_raw, p['it'], p['op'])
+                            st.success("✅ 저장 완료!")
                             time.sleep(1)
                             st.rerun()
-                        else:
-                            st.warning("수정된 내용이 없습니다.")
                             
 # --- [5단계: 최종 발주 리스트 요약 - 저장 및 엑셀 버튼 복구] ---
         # 4단계와 마찬가지로 분석이 완료된 상태에서만 실행되도록 보호합니다.
