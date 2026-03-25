@@ -129,35 +129,37 @@ with tab1:
     # --- 1단계: 데이터 업로드 & 보존 로직 ---
     st.subheader("📁 1단계: 데이터 업로드")
     
-    # 1. 파일 업로드
-    up_file = st.file_uploader("엑셀 파일을 업로드하세요 (업체가 달라도 리오더 수량은 보존됩니다)", type=['xlsx', 'xls', 'csv'], key="up_key")
+    # 1. 파일 업로드 (key="up_key" 유지)
+    up_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls', 'csv'], key="up_key")
 
-    # [초기화 버튼] 화면상의 분석 데이터를 지웁니다 (시트 데이터는 삭제 안됨)
+    # [초기화 버튼]
     if st.button("🗑️ 화면 데이터 초기화", use_container_width=True):
-        # 1. 모든 세션 상태를 초기 상태로 강제 전환
         st.session_state.df_raw = None
-        st.session_state.analyzed = False  # 👈 이 스위치가 꺼져야 아래 단계들이 사라집니다.
+        st.session_state.analyzed = False 
         st.session_state.add_order_dict = {}
         
-        # 2. 업로드된 파일 정보도 삭제 (필요 시)
+        # 업로드 위젯 초기화
         if "up_key" in st.session_state:
-            del st.session_state["up_key"]
+            st.session_state.up_key = None
             
-        # 3. 💡 [가장 중요] 즉시 새로고침 실행
-        # 이 명령어가 실행되어야 코드가 처음부터 다시 읽히면서 2~6단계가 사라집니다.
-        st.rerun()
-        
-    # 2. 💡 [가장 중요] 즉시 새로고침을 명령합니다.
-    # 이 코드가 있어야 아래쪽 4, 5단계 코드를 읽기 전에 화면을 싹 치웁니다.
-    st.rerun()
-    
-    # 2. 파일이 올라오면 실행되는 로직
-    if up_file is not None:
-        # 파일 읽기
-        if up_file.name.endswith('.csv'):
-            df_new = pd.read_csv(up_file)
-        else:
-            df_new = pd.read_excel(up_file)
+        st.rerun() # 버튼 눌렀을 때만 딱 한 번 새로고침!
+
+    # ---------------------------------------------------------
+    # 📍 무한 로딩 방지: 파일이 있고, 아직 분석 전일 때만 실행
+    # ---------------------------------------------------------
+    if up_file is not None and not st.session_state.get('analyzed', False):
+        with st.spinner('📡 기존 데이터를 동기화하는 중...'):
+            try:
+                # 파일 읽기
+                if up_file.name.endswith('.csv'):
+                    df_new = pd.read_csv(up_file)
+                else:
+                    df_new = pd.read_excel(up_file)
+
+                # 기존 리오더 수량 불러오기 (이미 만든 함수 사용)
+                existing_reorder_df = load_reorder_data() 
+                
+                if existing_reorder_df is not None and not existing_reorder_df.empty:
 
         # ---------------------------------------------------------
         # 📍 [핵심] 구글 시트에서 기존 리오더 수량 동기화 (데이터 보존)
