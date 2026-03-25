@@ -107,78 +107,63 @@ if uploaded_file is not None:
             # 💡 이제 7일 발주합계가 품절이 아닌 제 자리를 찾아갑니다!
             t7day = st.selectbox("7일 발주합계", all_cols, index=all_cols.index(t7_c))
 
-   # --- [3단계: 분석 설정 (리드타임, 안전재고)] ---
+ # --- [3단계: 분석 설정] ---
         st.divider()
         st.subheader("📊 3단계: 분석 파라미터 설정")
-        
         p1, p2 = st.columns(2)
         with p1:
-            # 리드타임 설정 (기본값 7)
-            lead_time = st.number_input("🚚 리드타임 (입고 소요 기간)", min_value=1, value=7, step=1, help="주문 후 입고까지 걸리는 평균 일수입니다.")
+            lead_time = st.number_input("🚚 리드타임", min_value=1, value=7)
         with p2:
-            # 안전재고 설정 (기본값 3)
-            safety_stock_days = st.number_input("🛡️ 안전재고 (보유 일수)", min_value=0, value=3, step=1, help="품절 방지를 위해 추가로 보유할 재고 일수입니다.")
+            safety_stock_days = st.number_input("🛡️ 안전재고", min_value=0, value=3)
 
-        # --- [최종 분석 실행 버튼] ---
-        st.write("") # 간격 띄우기
+        # 💡 [핵심 수정] 버튼을 누르면 'analyzed' 상태를 금고(session_state)에 저장
         if st.button("🚀 데이터 분석 및 발주 계산 실행", use_container_width=True, type="primary"):
-            # 선택된 컬럼명들을 세션 상태에 저장 (나중 계산을 위해)
-            st.session_state.mapping = {
-                'sold_out': sold_out, 'vendor': vendor, 'v_item': v_item,
-                'item': item, 'option': option, 'reg_date': reg_date,
-                'stock': stock, 'avail': avail, 't3day': t3day, 't7day': t7day,
-                'lead_time': lead_time, 'safety_stock_days': safety_stock_days
+            st.session_state.analyzed = True  # 버튼을 떼도 이 값은 유지됨
+            # 계산에 필요한 값들도 금고에 저장
+            st.session_state.params = {
+                'lt': lead_time, 
+                'ss': safety_stock_days,
+                't7': t7day,
+                'av': avail,
+                'vn': vendor,
+                'it': item,
+                'op': option
             }
-            st.session_state.df_raw = df_new
-            st.session_state.analyzed = True
-            st.success("✅ 분석 설정이 완료되었습니다! 아래에서 결과를 확인하세요.")
             st.rerun()
 
-    except Exception as e:
-        st.error(f"처리 중 오류 발생: {e}")
+        # ---------------------------------------------------------
+        # 🔥 [4~5단계] '금고'에 분석 완료 신호가 있을 때만 실행
+        # ---------------------------------------------------------
+        if st.session_state.get('analyzed'):
+            try:
+                st.divider()
+                st.subheader("📋 4단계: 발주 계산 결과")
+                
+                # 금고에서 값 꺼내오기
+                p = st.session_state.params
+                df_final = df_new.copy() 
+                
+                # 계산 로직 (숫자로 변환 후 계산)
+                sales_7d = pd.to_numeric(df_final[p['t7']], errors='coerce').fillna(0)
+                stock_av = pd.to_numeric(df_final[p['av']], errors='coerce').fillna(0)
+                
+                df_final['7일평균판매'] = sales_7d / 7
+                df_final['필요재고'] = df_final['7일평균판매'] * (p['lt'] + p['ss'])
+                df_final['권장발주량'] = (df_final['필요재고'] - stock_av).clip(lower=0).round(0)
 
-else:
-    # 💡 파일을 올리기 전에는 이 안내문만 나옵니다.
-    st.info("👆 위에서 엑셀 파일을 먼저 업로드해 주세요. 그래야 분석이 시작됩니다.")
+                # 결과 출력
+                display_cols = [p['vn'], p['it'], p['op'], p['av'], p['t7'], '권장발주량']
+                st.dataframe(df_final[display_cols], use_container_width=True)
 
-    # 💡 4~5단계: 분석 실행 버튼을 눌렀을 때만 나타나는 구역
-    if st.session_state.get('analyzed'):
-        try:
-            st.divider()
-            st.subheader("📋 4단계: 발주 계산 결과")
-            
-            # 계산을 위한 매핑 데이터 준비
-            df_final = df_new.copy() 
-            
-            # [계산 예시] 사장님 환경에 맞게 컬럼명 매칭
-            # (t7day, avail 등은 위에서 selectbox로 선택된 변수들입니다)
-            df_final['7일평균판매'] = pd.to_numeric(df_final[t7day], errors='coerce').fillna(0) / 7
-            df_final['필요재고'] = df_final['7일평균판매'] * (lead_time + safety_stock_days)
-            df_final['권장발주량'] = (df_final['필요재고'] - pd.to_numeric(df_final[avail], errors='coerce').fillna(0)).clip(lower=0).round(0)
+                # --- [5단계: 다운로드] ---
+                st.divider()
+                st.subheader("💾 5단계: 결과 저장")
+                
+                csv = df_final.to_csv(index=False).encode('utf-8-sig')
+                st.download_button("📥 분석 결과 다운로드 (CSV)", data=csv, file_name="result.csv", mime="text/csv")
 
-            # 결과 화면 출력
-            display_cols = [vendor, item, option, avail, t7day, '권장발주량']
-            st.dataframe(df_final[display_cols], use_container_width=True)
-
-            # --- [5단계: 데이터 저장 및 내보내기] ---
-            st.divider()
-            st.subheader("💾 5단계: 분석 결과 저장")
-            
-            # 엑셀 파일로 변환하여 다운로드 제공
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_final.to_excel(writer, index=False, sheet_name='발주계산결과')
-            
-            st.download_button(
-                label="📥 분석 결과 엑셀 다운로드",
-                data=output.getvalue(),
-                file_name=f"발주계산_{uploaded_file.name}",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-        except Exception as e:
-            st.error(f"결과 출력 중 오류가 발생했습니다: {e}")
-            st.info("매핑 설정(2단계)에서 숫자가 포함된 컬럼이 정확히 선택되었는지 확인해 주세요.")
+            except Exception as e:
+                st.error(f"결과 출력 중 오류: {e}")
             
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
