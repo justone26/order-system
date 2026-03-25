@@ -258,7 +258,7 @@ if st.session_state.analyzed and st.session_state.p:
                 "일판매량": st.column_config.NumberColumn(format="%d", alignment="left"),
                 "권장발주량": st.column_config.NumberColumn(format="%d", alignment="left")
             }
-         }
+         )
             
         if st.form_submit_button("💾 입고량 반영 및 데이터 저장", use_container_width=True, type="primary"):
             edits = st.session_state["editor_v4_final"].get("edited_rows", {})
@@ -340,7 +340,7 @@ if st.session_state.analyzed and st.session_state.p:
                 "추가발주수량": st.column_config.NumberColumn(format="%d", alignment="left"),
                 "권장발주량": st.column_config.NumberColumn(format="%d", alignment="left")
             }
-        }
+        )
         if st.form_submit_button("✅ 수량 확정 및 리오더 반영", use_container_width=True, type="primary"):
             edits_5 = st.session_state["editor_v5_final"].get("edited_rows", {})
             if edits_5:
