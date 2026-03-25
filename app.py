@@ -47,22 +47,26 @@ with tab1:
 # --- [1단계: 데이터 업로드 구역] ---
 st.subheader("📁 1단계: 데이터 업로드")
 
-# 1. 업로드 박스를 먼저 배치 (변수명은 upload_file로 통일)
+# 1. 업로드 박스 (변수명: upload_file)
 upload_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
 
-# 2. 버튼을 바로 아래 배치 (컬럼 없이 그냥 쓰면 왼쪽으로 붙습니다)
-# 버튼 크기가 너무 크면 use_container_width를 False로 하거나 너비를 조절하면 됩니다.
-if st.button("🔄 전체 데이터 초기화", key="reset_btn"):
-    st.session_state.clear()
-    st.success("데이터가 초기화되었습니다.")
+# 2. 업로드 데이터만 초기화하는 버튼 (왼쪽 배치)
+# st.columns를 쓰지 않고 바로 만들면 왼쪽으로 붙습니다.
+if st.button("🗑️ 업로드 파일 초기화", key="reset_upload_only"):
+    # 리오더 수량(df_raw)은 건드리지 않고, 업로드 관련 상태만 초기화합니다.
+    if "main_upload" in st.session_state:
+        del st.session_state["main_upload"] # 업로드 위젯 비우기
+    
+    st.session_state.analyzed = False # 분석 결과 화면만 숨기기
+    st.success("업로드된 파일 정보가 초기화되었습니다. (리오더 수량은 유지됨)")
     st.rerun()
 
 # --- [데이터 처리 시작] ---
 if upload_file is not None:
-    # 사장님의 기존 데이터 읽기 로직...
+    # 사장님의 기존 데이터 분석 로직...
     pass
 
-    # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
+# --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
         if st.session_state.get('last_fn') != uploaded_file.name:
             with st.spinner(f'{uploaded_file.name} 데이터를 처리 중입니다...'):
