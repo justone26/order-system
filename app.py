@@ -49,22 +49,23 @@ st.subheader("📁 1단계: 데이터 업로드")
 
 uploaded_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
 
-# 초기화 버튼 (필요 시)
+# 💡 [초기화 버튼] 이걸 누르면 화면이 깨끗하게 비워집니다.
 if st.button("🗑️ 업로드 파일 초기화", key="reset_upload_only"):
+    st.session_state.df_raw = None
     st.session_state.analyzed = False 
     st.rerun()
 
 # ---------------------------------------------------------
-# 🔥 [핵심] 여기서부터는 "파일이 올라왔을 때만" 실행됩니다!
+# 🔥 [핵심] 파일이 "실제로" 올라왔을 때만 아래 내용이 실행됩니다!
 # ---------------------------------------------------------
 if uploaded_file is not None:
-    # 1. 파일 읽기
     try:
+        # 1. 파일 읽기 및 컬럼 정리
         df_new = pd.read_excel(uploaded_file) if not uploaded_file.name.endswith('.csv') else pd.read_csv(uploaded_file)
         df_new.columns = df_new.columns.str.strip()
         all_cols = list(df_new.columns)
 
-        # 2. 자동 매칭 함수 및 변수 설정 (여기서 t7_col 등을 다 찾습니다)
+        # 2. 자동 매칭 함수 (7일 발주합계 등 똑똑하게 찾기)
         def find_best_col(targets, options):
             for opt in options:
                 clean_opt = str(opt).replace(" ", "").upper()
@@ -72,25 +73,38 @@ if uploaded_file is not None:
                     if t.upper() in clean_opt: return opt
             return options[0] if options else ""
 
-        # 항목별 자동 매칭
+        # 항목별 자동 매칭 결과 미리 계산
         s_col = find_best_col(["품절", "상태"], all_cols)
         v_col = find_best_col(["공급처", "거래처"], all_cols)
-        vi_col = find_best_col(["공급처상품명"], all_cols)
-        i_col = find_best_col(["상품명"], all_cols)
+        vi_col = find_best_col(["공급처상품명", "공급명"], all_cols)
+        i_col = find_best_col(["상품명", "자체상품"], all_cols)
         o_col = find_best_col(["옵션"], all_cols)
         r_col = find_best_col(["등록일"], all_cols)
-        st_col = find_best_col(["정상재고"], all_cols)
-        a_col = find_best_col(["가용재고"], all_cols)
-        t3_c = find_best_col(["3일", "3DAY"], all_cols)
-        t7_c = find_best_col(["7일", "7DAY", "7D", "일주일", "발주합계"], all_cols)
+        st_col = find_best_col(["정상재고", "현재고"], all_cols)
+        a_col = find_best_col(["가용재고", "판매가능"], all_cols)
+        t3_c = find_best_col(["3일", "3DAY", "3D"], all_cols)
+        # 🔥 7일 발주합계 후보군을 넉넉히 넣었습니다.
+        t7_c = find_best_col(["7일", "7DAY", "7D", "발주합계", "일주일"], all_cols)
 
-        # 3. 2단계 매핑 UI 출력
+        # 3. 2단계 UI 출력 (파일이 있을 때만 화면에 나타남)
         st.divider()
         st.subheader("⚙️ 2단계: 매핑 설정")
         c1, c2 = st.columns(2)
+        
         with c1:
+            # index=all_cols.index(...) 코드가 자동 선택을 담당합니다.
             sold_out = st.selectbox("품절 여부", all_cols, index=all_cols.index(s_col))
-            # ... 나머지 selectbox들도 동일하게 index=... 적용 ...
+            vendor = st.selectbox("공급처", all_cols, index=all_cols.index(v_col))
+            v_item = st.selectbox("공급처 상품명", all_cols, index=all_cols.index(vi_col))
+            item = st.selectbox("상품명", all_cols, index=all_cols.index(i_col))
+            option = st.selectbox("옵션", all_cols, index=all_cols.index(o_col))
+            
+        with c2:
+            reg_date = st.selectbox("등록일", all_cols, index=all_cols.index(r_col))
+            stock = st.selectbox("정상재고", all_cols, index=all_cols.index(st_col))
+            avail = st.selectbox("가용재고", all_cols, index=all_cols.index(a_col))
+            t3day = st.selectbox("3일 발주합계", all_cols, index=all_cols.index(t3_c))
+            # 💡 이제 7일 발주합계가 품절이 아닌 제 자리를 찾아갑니다!
             t7day = st.selectbox("7일 발주합계", all_cols, index=all_cols.index(t7_c))
 
         # 4. 분석 실행 버튼
@@ -100,10 +114,10 @@ if uploaded_file is not None:
             st.rerun()
 
     except Exception as e:
-        st.error(f"파일 처리 중 오류: {e}")
+        st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
 
 else:
-    # 💡 파일을 아직 안 올렸을 때 보여줄 메시지
+    # 💡 파일을 올리기 전에는 이 안내문만 나옵니다.
     st.info("👆 위에서 엑셀 파일을 먼저 업로드해 주세요. 그래야 분석이 시작됩니다.")
         
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
