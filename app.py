@@ -47,26 +47,30 @@ with tab1:
 # --- [1단계: 데이터 업로드 구역] ---
 st.subheader("📁 1단계: 데이터 업로드")
 
-# 1. 업로드 박스 (이름을 'upload_file'로 지었습니다)
+# 1. 업로드 박스 (이름을 'upload_file'로 통일했습니다)
 upload_file = st.file_uploader("엑셀/CSV 파일을 선택하세요", type=['xlsx', 'xls', 'csv'], key="main_upload")
 
 # 2. 업로드 파일만 초기화하는 버튼 (왼쪽 배치)
 if st.button("🗑️ 업로드 파일 초기화", key="reset_upload_only"):
-    # 리오더 수량은 건드리지 않고, 업로드 위젯과 분석 상태만 초기화
+    # 리오더 수량은 건드리지 않고, 업로드 상태만 초기화
     st.session_state.analyzed = False 
-    # 주의: 세션에서 직접 파일을 지우는 것은 key를 통해 제어되므로 rerun만으로도 충분합니다.
     st.success("업로드된 파일 정보가 초기화되었습니다. (리오더 수량은 유지됨)")
     st.rerun()
 
 # --- [데이터 처리 시작] ---
-# 💡 여기서 에러가 났던 겁니다! 이름을 'upload_file'로 똑같이 맞춰줬습니다.
+# 💡 에러가 났던 72번 줄입니다. 이름을 'upload_file'로 맞췄습니다.
 if upload_file is not None:
-    # 만약 아래쪽에 'df = pd.read_excel(uploaded_file)' 처럼 
-    # 'ed'가 붙은 이름이 또 있다면, 그것도 'upload_file'로 고쳐주셔야 합니다!
-    
-    # 예시:
-    # df = pd.read_excel(upload_file) 
-    pass
+    # ⚠️ 여기서 중요합니다! 파일을 읽을 때도 똑같은 이름을 써야 합니다.
+    try:
+        if upload_file.name.endswith('.csv'):
+            df = pd.read_csv(upload_file)
+        else:
+            df = pd.read_excel(upload_file)
+        
+        # 이후 사장님의 분석 로직이 이어집니다...
+        # 만약 아래쪽에 'uploaded_file'이라는 단어가 또 보이면 'upload_file'로 다 고쳐주세요!
+    except Exception as e:
+        st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
 
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
