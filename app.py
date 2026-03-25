@@ -140,7 +140,46 @@ if uploaded_file is not None:
 else:
     # 💡 파일을 올리기 전에는 이 안내문만 나옵니다.
     st.info("👆 위에서 엑셀 파일을 먼저 업로드해 주세요. 그래야 분석이 시작됩니다.")
-        
+
+    # 💡 4~5단계: 분석 실행 버튼을 눌렀을 때만 나타나는 구역
+    if st.session_state.get('analyzed'):
+        try:
+            st.divider()
+            st.subheader("📋 4단계: 발주 계산 결과")
+            
+            # 계산을 위한 매핑 데이터 준비
+            df_final = df_new.copy() 
+            
+            # [계산 예시] 사장님 환경에 맞게 컬럼명 매칭
+            # (t7day, avail 등은 위에서 selectbox로 선택된 변수들입니다)
+            df_final['7일평균판매'] = pd.to_numeric(df_final[t7day], errors='coerce').fillna(0) / 7
+            df_final['필요재고'] = df_final['7일평균판매'] * (lead_time + safety_stock_days)
+            df_final['권장발주량'] = (df_final['필요재고'] - pd.to_numeric(df_final[avail], errors='coerce').fillna(0)).clip(lower=0).round(0)
+
+            # 결과 화면 출력
+            display_cols = [vendor, item, option, avail, t7day, '권장발주량']
+            st.dataframe(df_final[display_cols], use_container_width=True)
+
+            # --- [5단계: 데이터 저장 및 내보내기] ---
+            st.divider()
+            st.subheader("💾 5단계: 분석 결과 저장")
+            
+            # 엑셀 파일로 변환하여 다운로드 제공
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_final.to_excel(writer, index=False, sheet_name='발주계산결과')
+            
+            st.download_button(
+                label="📥 분석 결과 엑셀 다운로드",
+                data=output.getvalue(),
+                file_name=f"발주계산_{uploaded_file.name}",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        except Exception as e:
+            st.error(f"결과 출력 중 오류가 발생했습니다: {e}")
+            st.info("매핑 설정(2단계)에서 숫자가 포함된 컬럼이 정확히 선택되었는지 확인해 주세요.")
+            
 # --- [핵심] 업체별 데이터 누적 및 리오더 보존 로직 ---
     if uploaded_file is not None:
         if st.session_state.get('last_fn') != uploaded_file.name:
