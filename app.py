@@ -72,7 +72,7 @@ with tab1:
     
     up_file = st.file_uploader("엑셀 파일을 업로드하세요", type=['xlsx', 'xls', 'csv'], key="up_key")
 
-    if st.button("🗑️ 전체 데이터 초기화", use_container_width=True):
+    if st.button("🗑️ 화면 데이터 초기화", use_container_width=True):
         st.session_state.df_raw = None
         st.session_state.last_fn = None
         st.rerun()
