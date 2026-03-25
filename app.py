@@ -138,6 +138,22 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
 
+        def get_incoming_history():
+    """구글 시트의 '입고' 로그를 읽어와서 상품별 합계를 반환"""
+    try:
+        ss = get_sheet() # 사장님 구글 시트 연결 함수
+        # 만약 시트 이름이 '입고로그'라면:
+        ws = ss.worksheet("입고로그") 
+        data = pd.DataFrame(ws.get_all_records())
+        if data.empty: return pd.DataFrame()
+        
+        # 상품명+옵션별로 입고 수량 합산
+        summary = data.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+        summary.rename(columns={'수량': '과거리오더 입고'}, inplace=True)
+        return summary
+    except:
+        return pd.DataFrame()
+        
 # --- [4단계: 데이터 편집 및 재고 관리 - 13개 컬럼 전용] ---
         if st.session_state.analyzed and st.session_state.p:
             st.divider()
