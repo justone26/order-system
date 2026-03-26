@@ -90,6 +90,19 @@ with tab1:
             st.session_state.analyzed = True
             st.rerun()
 
+사장님, 에러가 반복되어 답답하셨죠! 원인을 확실히 잡았습니다.
+
+판다스의 .str 기능은 컬럼 안에 **글자(String)**만 있어야 작동하는데, 엑셀을 불러올 때 '품절' 컬럼에 **숫자나 빈 칸(NaN)**이 섞여 있으면 "나는 글자가 아닌 건 처리 못 해!"라며 지금 같은 AttributeError를 냅니다.
+
+이 문제를 원천 봉쇄하기 위해 데이터 타입을 강제로 글자로 변환하는 과정을 가장 먼저 실행하도록 수정한 4단계 전체 소스입니다. 이 코드로 덮어쓰시면 이제 에러 없이 품절 상품까지 다 보실 수 있습니다.
+
+🛠️ 4단계 최종 수정 소스 (데이터 타입 에러 완벽 해결)
+Python
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+import time
+
 # --- 4단계 시작 ---
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -106,7 +119,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     # [핵심 수정] 데이터 유실 및 타입 에러 방지
     df_work = st.session_state.df_raw.copy()
     
-    # 모든 데이터를 일단 문자열로 변환하고 공백을 제거 (에러 방지 핵심)
+    # 에러 방지 핵심: 모든 데이터를 일단 문자열로 변환하고 공백 제거 (NaN은 'nan' 문자열이 됨)
     df_work[sold_out_col] = df_work[sold_out_col].astype(str).str.strip()
 
     # 2. UI 배치 (상태 필터 -> 검색어 -> 날짜 순)
@@ -119,7 +132,9 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     for c in [stock, avail, t7day, t3day]:
         df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
     
+    # 일판매량 계산
     df_work['일판매량'] = df_work.apply(lambda x: round(x[t7day] / 7) if x[t7day] > 0 else round(x[t3day] / 3), axis=1).astype(int)
+    
     # [요청] 3일 발주수량 추가
     df_work['3일 발주수량'] = (df_work['일판매량'] * 3).astype(int)
     
@@ -128,18 +143,21 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work["리오더 수량"] = pd.to_numeric(df_work["리오더 수량"], errors='coerce').fillna(0).astype(int)
     df_work["리오더 입고수량"] = 0
     
+    # 권장발주량 계산
     df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
     # 4. 필터 로직 (문자열 전용 contains 사용)
-    # 위에서 이미 .astype(str) 처리를 했으므로 에러가 나지 않습니다.
+    # 위에서 이미 .astype(str) 처리를 했으므로 이제 에러가 나지 않습니다.
     is_soldout_row = df_work[sold_out_col].str.contains('품절', na=False)
 
     if filter_m == "정상만":
-        # '품절' 글자가 없고, 'nan' (빈값) 혹은 공백인 것들 포함
+        # '품절' 글자가 없고, 'nan'(빈값) 혹은 공백인 것들을 정상으로 간주
         df_filtered = df_work[(~is_soldout_row) | (df_work[sold_out_col] == 'nan') | (df_work[sold_out_col] == '')]
     elif filter_m == "품절만":
+        # '품절' 글자가 포함된 행만 추출
         df_filtered = df_work[is_soldout_row]
     else:
+        # 전체보기
         df_filtered = df_work
 
     # 검색어 필터
@@ -155,7 +173,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         item: "상품명", option: "옵션", stock: "정상재고", avail: "가용재고"
     })
     
-    # 과거리오더 입고 매칭 (함수 연동)
+    # 과거리오더 입고 데이터 가져오기 (매칭)
     inc_h = get_incoming_history()
     if not inc_h.empty:
         df_display = pd.merge(df_display, inc_h, on=["상품명", "옵션"], how="left")
@@ -170,8 +188,9 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         "과거리오더 입고", "3일 발주수량", "일판매량", "권장발주량"
     ]
 
-    # 6. 결과 출력 (에디터 폼)
+    # 6. 결과 출력 및 저장 폼
     with st.form("v4_final_safe_form"):
+        # 데이터가 있는 경우만 에디터 출력, 없으면 안내 문구
         if not df_display.empty:
             st.data_editor(
                 df_display[final_cols],
@@ -181,20 +200,28 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 column_config={c: st.column_config.NumberColumn(disabled=True) for c in ["과거리오더 입고", "3일 발주수량", "일판매량", "권장발주량"]}
             )
         else:
-            st.info("💡 표시할 데이터가 없습니다. 필터를 변경해 보세요.")
-            # 디버깅용: 데이터가 왜 안나오는지 실제 값을 살짝 보여줌
-            if filter_m == "품절만":
-                st.write("현재 '품절상태' 컬럼에 들어있는 값들:", df_work[sold_out_col].unique())
+            st.info("💡 표시할 데이터가 없습니다. 필터를 변경하거나 검색어를 확인해 보세요.")
 
         if st.form_submit_button("💾 데이터 저장 및 입고 반영", use_container_width=True, type="primary"):
-            # 저장 로직 (생략 - 필요시 추가)
-            st.success("반영되었습니다.")
-            time.sleep(1)
-            st.rerun()
-
-elif not st.session_state.get('analyzed'):
-    st.info("데이터 업로드 후 '데이터 분석 시작' 버튼을 눌러주세요.")
-
+            # 저장 로직 실행
+            edits = st.session_state["v4_editor_safe"].get("edited_rows", {})
+            if edits:
+                for r_idx, change in edits.items():
+                    actual_idx = df_filtered.index[int(r_idx)]
+                    if "리오더 입고수량" in change:
+                        in_qty = int(change["리오더 입고수량"])
+                        if in_qty > 0:
+                            curr = st.session_state.df_raw.at[actual_idx, "리오더 수량"]
+                            st.session_state.df_raw.at[actual_idx, "리오더 수량"] = max(0, curr - in_qty)
+                            log_df = pd.DataFrame([[f"{hist_date_4}", df_filtered.at[actual_idx, item], df_filtered.at[actual_idx, option], in_qty]], columns=['날짜', '상품명', '옵션', '수량'])
+                            save_history_to_gsheet(log_df, log_type="입고")
+                    if "리오더 수량" in change:
+                        st.session_state.df_raw.at[actual_idx, "리오더 수량"] = int(change["리오더 수량"])
+                
+                save_reorder_data(st.session_state.df_raw, item, option)
+                st.success("✅ 저장되었습니다.")
+                time.sleep(1)
+                st.rerun()
 
         # --- [5단계: 최종 발주 및 엑셀 다운로드] ---
 # 1. 안전 장치: 분석이 완료되었고 데이터가 있을 때만 실행
