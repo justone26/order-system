@@ -212,54 +212,66 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
 
+    # 설정값 불러오기
     p = st.session_state.p
     sold_out_col, item, option = p['so'], p['it'], p['op']
     vendor, v_item = p['vn'], p['vi']
     stock, avail, t3day, t7day = p['st'], p['av'], p['t3'], p['t7']
     lt, ss = p['lt'], p['ss']
 
+    # 작업용 데이터 복사
     df_work = st.session_state.df_raw.copy()
     
-    # 데이터 타입 안전장치
+    # 데이터 타입 안전장치 (숫자형 변환)
     df_work[sold_out_col] = df_work[sold_out_col].astype(str).str.strip()
     for c in [stock, avail, t7day, t3day]:
         df_work[c] = pd.to_numeric(df_work[c], errors='coerce').fillna(0).astype(int)
-    if "리오더 수량" not in df_work.columns: df_work["리오더 수량"] = 0
+    
+    if "리오더 수량" not in df_work.columns: 
+        df_work["리오더 수량"] = 0
     df_work["리오더 수량"] = pd.to_numeric(df_work["리오더 수량"], errors='coerce').fillna(0).astype(int)
+    
+    # 화면 표시용 임시 컬럼
     df_work["리오더 입고수량"] = 0 
 
-    # 1. UI 배치 (필터 및 날짜)
+    # 1. UI 배치 (상태 필터 및 검색)
     f_c1, f_c2, f_c3 = st.columns([1, 2, 1])
     filter_m = f_c1.selectbox("🚦 상태 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_full_filter")
     search_q = f_c2.text_input("🔍 상품명/옵션 검색", placeholder="검색어를 입력하세요...", key="v4_full_search")
     hist_date_4 = f_c3.date_input("🗓️ 입고 날짜", datetime.now(KST).date(), key="v4_full_date")
 
-    # 2. [입고 이력 불러오기]
+    # 2. 입고 이력 합계 가져오기 (참고용)
     def get_incoming_sum():
         try:
             sh_h = get_sheet().worksheet("입고기록")
-            h_df = pd.DataFrame(sh_h.get_all_records())
-            if not h_df.empty:
-                return h_df.groupby([item, option])['입고수량'].sum().reset_index()
-            return pd.DataFrame(columns=[item, option, "입고수량"])
-        except: return pd.DataFrame(columns=[item, option, "입고수량"])
+            h_data = sh_h.get_all_records()
+            if h_data:
+                h_df = pd.DataFrame(h_data)
+                return h_df.groupby(['상품명', '옵션'])['입고수량'].sum().reset_index()
+            return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
+        except: 
+            return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
 
     in_sum_df = get_incoming_sum()
-    df_work = pd.merge(df_work, in_sum_df.rename(columns={"입고수량":"과거리오더 입고"}), on=[item, option], how="left").fillna(0)
+    df_work = pd.merge(df_work, in_sum_df.rename(columns={"입고수량":"과거리오더 입고"}), 
+                       left_on=[item, option], right_on=['상품명', '옵션'], how="left").fillna(0)
 
-    # 3. 지표 계산
+    # 3. 지표 계산 (일판매량, 권장발주량 등)
     df_work['일판매량'] = df_work.apply(lambda x: round(x[t7day] / 7) if x[t7day] > 0 else (round(x[t3day] / 3) if x[t3day] > 0 else 0), axis=1).astype(int)
     df_work['3일 발주수량'] = (df_work['일판매량'] * 3).astype(int)
     df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
-    # 4. 필터 로직
+    # 4. 필터 로직 적용
     is_soldout = df_work[sold_out_col].str.contains('품절', na=False)
-    df_filtered = df_work[is_soldout] if filter_m == "품절만" else (df_work[~is_soldout] if filter_m == "정상만" else df_work)
+    if filter_m == "정상만": df_filtered = df_work[~is_soldout]
+    elif filter_m == "품절만": df_filtered = df_work[is_soldout]
+    else: df_filtered = df_work
+
     if search_q:
         df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_q, case=False) | 
                                   df_filtered[option].astype(str).str.contains(search_q, case=False)]
 
-    # 5. 결과 출력 및 저장
+    # 5. 결과 출력 (에디터 설정)
     df_display = df_filtered.rename(columns={sold_out_col: "품절상태", vendor: "공급쳐", v_item: "공급쳐 상품명", item: "상품명", option: "옵션", stock: "정상재고", avail: "가용재고"})
     final_cols = ["품절상태", "공급쳐", "상품명", "옵션", "공급쳐 상품명", "정상재고", "가용재고", "리오더 수량", "리오더 입고수량", "과거리오더 입고", "3일 발주수량", "일판매량", "권장발주량"]
 
@@ -275,6 +287,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             }
         )
 
+        # [핵심] 저장 및 차감 버튼
         if st.form_submit_button("💾 데이터 저장 및 입고 반영 (차감)", use_container_width=True, type="primary"):
             edits = st.session_state["v4_editor_full"].get("edited_rows", {})
             if edits:
@@ -283,20 +296,39 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 h_sh = sheet.worksheet("입고기록")
                 now_kst = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
 
-                for r_idx, val in edits.items():
+                for r_idx_str, val in edits.items():
                     if "리오더 입고수량" in val:
                         in_qty = int(val["리오더 입고수량"])
-                        orig_idx = df_display.index[int(r_idx)]
-                        new_val = max(0, int(df_display.at[orig_idx, "리오더 수량"]) - in_qty)
-                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] = new_val
-                        h_sh.append_row([now_kst, df_display.at[orig_idx, "상품명"], df_display.at[orig_idx, "옵션"], in_qty])
+                        if in_qty <= 0: continue
+                        
+                        # 화면의 순서(r_idx)를 실제 원본 데이터의 인덱스로 매칭
+                        r_idx = int(r_idx_str)
+                        actual_index = df_display.index[r_idx] 
+                        
+                        # 1. 원본 세션 데이터에서 차감
+                        current_val = int(st.session_state.df_raw.at[actual_index, "리오더 수량"])
+                        new_val = max(0, current_val - in_qty)
+                        st.session_state.df_raw.at[actual_index, "리오더 수량"] = new_val
+                        
+                        # 2. 입고 이력 개별 행 추가
+                        h_sh.append_row([
+                            now_kst, 
+                            str(df_display.at[actual_index, "상품명"]), 
+                            str(df_display.at[actual_index, "옵션"]), 
+                            in_qty
+                        ])
                 
-                # [수정] 구글 시트 전송 전 데이터 클렌징 (JSON 에러 방지)
+                # 3. 구글 시트 '시트1' 전체 업데이트 (JSON 에러 방지용 문자열 변환)
                 df_save = st.session_state.df_raw.copy().fillna("")
-                df_save = df_save.astype(str) # 모든 데이터를 텍스트로 변환하여 안전하게 전송
+                df_save = df_save.astype(str)
                 m_sh.update([df_save.columns.values.tolist()] + df_save.values.tolist())
                 
-                st.success("✅ 입고 차감 및 '시트1' 저장이 완료되었습니다."); time.sleep(1); st.rerun()
+                st.success("✅ 입고 차감이 완료되었습니다!"); time.sleep(1); st.rerun()
+            else:
+                st.warning("⚠️ 수정된 내용이 없습니다.")
+
+
+
 
 # ==========================================================
 # --- [5단계: 최종 발주 (합산 및 시트1/발주기록 연동)] ---
