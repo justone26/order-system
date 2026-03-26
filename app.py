@@ -238,19 +238,18 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
     df_5 = st.session_state.df_raw.copy()
     
-    # 숫자 데이터 변환 (에러 방지)
     for c in [avail, '리오더 수량', t7day, t3day]:
         if c in df_5.columns:
             df_5[c] = pd.to_numeric(df_5[c], errors='coerce').fillna(0).astype(int)
 
-    # 2. 상단 필터 영역 (상태 -> 검색 -> 날짜 순서)
+    # 2. 상단 필터 영역 (중복 방지용 key 적용)
     f_c1, f_c2, f_c3 = st.columns([1, 2, 1])
     with f_c1:
-        m5_filter = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 긴급", "⚠️ 주의", "✅ 정상"], index=1, key="v5_stat_filter")
+        m5_filter = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 긴급", "⚠️ 주의", "✅ 정상"], index=1, key="v5_stat_filter_unique")
     with f_c2:
-        s5_search = st.text_input("🔍 상품명/옵션 검색", placeholder="검색어를 입력하세요...", key="v5_name_search")
+        s5_search = st.text_input("🔍 상품명/옵션 검색", placeholder="검색어를 입력하세요...", key="v5_name_search_unique")
     with f_c3:
-        d5_date = st.date_input("🗓️ 기록 날짜", datetime.now().date(), key="v5_record_date")
+        d5_date = st.date_input("🗓️ 기록 날짜", datetime.now().date(), key="v5_record_date_unique")
 
     # 3. 계산 로직
     df_5['일판매량'] = df_5.apply(lambda x: round(x[t7day] / 7) if x[t7day] > 0 else round(x[t3day] / 3), axis=1).astype(int)
@@ -268,23 +267,21 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         return "✅ 정상"
     df_5['상태'] = df_5.apply(get_stat_v5_final, axis=1)
 
-    # 화면 노출용 컬럼 (8가지)
     df_disp_5 = df_5.rename(columns={item: "상품명", option: "옵션", v_item: "공급쳐상품명", avail: "가용재고", "리오더 수량": "리오더수량"})
     display_cols = ["상태", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
 
-    # 필터 적용
     if m5_filter != "전체보기":
         df_disp_5 = df_disp_5[df_disp_5["상태"] == m5_filter]
     if s5_search:
         df_disp_5 = df_disp_5[df_disp_5["상품명"].astype(str).str.contains(s5_search, case=False) | 
                               df_disp_5["옵션"].astype(str).str.contains(s5_search, case=False)]
 
-    # 4. 데이터 에디터 (수량 입력)
-    with st.form("final_order_form_v5"):
+    # 4. 데이터 에디터
+    with st.form("final_order_form_v5_fixed"):
         if not df_disp_5.empty:
             edited_df = st.data_editor(
                 df_disp_5[display_cols],
-                use_container_width=True, hide_index=True, key="v5_editor",
+                use_container_width=True, hide_index=True, key="v5_editor_fixed",
                 column_config={
                     "상태": st.column_config.TextColumn(width="small"),
                     "추가발주수량": st.column_config.NumberColumn(format="%d"),
@@ -295,7 +292,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             st.info(f"💡 {m5_filter} 상태 품목이 없습니다.")
 
         if st.form_submit_button("✅ 수량 확정 및 리오더 반영", use_container_width=True, type="primary"):
-            changes = st.session_state["v5_editor"].get("edited_rows", {})
+            changes = st.session_state["v5_editor_fixed"].get("edited_rows", {})
             for r_idx, change in changes.items():
                 orig_idx = df_disp_5.index[int(r_idx)]
                 if "추가발주수량" in change:
@@ -304,16 +301,15 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     st.session_state.add_order_dict[orig_idx] = val
             st.success("✅ 업데이트 완료!"); time.sleep(1); st.rerun()
 
-    # 5. 하단 버튼 구역 (시트 저장 및 CSV 다운로드)
+    # 5. 하단 버튼 구역
     st.write("---")
     col_b1, col_b2 = st.columns(2)
     with col_b1:
-        if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
+        if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, key="btn_save_v5"):
             df_5['합계'] = df_5['권장 발주수량'] + df_5['추가발주수량']
             ready_to_save = df_5[df_5['합계'] > 0]
             if not ready_to_save.empty:
                 log_date_str = d5_date.strftime('%Y-%m-%d')
-                # 시트 저장용 행 구성: [날짜] + 화면 8개 항목
                 log_rows = [[log_date_str, r['상태'], r[item], r[option], r[v_item], int(r[avail]), int(r['리오더 수량']), int(r['추가발주수량']), int(r['권장 발주수량'])] for _, r in ready_to_save.iterrows()]
                 try:
                     sheet = get_sheet()
@@ -327,8 +323,8 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         if not csv_target.empty:
             csv_disp = csv_target.rename(columns={item: "상품명", option: "옵션", v_item: "공급쳐상품명", avail: "가용재고", "리오더 수량": "리오더수량"})
             csv_file = csv_disp[display_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 최종 발주서 CSV 다운로드", csv_file, f"발주서_{d5_date.strftime('%m%d')}.csv", "text/csv", use_container_width=True)
-        else: st.button("📥 다운로드할 데이터 없음", disabled=True, use_container_width=True)
+            st.download_button("📥 최종 발주서 CSV 다운로드", csv_file, f"발주서_{d5_date.strftime('%m%d')}.csv", "text/csv", use_container_width=True, key="btn_csv_v5")
+        else: st.button("📥 다운로드할 데이터 없음", disabled=True, use_container_width=True, key="btn_csv_none_v5")
 
 
 
@@ -343,7 +339,6 @@ try:
     
     if len(all_values) > 1:
         headers = all_values[0]
-        # 컬럼 중복 방어 및 공백 제거
         clean_headers = []
         for i, h in enumerate(headers):
             h = h.strip()
@@ -353,23 +348,20 @@ try:
         df_hist = pd.DataFrame(all_values[1:], columns=clean_headers)
         df_hist = df_hist[[c for c in df_hist.columns if not c.startswith("empty_")]]
 
-        # 날짜 비교용 변환
         if "날짜" in df_hist.columns:
             df_hist["날짜_dt"] = pd.to_datetime(df_hist["날짜"], errors='coerce').dt.date
             df_hist = df_hist.sort_values(by="날짜_dt", ascending=False)
         
-        # 6단계 필터 UI (날짜 범위 / 상태 / 검색)
+        # 6단계 필터 (유니크한 key 적용)
         h_f1, h_f2, h_f3 = st.columns([1.5, 1, 1.5])
         with h_f1:
             today = datetime.now().date()
-            # 기본 조회 범위: 최근 10일 전 ~ 오늘
-            date_range = st.date_input("🗓️ 조회 기간 선택", value=(today - timedelta(days=10), today), key="h_date_range")
+            date_range = st.date_input("🗓️ 조회 기간 선택", value=(today - timedelta(days=10), today), key="h_date_range_unique")
         with h_f2:
-            h_stat = st.selectbox("🚦 상태 필터 (기록)", ["전체보기", "🚨 긴급", "⚠️ 주의", "✅ 정상"], key="h_status_filter")
+            h_stat = st.selectbox("🚦 상태 필터 (기록)", ["전체보기", "🚨 긴급", "⚠️ 주의", "✅ 정상"], key="h_status_filter_unique")
         with h_f3:
-            h_q = st.text_input("🔍 상품명/옵션 검색 (기록)", placeholder="검색어 입력...", key="h_search_filter")
+            h_q = st.text_input("🔍 상품명/옵션 검색 (기록)", placeholder="검색어 입력...", key="h_search_filter_unique")
         
-        # 필터링 적용 로직
         if len(date_range) == 2:
             df_hist = df_hist[(df_hist["날짜_dt"] >= date_range[0]) & (df_hist["날짜_dt"] <= date_range[1])]
         if h_stat != "전체보기":
@@ -378,20 +370,15 @@ try:
             df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False) | 
                               df_hist["옵션"].astype(str).str.contains(h_q, case=False)]
             
-        # 데이터 출력
         if not df_hist.empty:
-            # 5단계와 동일한 구성 (날짜 + 8가지 항목)
             final_view_cols = ["날짜", "상태", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
             existing_cols = [c for c in final_view_cols if c in df_hist.columns]
-            
             st.dataframe(df_hist[existing_cols], use_container_width=True, hide_index=True)
-            
-            # 조회 내역 다운로드 버튼
             csv_hist = df_hist[existing_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 현재 조회 내역 다운로드", csv_hist, f"발주기록조회_{today}.csv", use_container_width=True)
+            st.download_button("📥 현재 조회 내역 다운로드", csv_hist, f"조회기록_{today}.csv", use_container_width=True, key="btn_download_v6")
         else:
-            st.warning("🧐 해당 기간 및 조건에 일치하는 기록이 없습니다.")
+            st.warning("🧐 해당 기록이 없습니다.")
     else:
-        st.info("💡 아직 저장된 기록이 없습니다. 5단계에서 저장을 먼저 진행해 주세요.")
+        st.info("💡 저장된 기록이 없습니다.")
 except Exception as e:
     st.error(f"📡 시트 로딩 오류: {e}")
