@@ -328,17 +328,19 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 
-# --- [6단계: 전체 히스토리 내역] ---
+# --- [6단계: 전체 히스토리 내역 - 누락 방지 보강] ---
 st.divider()
 st.subheader("📜 6단계: 전체 히스토리 내역")
 
 try:
     sheet = get_sheet()
+    # 탭 이름이 정확히 "발주기록"인지 확인해주세요.
     worksheet = sheet.worksheet("발주기록")
     all_values = worksheet.get_all_values()
     
     if len(all_values) > 1:
         headers = all_values[0]
+        # 컬럼 정제
         clean_headers = []
         for i, h in enumerate(headers):
             h = h.strip()
@@ -346,26 +348,34 @@ try:
             else: clean_headers.append(h)
         
         df_hist = pd.DataFrame(all_values[1:], columns=clean_headers)
-        df_hist = df_hist[[c for c in df_hist.columns if not c.startswith("empty_")]]
-
-        if "날짜" in df_hist.columns:
-            df_hist["날짜_dt"] = pd.to_datetime(df_hist["날짜"], errors='coerce').dt.date
-            df_hist = df_hist.sort_values(by="날짜_dt", ascending=False)
         
-        # 6단계 필터 (유니크한 key 적용)
+        # [핵심 수정] 날짜를 날짜 객체와 문자열 두 가지 방식으로 모두 준비
+        if "날짜" in df_hist.columns:
+            # 시트의 날짜를 깔끔한 'YYYY-MM-DD' 글자로 변환
+            df_hist["날짜_str"] = pd.to_datetime(df_hist["날짜"], errors='coerce').dt.strftime('%Y-%m-%d')
+            df_hist = df_hist.sort_values(by="날짜", ascending=False)
+        
+        # 6단계 필터 UI
         h_f1, h_f2, h_f3 = st.columns([1.5, 1, 1.5])
         with h_f1:
-            today = datetime.now().date()
-            date_range = st.date_input("🗓️ 조회 기간 선택", value=(today - timedelta(days=10), today), key="h_date_range_unique")
+            today_dt = datetime.now().date()
+            # 달력 선택
+            date_range = st.date_input("🗓️ 조회 기간 선택", value=(today_dt, today_dt), key="h_date_range_v4")
         with h_f2:
-            h_stat = st.selectbox("🚦 상태 필터 (기록)", ["전체보기", "🚨 긴급", "⚠️ 주의", "✅ 정상"], key="h_status_filter_unique")
+            h_stat = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 긴급", "⚠️ 주의", "✅ 정상"], key="h_status_v4")
         with h_f3:
-            h_q = st.text_input("🔍 상품명/옵션 검색 (기록)", placeholder="검색어 입력...", key="h_search_filter_unique")
+            h_q = st.text_input("🔍 상품명/옵션 검색", placeholder="검색어 입력...", key="h_search_v4")
         
+        # --- 필터링 로직 보강 ---
         if len(date_range) == 2:
-            df_hist = df_hist[(df_hist["날짜_dt"] >= date_range[0]) & (df_hist["날짜_dt"] <= date_range[1])]
+            # 시작일과 종료일을 문자열로 변환하여 비교 (가장 확실함)
+            start_str = date_range[0].strftime('%Y-%m-%d')
+            end_str = date_range[1].strftime('%Y-%m-%d')
+            df_hist = df_hist[(df_hist["날짜_str"] >= start_str) & (df_hist["날짜_str"] <= end_str)]
+        
         if h_stat != "전체보기":
             df_hist = df_hist[df_hist["상태"] == h_stat]
+        
         if h_q:
             df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False) | 
                               df_hist["옵션"].astype(str).str.contains(h_q, case=False)]
@@ -373,12 +383,18 @@ try:
         if not df_hist.empty:
             final_view_cols = ["날짜", "상태", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
             existing_cols = [c for c in final_view_cols if c in df_hist.columns]
+            
+            st.write(f"✅ 총 **{len(df_hist)}**건의 기록을 찾았습니다.")
             st.dataframe(df_hist[existing_cols], use_container_width=True, hide_index=True)
+            
             csv_hist = df_hist[existing_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 현재 조회 내역 다운로드", csv_hist, f"조회기록_{today}.csv", use_container_width=True, key="btn_download_v6")
+            st.download_button("📥 현재 내역 다운로드", csv_hist, f"발주기록.csv", use_container_width=True, key="h_down_v4")
         else:
-            st.warning("🧐 해당 기록이 없습니다.")
+            st.warning("🧐 해당 기간에 데이터가 없습니다. 시트를 확인해 보시거나 기간을 넓혀보세요.")
+            # 데이터가 왜 안 나오는지 디버깅용 (실제 시트의 날짜 값들을 출력)
+            with st.expander("🔍 데이터 연결 확인 (시트 내 실제 날짜들)"):
+                st.write(all_values[1][:5] if len(all_values) > 1 else "데이터 없음")
     else:
-        st.info("💡 저장된 기록이 없습니다.")
+        st.info("💡 '발주기록' 시트가 비어있습니다. 5단계에서 저장을 먼저 해주세요.")
 except Exception as e:
-    st.error(f"📡 시트 로딩 오류: {e}")
+    st.error(f"📡 오류 발생: {e}")
