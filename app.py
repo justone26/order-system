@@ -107,7 +107,7 @@ with tab1:
     # --- 1~3단계: 설정 ---
     st.subheader("📁 1~3단계: 데이터 업로드 및 분석 설정")
     
-    # [수정] key 부분에 upload_key를 연동합니다.
+    # [파일명 초기화 연동] key 부분에 upload_key를 적용했습니다.
     up_file = st.file_uploader(
         "엑셀/CSV 파일 업로드", 
         type=['xlsx', 'xls', 'csv'], 
@@ -121,10 +121,10 @@ with tab1:
             if key != "upload_key": # 키 관리용 데이터는 남겨둠
                 del st.session_state[key]
         
-        # 2. 파일 업로드 위젯을 강제로 새로고침 (이게 파일명을 비워주는 핵심!)
+        # 2. 파일 업로드 위젯 강제 리셋 (파일명 삭제)
         st.session_state.upload_key += 1
         
-        # 3. 상태값 강제 리셋
+        # 3. 상태값 완전 리셋
         st.session_state.analyzed = False 
         st.session_state.df_raw = None
         
@@ -140,8 +140,8 @@ with tab1:
             df = df.fillna("") 
             st.session_state.df_raw = df
 
-    # [매핑 화면 노출 조건]
-    if st.session_state.get('df_raw') is not None and not st.session_state.get('analyzed'):
+    # [핵심 수정] analyzed 조건문을 삭제하여 분석 후에도 매핑 화면이 유지되도록 했습니다.
+    if st.session_state.get('df_raw') is not None:
         st.divider()
         st.info("💡 업로드된 데이터의 컬럼을 매칭해주세요.")
         cols = st.session_state.df_raw.columns.tolist()
@@ -178,7 +178,7 @@ with tab1:
             
             # 분석 로직 실행 (기존 로직 유지)
             df_final = st.session_state.df_raw.copy()
-            # ... (데이터 처리 부분) ...
+            # ... (데이터 처리 부분 동일하게 유지) ...
             
             st.session_state.df_raw = df_final 
             st.session_state.analyzed = True   
