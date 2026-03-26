@@ -93,7 +93,7 @@ with tab1:
 # --- 4단계 시작 ---
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
-    st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
+    st.subheader("4단계: 데이터 편집 및 재고 관리")
 
     # 1. 설정값 불러오기
     p = st.session_state.p
@@ -103,15 +103,15 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     stock, avail, t3day, t7day = p['st'], p['av'], p['t3'], p['t7']
     lt, ss = p['lt'], p['ss']
 
-    # 데이터 복사 및 타입 강제 변환 (에러 방지)
+    # [에러 방지 핵심] 모든 데이터를 일단 문자열로 변환하고 공백 제거
     df_work = st.session_state.df_raw.copy()
     df_work[sold_out_col] = df_work[sold_out_col].astype(str).str.strip()
 
     # 2. UI 배치 (상태 필터 -> 검색어 -> 날짜 순)
     f_c1, f_c2, f_c3 = st.columns([1, 2, 1])
-    filter_m = f_c1.selectbox("🚦 상태 필터", ["전체보기", "정상만", "품절만"], index=0, key="v4_final_filter")
-    search_q = f_c2.text_input("🔍 상품명/옵션 검색", placeholder="검색어를 입력하세요...", key="v4_final_search")
-    hist_date_4 = f_c3.date_input("🗓️ 입고 날짜", datetime.now().date(), key="v4_final_date")
+    filter_m = f_c1.selectbox("상태 필터", ["전체보기", "정상만", "품절만"], index=0, key="v4_final_filter")
+    search_q = f_c2.text_input("상품명/옵션 검색", placeholder="검색어를 입력하세요...", key="v4_final_search")
+    hist_date_4 = f_c3.date_input("입고 날짜", datetime.now().date(), key="v4_final_date")
 
     # 3. 데이터 계산
     for c in [stock, avail, t7day, t3day]:
@@ -126,10 +126,11 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work["리오더 입고수량"] = 0
     df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
-    # 4. 필터 로직
+    # 4. 필터 로직 (문자열 전용 contains 사용)
     is_soldout_row = df_work[sold_out_col].str.contains('품절', na=False)
 
     if filter_m == "정상만":
+        # '품절' 글자가 없고, 'nan'(빈값) 혹은 공백인 것들을 정상으로 간주
         df_filtered = df_work[(~is_soldout_row) | (df_work[sold_out_col] == 'nan') | (df_work[sold_out_col] == '')]
     elif filter_m == "품절만":
         df_filtered = df_work[is_soldout_row]
@@ -142,12 +143,13 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             df_filtered[option].astype(str).str.contains(search_q, case=False, na=False)
         ]
 
-    # 5. 컬럼명 변경 및 순서 재배치
+    # 5. 컬럼명 변경 및 요청하신 순서 재배치
     df_display = df_filtered.rename(columns={
         sold_out_col: "품절상태", vendor: "공급쳐", v_item: "공급쳐 상품명", 
         item: "상품명", option: "옵션", stock: "정상재고", avail: "가용재고"
     })
     
+    # 과거리오더 입고 매칭
     inc_h = get_incoming_history()
     if not inc_h.empty:
         df_display = pd.merge(df_display, inc_h, on=["상품명", "옵션"], how="left")
@@ -172,9 +174,9 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 column_config={c: st.column_config.NumberColumn(disabled=True) for c in ["과거리오더 입고", "3일 발주수량", "일판매량", "권장발주량"]}
             )
         else:
-            st.info("💡 표시할 데이터가 없습니다.")
+            st.info("표시할 데이터가 없습니다.")
 
-        if st.form_submit_button("💾 데이터 저장 및 입고 반영", use_container_width=True, type="primary"):
+        if st.form_submit_button("데이터 저장 및 입고 반영", use_container_width=True, type="primary"):
             edits = st.session_state["v4_editor_safe"].get("edited_rows", {})
             if edits:
                 for r_idx, change in edits.items():
@@ -190,7 +192,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                         st.session_state.df_raw.at[actual_idx, "리오더 수량"] = int(change["리오더 수량"])
                 
                 save_reorder_data(st.session_state.df_raw, item, option)
-                st.success("✅ 저장되었습니다.")
+                st.success("저장되었습니다.")
                 time.sleep(1)
                 st.rerun()
 
