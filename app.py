@@ -351,7 +351,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             st.button("📥 다운로드할 데이터 없음", disabled=True, use_container_width=True)
         
             
-# --- [6단계: 전체 히스토리 내역 - 중복 컬럼 방어 버전] ---
+# --- [6단계: 전체 히스토리 내역 - 기간 필터 추가] ---
 st.divider()
 st.subheader("📜 6단계: 전체 히스토리 내역")
 
@@ -359,49 +359,82 @@ try:
     sheet = get_sheet()
     worksheet = sheet.worksheet("발주기록")
     
-    # get_all_records 대신 get_all_values를 써서 직접 정제
+    # 데이터 가져오기 및 중복 컬럼 방어
     all_values = worksheet.get_all_values()
     
     if len(all_values) > 1:
         headers = all_values[0]
         data = all_values[1:]
         
-        # [수정] 중복되거나 비어있는 컬럼명 자동 처리
+        # 컬럼명 정제 (빈칸/중복 방지)
         clean_headers = []
         for i, h in enumerate(headers):
             h = h.strip()
             if h == "" or h in clean_headers:
-                clean_headers.append(f"empty_{i}") # 빈칸이나 중복은 임시 이름 부여
+                clean_headers.append(f"empty_{i}")
             else:
                 clean_headers.append(h)
         
         df_hist = pd.DataFrame(data, columns=clean_headers)
-        
-        # 실제 필요한 데이터만 필터링 (임시 이름 'empty_...' 컬럼들은 제거)
         df_hist = df_hist[[c for c in df_hist.columns if not c.startswith("empty_")]]
 
-        # 날짜순 정렬 (최신순)
+        # [핵심] 날짜 컬럼 형식 변환 (문자열 -> 날짜타입)
         if "날짜" in df_hist.columns:
+            df_hist["날짜"] = pd.to_datetime(df_hist["날짜"], errors='coerce').dt.date
             df_hist = df_hist.sort_values(by="날짜", ascending=False)
         
-        # 필터 UI
-        h_c1, h_c2 = st.columns([1, 2])
-        with h_c1:
-            h_filter = st.selectbox("🚦 상태 필터 (기록)", ["전체", "🚨 긴급", "⚠️ 주의", "✅ 정상"], key="hist_final_f1")
-        with h_c2:
-            h_search = st.text_input("🔍 상품명 검색 (기록)", placeholder="검색어 입력...", key="hist_final_f2")
+        # --- [상단 필터 UI: 날짜 범위 / 상태 / 검색] ---
+        f_c1, f_c2, f_c3 = st.columns([1.5, 1, 1.5])
         
-        # 필터 적용
+        with f_c1:
+            # 1. 달력 필터 (기본값: 최근 7일)
+            today = datetime.now().date()
+            ten_days_ago = today - timedelta(days=10)
+            date_range = st.date_input(
+                "🗓️ 조회 기간 선택",
+                value=(ten_days_ago, today),
+                key="hist_date_range"
+            )
+        
+        with f_c2:
+            # 2. 상태 필터
+            h_filter = st.selectbox("🚦 상태 필터", ["전체", "🚨 긴급", "⚠️ 주의", "✅ 정상"], key="hist_status_f")
+            
+        with f_c3:
+            # 3. 상품명 검색
+            h_search = st.text_input("🔍 상품명/옵션 검색", placeholder="검색어 입력...", key="hist_search_f")
+        
+        # --- [데이터 필터링 적용] ---
+        # A. 날짜 범위 필터
+        if len(date_range) == 2:
+            start_date, end_date = date_range
+            df_hist = df_hist[(df_hist["날짜"] >= start_date) & (df_hist["날짜"] <= end_date)]
+            
+        # B. 상태 필터
         if h_filter != "전체":
             df_hist = df_hist[df_hist["상태"] == h_filter]
-        if h_search:
-            df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_search, case=False)]
             
-        st.dataframe(df_hist, use_container_width=True, hide_index=True)
-        
+        # C. 검색어 필터
+        if h_search:
+            df_hist = df_hist[
+                df_hist["상품명"].astype(str).str.contains(h_search, case=False) |
+                df_hist["옵션"].astype(str).str.contains(h_search, case=False)
+            ]
+            
+        # 결과 출력
+        if not df_hist.empty:
+            st.write(f"✅ 총 **{len(df_hist)}**건의 기록이 검색되었습니다.")
+            st.dataframe(df_hist, use_container_width=True, hide_index=True)
+            
+            # 검색 결과 다운로드 버튼 (선택 사항)
+            csv_hist = df_hist.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 검색 결과 CSV 다운로드", data=csv_hist, file_name=f"발주기록_조회.csv", use_container_width=True)
+        else:
+            st.warning("🧐 해당 조건에 맞는 기록이 없습니다. 기간이나 필터를 조절해 보세요.")
+            
     else:
-        st.info("💡 저장된 기록이 없습니다. 5단계에서 저장을 먼저 진행해 주세요.")
+        st.info("💡 아직 저장된 발주 기록이 없습니다. 5단계에서 저장을 먼저 진행해 주세요.")
 
 except Exception as e:
     st.error(f"📡 시트 로딩 오류: {e}")
-    st.warning("팁: 구글 시트 '발주기록' 탭의 첫 줄(제목줄)에 중복된 이름이나 불필요한 공백이 있는지 확인해 주세요.")
+    st.info("팁: 구글 시트 '발주기록' 탭 1행에 중복된 제목이나 빈 칸이 없는지 다시 확인해 주세요.")
