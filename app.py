@@ -90,27 +90,22 @@ with tab1:
 
     # 파일 업로드 시 로직 (데이터 타입 강제 지정 포함)
     if up_file:
-        # 매번 파일을 새로 읽을 수 있도록 세션 상태 체크 방식을 보강
         df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
         df.columns = df.columns.str.strip()
         
-        # [유실 방지 1] 리오더 수량 컬럼이 없으면 생성
+        # [중요] 업로드한 엑셀에 리오더 수량이 없더라도 일단 0으로 세팅 (나중에 시트값으로 덮어씀)
         if "리오더 수량" not in df.columns: 
             df["리오더 수량"] = 0
             
-        # [유실 방지 2] 품절 컬럼 등 모든 텍스트 컬럼의 빈값을 '정상'으로 채우기
         df = df.fillna("") 
-        
         st.session_state.df_raw = df
 
     if st.session_state.get('df_raw') is not None:
         cols = st.session_state.df_raw.columns.tolist()
         
-        # 키워드 우선순위를 조정하여 '품절'이 숫자칸에 안 들어가게 방어
         def auto_idx(keys, exclude_keys=None):
             for i, c in enumerate(cols):
                 column_name = str(c)
-                # 제외 키워드가 포함된 컬럼은 패스 (예: 7일판매 칸에 '품절' 컬럼 제외)
                 if exclude_keys and any(ek in column_name for ek in exclude_keys):
                     continue
                 if any(k in column_name for k in keys): 
@@ -119,7 +114,6 @@ with tab1:
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            # 품절 여부는 '품절' 키워드 우선
             so = st.selectbox("품절 여부", cols, index=auto_idx(['품절']), key="sel_so")
             vn = st.selectbox("공급처", cols, index=auto_idx(['공급처']), key="sel_vn")
             vi = st.selectbox("공급처 상품명", cols, index=auto_idx(['공급처상품명']), key="sel_vi")
@@ -129,7 +123,6 @@ with tab1:
             stk = st.selectbox("정상재고", cols, index=auto_idx(['정상재고']), key="sel_stk")
         with c3:
             av = st.selectbox("가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
-            # 3일/7일 판매 칸에는 '품절' 컬럼이 자동으로 들어가지 않게 제외 설정
             t3 = st.selectbox("3일 판매", cols, index=auto_idx(['3일', '발주'], exclude_keys=['품절']), key="sel_t3")
             t7 = st.selectbox("7일 판매", cols, index=auto_idx(['7일', '1주', '발주'], exclude_keys=['품절']), key="sel_t7")
         
@@ -137,27 +130,50 @@ with tab1:
         ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
 
         if st.button("🚀 데이터 분석 시작", use_container_width=True, type="primary"):
-            # 분석 시작 시점에 선택된 컬럼 정보를 세션에 저장
+            # 분석용 파라미터 저장
             st.session_state.p = {
                 'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 
                 'st': stk, 'av': av, 't3': t3, 't7': t7, 
                 'lt': lt_val, 'ss': ss_val
             }
             
-            # [유실 방지 3] 분석 직전 데이터 타입 강제 변환
-            # 품절 컬럼을 문자열로, 판매량 컬럼을 숫자로 확실히 변환해서 4단계로 넘김
+            # 데이터 타입 보정
             df_final = st.session_state.df_raw.copy()
             df_final[so] = df_final[so].astype(str).str.strip()
-            
-            # 숫자 데이터 보정
             for num_col in [stk, av, t3, t7]:
-                df_final[num_col] = pd.to_numeric(df_final[num_col], errors='coerce').fillna(0)
-            
+                df_final[num_col] = pd.to_numeric(df_final[num_col], errors='coerce').fillna(0).astype(int)
+
+            # ------------------------------------------------------
+            # [핵심] 구글 시트('시트1')에서 기존 리오더 수량 가져오기
+            # ------------------------------------------------------
+            with st.spinner("🔄 구글 시트에서 기존 리오더 수량을 불러오는 중..."):
+                try:
+                    sheet = get_sheet()
+                    m_sh = sheet.worksheet("시트1")
+                    master_df = pd.DataFrame(m_sh.get_all_records())
+
+                    if not master_df.empty and "리오더 수량" in master_df.columns:
+                        # 엑셀 데이터에서 '리오더 수량' 컬럼이 있으면 제거 (시트 데이터와 중복 방지)
+                        if "리오더 수량" in df_final.columns:
+                            df_final = df_final.drop(columns=["리오더 수량"])
+                        
+                        # 상품명(it)과 옵션(op)을 기준으로 병합
+                        reorder_data = master_df[[it, op, "리오더 수량"]].copy()
+                        df_final = pd.merge(df_final, reorder_data, on=[it, op], how="left")
+                        df_final["리오더 수량"] = pd.to_numeric(df_final["리오더 수량"], errors='coerce').fillna(0).astype(int)
+                        st.info("✅ 구글 시트의 최신 리오더 수량을 불러왔습니다.")
+                    else:
+                        if "리오더 수량" not in df_final.columns: df_final["리오더 수량"] = 0
+                        st.warning("⚠️ 시트에 리오더 정보가 없어 0으로 시작합니다.")
+                except Exception as e:
+                    st.error(f"⚠️ 시트 연동 에러: {e}")
+                    if "리오더 수량" not in df_final.columns: df_final["리오더 수량"] = 0
+            # ------------------------------------------------------
+
             st.session_state.df_raw = df_final
             st.session_state.analyzed = True
-            st.success("데이터 분석 준비 완료! 4단계 탭을 확인하세요.")
-            # 분석 완료 후 4단계로 바로 볼 수 있게 rerun (필요시)
-            # st.rerun()
+            st.success("데이터 분석 완료! 4단계로 이동하세요.")
+            st.rerun()
 
 
 # ==========================================================
