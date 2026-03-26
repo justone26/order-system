@@ -481,76 +481,86 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [6단계: 전체 히스토리 관리 (최종 오류 수정 및 정렬 버전)] ---
+# --- [6단계: 전체 히스토리 관리 (컬럼 중복 오류 해결판)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📜 6단계: 전체 히스토리 관리")
 
     @st.cache_data(ttl=3)
-    def get_history_final():
+    def get_history_final_v2():
         try:
             sh = get_sheet().worksheet("발주기록")
             vals = sh.get_all_values()
             if len(vals) < 2: return pd.DataFrame()
             
-            # 헤더와 데이터 분리 및 정리
+            # 헤더 정리 (공백 제거)
             raw_h = [str(h).replace(' ', '').strip() for h in vals[0]]
             df_r = pd.DataFrame(vals[1:])
             
-            # 컬럼 개수 맞춤
+            # 실제 데이터 열 개수에 맞춰 헤더 할당 (부족하면 자르기)
             if df_r.shape[1] > len(raw_h):
                 df_r = df_r.iloc[:, :len(raw_h)]
-            df_r.columns = raw_h
+            df_r.columns = raw_h[:df_r.shape[1]]
+            
             return df_r
         except: return pd.DataFrame()
 
-    df_origin = get_history_final()
+    df_origin = get_history_final_v2()
 
     # 상단 UI
     f1, f2, f3, f4 = st.columns([1, 0.5, 1.2, 1.2])
     with f1:
         today = datetime.now(KST).date()
-        d_range = st.date_input("🗓️ 날짜 범위", value=(today, today), key="v6_date_ok")
+        d_range = st.date_input("🗓️ 날짜 범위", value=(today, today), key="v6_date_fix")
     with f2:
         st.write(""); st.write("")
-        search_trigger = st.button("🔍 검색", use_container_width=True, type="primary", key="v6_btn_ok")
+        search_trigger = st.button("🔍 검색", use_container_width=True, type="primary", key="v6_btn_fix")
     with f3:
-        h_q = st.text_input("🔍 상품명 검색", placeholder="결과 내 검색...", key="v6_q_ok")
+        h_q = st.text_input("🔍 상품명 검색", placeholder="결과 내 검색...", key="v6_q_fix")
     with f4:
         batch_list = ["전체보기"]
         if not df_origin.empty:
-            # 첫 번째 컬럼(보통 날짜시간) 기준으로 날짜 추출
             time_col = df_origin.columns[0]
             df_origin["_D"] = df_origin[time_col].astype(str).str.slice(0, 10)
             if len(d_range) == 2:
                 s_d, e_d = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
                 f_b = df_origin[(df_origin["_D"] >= s_d) & (df_origin["_D"] <= e_d)]
                 batch_list += sorted(f_b[time_col].astype(str).str.slice(0, 16).unique().tolist(), reverse=True)
-        selected_batch = st.selectbox("📥 저장 회차 선택", batch_list, key="v6_sel_ok")
+        selected_batch = st.selectbox("📥 저장 회차 선택", batch_list, key="v6_sel_fix")
 
-    # 결과 출력
+    # 검색 결과 출력
     if search_trigger or h_q or selected_batch != "전체보기":
         if not df_origin.empty:
             df_v = df_origin.copy()
+            
+            # 날짜/회차 필터
             if len(d_range) == 2:
                 s_s, e_s = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
                 df_v = df_v[(df_v["_D"] >= s_s) & (df_v["_D"] <= e_s)]
             if selected_batch != "전체보기":
                 df_v = df_v[df_v.iloc[:, 0].astype(str).str.contains(selected_batch)]
+            
+            # 상품명 검색 (모든 열 대상)
             if h_q:
-                # 모든 열에서 검색어 찾기 (밀림 방지용)
-                df_v = df_v[df_v.astype(str).apply(lambda x: x.str.contains(h_q, case=False)).any(axis=1)]
+                mask = df_v.astype(str).apply(lambda x: x.str.contains(h_q, case=False)).any(axis=1)
+                df_v = df_v[mask]
 
             if not df_v.empty:
-                # 표준 컬럼 순서로 강제 재배치
+                # [오류 해결 포인트] 컬럼 추출 시 Series로 강제 변환하여 중복 충돌 방지
                 targets = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
                 df_final = pd.DataFrame()
+                
                 for t in targets:
                     match = [c for c in df_v.columns if t in c or c in t]
-                    df_final[t] = df_v[match[0]] if match else "데이터없음"
+                    if match:
+                        # [핵심] 여러 개가 검색되어도 첫 번째 것만(iloc[:,0]) 가져옴
+                        col_data = df_v[match].iloc[:, 0] if isinstance(df_v[match], pd.DataFrame) else df_v[match]
+                        df_final[t] = col_data
+                    else:
+                        df_final[t] = "데이터없음"
 
-                # 상태 아이콘 실시간 계산
+                # 상태 아이콘 계산
                 def get_st_icon(row):
                     try:
                         v = str(row.get("권장 발주수량", "0")).replace(',', '').strip()
@@ -561,19 +571,16 @@ if st.session_state.get('analyzed'):
 
                 st.success(f"✅ 총 {len(df_final)}건 조회 완료")
                 st.dataframe(
-                    df_final,
+                    df_final.sort_values(by="날짜시간", ascending=False),
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "상태": st.column_config.TextColumn("상태", width="small"),
-                        "상품명": st.column_config.TextColumn("상품명", width=350), # 이모지 밀림 방지 너비
+                        "상품명": st.column_config.TextColumn("상품명", width=350),
                         "옵션": st.column_config.TextColumn("옵션", width=120)
                     }
                 )
-                
-                csv = df_final.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                st.download_button("📥 CSV 다운로드", csv, f"발주기록_{datetime.now(KST).strftime('%m%d')}.csv", use_container_width=True)
             else:
-                st.warning("🧐 해당 조건의 데이터가 없습니다.")
+                st.warning("🧐 조건에 맞는 데이터가 없습니다.")
         else:
-            st.error("📍 '발주기록' 시트 데이터 로드에 실패했습니다.")
+            st.error("📍 '발주기록' 시트에 데이터가 없습니다.")
