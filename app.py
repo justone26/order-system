@@ -205,42 +205,37 @@ with tab1:
 
 
 # ==========================================================
-# --- [4단계: 데이터 편집 및 재고 관리 (계산 오류 수정본)] ---
+# --- [4단계: 데이터 편집 및 재고 관리 (날짜 필터 복구)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
 
-    # 설정값 (사이드바에서 설정한 컬럼명들)
     p = st.session_state.p
     sold_out_col, item, option = p['so'], p['it'], p['op']
     vendor, v_item = p['vn'], p['vi']
     stock, avail, t3day, t7day = p['st'], p['av'], p['t3'], p['t7']
     lt, ss = p['lt'], p['ss']
 
-    # 1. 작업용 데이터 복사 및 "강제 숫자 변환" (0으로 나오는 문제 해결 핵심)
+    # 1. 데이터 준비 및 숫자 타입 변환
     df_work = st.session_state.df_raw.copy()
-    
-    # 계산에 필요한 컬럼들을 강제로 정수형으로 변환합니다.
     num_cols = [stock, avail, t3day, t7day]
     for col in num_cols:
         if col in df_work.columns:
             df_work[col] = pd.to_numeric(df_work[col], errors='coerce').fillna(0).astype(int)
     
-    # 리오더 수량 컬럼 확인 및 변환
     if "리오더 수량" not in df_work.columns: 
         df_work["리오더 수량"] = 0
     df_work["리오더 수량"] = pd.to_numeric(df_work["리오더 수량"], errors='coerce').fillna(0).astype(int)
     df_work["리오더 입고수량"] = 0 
 
-    # 2. 입고 이력 합산 (과거 입고 데이터)
+    # 2. 입고 이력 합산 (과거리오더 입고량)
     def get_incoming_sum():
         try:
             sh_h = get_sheet().worksheet("입고기록")
             h_data = sh_h.get_all_records()
             if h_data:
                 h_df = pd.DataFrame(h_data)
-                # '상품명', '옵션' 컬럼이 입고기록 시트에 있어야 합니다.
                 return h_df.groupby(['상품명', '옵션'])['입고수량'].sum().reset_index()
             return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
         except: return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
@@ -249,30 +244,26 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work = pd.merge(df_work, in_sum_df.rename(columns={"입고수량":"과거리오더 입고"}), 
                        left_on=[item, option], right_on=['상품명', '옵션'], how="left").fillna(0)
 
-    # 3. [핵심 계산] 데이터가 0이 되지 않도록 로직 보정
-    # 일판매량: 7일 판매량 우선, 없으면 3일 판매량 기준
-    def calc_daily_sales(row):
-        t7 = row[t7day]
-        t3 = row[t3day]
-        if t7 > 0: return round(t7 / 7, 2)
-        if t3 > 0: return round(t3 / 3, 2)
+    # 3. 지표 계산 (일판매량 반올림)
+    def calc_daily_sales_int(row):
+        t7, t3 = row[t7day], row[t3day]
+        if t7 > 0: return int(round(t7 / 7))
+        if t3 > 0: return int(round(t3 / 3))
         return 0
 
-    df_work['일판매량'] = df_work.apply(calc_daily_sales, axis=1)
-    df_work['3일 발주수량'] = (df_work['일판매량'] * 3).round(0).astype(int)
-    
-    # 권장발주량 계산: (일판매량 * (리드타임 + 안전재고)) - (가용재고 + 리오더수량)
-    df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).round(0).astype(int)
-    
-    # 화면 표시를 위해 일판매량도 정수로 변환 (보기 편하게)
-    df_work['일판매량'] = df_work['일판매량'].round(1)
+    df_work['일판매량'] = df_work.apply(calc_daily_sales_int, axis=1)
+    df_work['3일 발주수량'] = (df_work['일판매량'] * 3).astype(int)
+    df_work['권장발주량'] = ((df_work['일판매량'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
-    # 4. 필터 UI
+    # 4. 상단 필터 (🚦날짜 필터 복구!)
     f_c1, f_c2, f_c3 = st.columns([1, 2, 1])
     filter_m = f_c1.selectbox("🚦 상태 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_full_filter")
     search_q = f_c2.text_input("🔍 상품명/옵션 검색", placeholder="검색어를 입력하세요...", key="v4_full_search")
+    
+    # [복구] 과거 입고 날짜 선택
+    hist_date_4 = f_c3.date_input("🗓️ 입고 날짜", datetime.now(KST).date(), key="v4_incoming_date")
 
-    # 필터 적용
+    # 필터 로직
     is_soldout = df_work[sold_out_col].astype(str).str.contains('품절', na=False)
     if filter_m == "정상만": df_filtered = df_work[~is_soldout]
     elif filter_m == "품절만": df_filtered = df_work[is_soldout]
@@ -282,7 +273,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_q, case=False) | 
                                   df_filtered[option].astype(str).str.contains(search_q, case=False)]
 
-    # 5. 화면 출력 컬럼 설정
+    # 5. 화면 출력
     df_display = df_filtered.rename(columns={
         sold_out_col: "품절상태", vendor: "공급쳐", v_item: "공급쳐 상품명", 
         item: "상품명", option: "옵션", stock: "정상재고", avail: "가용재고"
@@ -298,8 +289,8 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         edited_v4 = st.data_editor(
             df_display[final_cols], use_container_width=True, hide_index=False, key="v4_editor_full",
             column_config={
-                "리오더 입고수량": st.column_config.NumberColumn(format="%d", min_value=0),
-                "일판매량": st.column_config.NumberColumn(format="%.1f")
+                "일판매량": st.column_config.NumberColumn(format="%d"),
+                "리오더 입고수량": st.column_config.NumberColumn(format="%d", min_value=0)
             }
         )
 
@@ -309,30 +300,30 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 sheet = get_sheet()
                 m_sh = sheet.worksheet("시트1") 
                 h_sh = sheet.worksheet("입고기록")
-                now_kst = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+                
+                # [수정] 선택한 날짜와 현재 시간을 조합하여 기록
+                save_time = f"{hist_date_4.strftime('%Y-%m-%d')} {datetime.now(KST).strftime('%H:%M:%S')}"
 
                 count = 0
                 for r_idx_str, changes in user_edits.items():
                     target_idx = df_display.index[int(r_idx_str)]
                     
-                    # 리오더 수량 직접 수정
                     if "리오더 수량" in changes:
                         st.session_state.df_raw.at[target_idx, "리오더 수량"] = int(changes["리오더 수량"])
                     
-                    # 리오더 입고수량 차감
                     if "리오더 입고수량" in changes:
                         in_qty = int(changes["리오더 입고수량"])
                         if in_qty > 0:
                             old_val = int(st.session_state.df_raw.at[target_idx, "리오더 수량"])
                             st.session_state.df_raw.at[target_idx, "리오더 수량"] = max(0, old_val - in_qty)
-                            h_sh.append_row([now_kst, str(df_display.at[target_idx, "상품명"]), str(df_display.at[target_idx, "옵션"]), in_qty])
+                            # 선택한 날짜(save_time)로 로그 기록
+                            h_sh.append_row([save_time, str(df_display.at[target_idx, "상품명"]), str(df_display.at[target_idx, "옵션"]), in_qty])
                     count += 1
 
                 if count > 0:
                     df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
                     m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-                    st.success(f"✅ {count}건 저장 완료!"); time.sleep(1); st.rerun()
-
+                    st.success(f"✅ {count}건 저장 완료! (기록 날짜: {hist_date_4})"); time.sleep(1); st.rerun()
 
 
 # ==========================================================
