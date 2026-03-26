@@ -325,7 +325,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [5단계: 추가 오더 관리 (위험군 세트 옵션 통합 노출)] ---
+# --- [5단계: 추가 오더 관리 (상품명/옵션명 정렬 고정)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -337,7 +337,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     avail_col = p['av']
     lt, ss = p['lt'], p['ss']
 
-    # 1. 데이터 준비 및 숫자 변환 (기본 세팅 유지)
+    # 1. 데이터 준비 및 숫자 변환 (세팅 고정)
     df_v5 = st.session_state.df_raw.copy()
     if "리오더 수량" not in df_v5.columns: df_v5["리오더 수량"] = 0
     
@@ -357,7 +357,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_v5 = pd.merge(df_v5, in_sum_v5.rename(columns={"입고수량":"과거입고"}), 
                      left_on=[item, option], right_on=['상품명', '옵션'], how="left").fillna(0)
 
-    # 3. 지표 계산 및 위험 아이콘 분류 (🚨/⚠️/✅)
+    # 3. 지표 계산 및 위험 아이콘 분류
     df_v5['일판매'] = df_v5.apply(lambda r: int(round(r[p['t7']]/7)) if r[p['t7']]>0 else (int(round(r[p['t3']]/3)) if r[p['t3']]>0 else 0), axis=1)
     df_v5['권장발주'] = ((df_v5['일판매'] * (lt + ss)) - (df_v5[avail_col] + df_v5['리오더 수량'])).clip(lower=0).astype(int)
 
@@ -376,35 +376,31 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     with v5_f3:
         date_v5 = st.date_input("🗓️ 발주 날짜", datetime.now(KST).date(), key="v5_date")
 
-    # 5. ⭐ [핵심 필터 로직] 품절 제외 + 위험군 포함 세트 전체 노출
-    # ① 품절인 행은 무조건 제거
+    # 5. [필터 로직] 품절 제외 + 위험군 포함 세트 전체 노출
     df_ns = df_v5[~df_v5[sold_out_col].astype(str).str.contains('품절', na=False)].copy()
 
     if v5_filter == "🚨 고위험/주의":
-        # 권장발주가 1개라도 있는(🚨 또는 ⚠️) 상품의 '상품명'을 찾음
         danger_names = df_ns[df_ns['권장발주'] > 0][item].unique()
-        # 그 상품명에 해당하는 모든 옵션을 다 가져옴 (여기서 ✅ 정상 옵션인 M 사이즈 등도 같이 포함됨)
         df_v5_filtered = df_ns[df_ns[item].isin(danger_names)].copy()
     else:
-        # 모든 옵션이 '정상'인 상품군만 필터링
         danger_names = df_ns[df_ns['권장발주'] > 0][item].unique()
         df_v5_filtered = df_ns[~df_ns[item].isin(danger_names)].copy()
 
-    # 정렬: 상품명으로 묶고, 그 안에서 권장발주가 높은 순서대로
-    df_v5_filtered = df_v5_filtered.sort_values([item, '권장발주'], ascending=[True, False])
+    # ⭐ [핵심 수정] 상품명(가나다순) -> 옵션명(가나다순) 정렬 고정
+    df_v5_filtered = df_v5_filtered.sort_values([item, option], ascending=[True, True])
     
     if search_v5:
         df_v5_filtered = df_v5_filtered[df_v5_filtered[item].str.contains(search_v5, case=False)]
 
-    # 6. 화면 출력용 컬럼 정리 (고정값)
+    # 6. 화면 출력용 컬럼 정리
     df_v5_display = df_v5_filtered.rename(columns={
         item: "상품명", option: "옵션", vendor_item_col: "공급처상품명", avail_col: "가용"
     })
     df_v5_display["추가오더"] = 0
     final_cols = ["경고", "상품명", "옵션", "공급처상품명", "가용", "리오더 수량", "추가오더", "과거입고", "일판매", "권장발주"]
 
-    # 7. 데이터 에디터 (UI 고정)
-    st.info(f"📊 {v5_filter} 기준 - 품절 제외 {len(df_v5_filtered)}개 옵션 노출 중")
+    # 7. 데이터 에디터 (상품명/옵션 강조)
+    st.info(f"📊 {v5_filter} - 상품/옵션순 정렬 완료 ({len(df_v5_filtered)}건)")
     edited_data = st.data_editor(
         df_v5_display[final_cols],
         use_container_width=True,
@@ -413,13 +409,14 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         column_config={
             "경고": st.column_config.TextColumn(width=85),
             "상품명": st.column_config.TextColumn(width=300),
+            "옵션": st.column_config.TextColumn(width=120), # 옵션칸 살짝 확장
             "공급처상품명": st.column_config.TextColumn(width=180),
-            "추가오더": st.column_config.NumberColumn(width=80, format="%d", min_value=0),
+            "추가오더": st.column_config.NumberColumn("추가오더", width=80, format="%d", min_value=0),
             "권장발주": st.column_config.NumberColumn(width=75, format="%d"),
         }
     )
 
-    # 8. 하단 버튼 (저장/다운로드 나란히)
+    # 8. 하단 버튼
     btn_c1, btn_c2 = st.columns(2)
     with btn_c1:
         if st.button("📝 발주 기록 저장", use_container_width=True, type="primary"):
@@ -441,7 +438,6 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     with btn_c2:
         csv_data = df_v5_display[final_cols].to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 엑셀 다운로드", data=csv_data, file_name=f"발주요청_{date_v5}.csv", use_container_width=True)
-
 
 
 
