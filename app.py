@@ -22,35 +22,23 @@ def get_sheet():
     except:
         return None
 
-# --- [함수 정의: 반드시 4단계 소스보다 위쪽에 있어야 합니다] ---
+# --- [함수 정의: 데이터 유실 방지를 위한 안전한 머지 로직] ---
 def get_incoming_history():
-    """구글 시트의 '입고기록' 탭에서 데이터를 읽어와서 상품명/옵션별 합계를 반환합니다."""
     try:
-        # 기존에 정의된 get_sheet 함수를 호출하여 시트에 접속
-        sheet = get_sheet() 
+        sheet = get_sheet()
         ws = sheet.worksheet("입고기록")
         data = ws.get_all_records()
         if data:
-            df_hist = pd.DataFrame(data)
-            # '상품명', '옵션' 기준으로 '수량'을 합산하여 4단계에 전달
-            # 컬럼명이 '수량'인지, '입고수량'인지 사장님 시트 확인 필요
-            summary = df_hist.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+            df_h = pd.DataFrame(data)
+            # 공백 제거로 매칭 성공률 높임
+            df_h['상품명'] = df_h['상품명'].astype(str).str.strip()
+            df_h['옵션'] = df_h['옵션'].astype(str).str.strip()
+            summary = df_h.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
             summary.rename(columns={'수량': '과거리오더 입고'}, inplace=True)
             return summary
         return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
-    except Exception:
-        # 시트가 없거나 오류 발생 시 빈 데이터프레임 반환하여 NameError 방지
+    except:
         return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
-
-def save_history_to_gsheet(df_log, log_type="입고"):
-    """입고 내역을 구글 시트에 저장하는 함수"""
-    try:
-        sheet = get_sheet()
-        target_ws = "입고기록" if log_type == "입고" else "발주기록"
-        ws = sheet.worksheet(target_ws)
-        ws.append_rows(df_log.values.tolist())
-    except Exception as e:
-        st.error(f"📡 시트 저장 실패: {e}")
         
 # --- [세션 상태 초기화] ---
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
