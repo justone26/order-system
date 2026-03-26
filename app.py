@@ -335,7 +335,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [6단계: 전체 히스토리 내역 (저장 회차별 구분)] ---
+# --- [6단계: 전체 히스토리 내역 (상단 선택 및 날짜 노출)] ---
 # ==========================================================
 st.divider()
 st.subheader("📜 6단계: 전체 히스토리 내역")
@@ -346,68 +346,80 @@ try:
     all_values = worksheet.get_all_values()
     
     if len(all_values) > 1:
-        # 1. 데이터 로드 (헤더: 날짜시간 + 7개 항목)
-        raw_data = all_values[1:]
-        # 컬럼 개수가 8개인지 확인 (날짜시간 + 상품명 + 옵션 + 공급쳐 + 가용 + 리오더 + 추가 + 권장)
-        df_hist = pd.DataFrame(raw_data)
-        
-        # 컬럼 이름 강제 할당 (8개 기준)
+        # 1. 데이터 로드 및 이름 고정 (8개 항목)
+        df_hist = pd.DataFrame(all_values[1:])
         target_cols = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
+        
+        # 컬럼 개수 맞추기
         if len(df_hist.columns) >= 8:
             df_hist.columns = target_cols + list(df_hist.columns[8:])
-            df_hist = df_hist[target_cols] # 8개만 유지
+            df_hist = df_hist[target_cols]
 
-        # 2. 저장 회차(Batch) 구분 로직
-        # 동일한 '날짜시간'을 가진 데이터끼리 그룹화하여 번호 부여
-        df_hist['날짜_만'] = df_hist['날짜시간'].astype(str).str.slice(0, 10)
+        # 날짜 필터링용 임시 컬럼
+        df_hist["날짜_만"] = df_hist["날짜시간"].astype(str).str.slice(0, 10)
         
-        # 3. 필터 UI
-        h_f1, h_f2 = st.columns([2, 2])
-        with h_f1:
+        # 2. 상단 필터 레이아웃 (날짜 / 검색 / 회차선택)
+        f1, f2, f3 = st.columns([1, 1.5, 1.5])
+        
+        with f1:
             today = datetime.now().date()
-            date_range = st.date_input("🗓️ 조회 날짜 범위", value=(today, today), key="h_date_range_v6")
-        with h_f2:
-            h_q = st.text_input("🔍 상품명 검색 (히스토리)", key="h_search_v6")
+            d_range = st.date_input("🗓️ 날짜 범위", value=(today, today), key="v6_date_final")
+        
+        # 날짜 1차 필터링
+        if len(d_range) == 2:
+            s_s, e_s = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
+            df_hist = df_hist[(df_hist["날짜_만"] >= s_s) & (df_hist["날짜_만"] <= e_s)]
 
-        # 필터 적용
-        if len(date_range) == 2:
-            start_s, end_s = date_range[0].strftime('%Y-%m-%d'), date_range[1].strftime('%Y-%m-%d')
-            df_hist = df_hist[(df_hist["날짜_만"] >= start_s) & (df_hist["날짜_만"] <= end_s)]
+        # 3. [핵심] 저장 회차 선택박스 구성
+        # 최신순으로 정렬 후 고유한 시간대 추출
+        df_hist = df_hist.sort_values(by="날짜시간", ascending=False)
+        all_batches = df_hist["날짜시간"].unique().tolist()
+        
+        with f3:
+            if all_batches:
+                # 사장님이 말씀하신 "가독성"을 위해 선택박스로 배치
+                selected_batch = st.selectbox(
+                    "📥 저장 회차 선택 (최신순)", 
+                    ["전체보기"] + all_batches,
+                    key="v6_batch_select"
+                )
+            else:
+                selected_batch = "기록 없음"
+                st.write("조회된 기록이 없습니다.")
+
+        with f2:
+            h_q = st.text_input("🔍 상품명 검색", placeholder="내역 중 검색...", key="v6_search_final")
+
+        # 4. 최종 필터링 적용
+        df_final_view = df_hist.copy()
+        
+        if selected_batch != "전체보기" and selected_batch != "기록 없음":
+            df_final_view = df_final_view[df_final_view["날짜시간"] == selected_batch]
             
         if h_q:
-            df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False)]
+            df_final_view = df_final_view[df_final_view["상품명"].astype(str).str.contains(h_q, case=False)]
 
-        if not df_hist.empty:
-            # [핵심] 시간순 정렬 (최신 저장이 위로)
-            df_hist = df_hist.sort_values(by="날짜시간", ascending=False)
+        # 5. 결과 출력 (날짜시간 포함 8개 항목 전체 노출)
+        if not df_final_view.empty:
+            st.write(f"✅ 총 **{len(df_final_view)}**건의 데이터가 조회되었습니다.")
             
-            # 저장 회차 구분 (Unique한 날짜시간 추출)
-            unique_batches = df_hist["날짜시간"].unique()
-            total_batches = len(unique_batches)
+            # 사장님 요청대로 '날짜시간' 포함해서 표에 뿌려줍니다.
+            view_cols = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
+            st.dataframe(df_final_view[view_cols], use_container_width=True, hide_index=True)
             
-            st.write(f"✅ 총 **{total_batches}번**의 저장 기록이 발견되었습니다.")
-            
-            # 4. 회차별로 표를 따로 그려서 구분해줌
-            for i, batch_time in enumerate(unique_batches):
-                with st.expander(f"📥 [{total_batches - i}회차 저장] - {batch_time}", expanded=(i==0)):
-                    batch_df = df_hist[df_hist["날짜시간"] == batch_time]
-                    
-                    # 화면 표시용 (날짜시간 제외한 7개 항목)
-                    view_cols = ["상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
-                    st.dataframe(batch_df[view_cols], use_container_width=True, hide_index=True)
-                    
-                    # 개별 회차 다운로드 버튼
-                    csv_batch = batch_df[view_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button(
-                        f"📥 {batch_time} 발주서 다운로드", 
-                        csv_batch, 
-                        f"발주기록_{batch_time.replace(':','-')}.csv", 
-                        key=f"btn_down_{batch_time}"
-                    )
+            # 다운로드 버튼
+            csv_data = df_final_view[view_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button(
+                "📥 현재 조회된 내역 다운로드", 
+                csv_data, 
+                f"발주기록_조회결과.csv", 
+                use_container_width=True,
+                key="v6_download_btn"
+            )
         else:
-            st.warning("🧐 조회된 기록이 없습니다.")
+            st.warning("🧐 조건에 맞는 기록이 없습니다.")
             
     else:
         st.info("💡 아직 저장된 발주 기록이 없습니다.")
 except Exception as e:
-    st.error(f"📡 히스토리 로딩 중 오류 발생: {e}")
+    st.error(f"📡 히스토리 로딩 오류: {e}")
