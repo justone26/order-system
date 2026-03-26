@@ -325,7 +325,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [5단계: 추가 오더 관리 (엑셀 다운로드 & 기록 저장)] ---
+# --- [5단계: 추가 오더 관리 (st.form 에러 수정 및 완결)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -348,7 +348,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_v5["리오더 수량"] = pd.to_numeric(df_v5["리오더 수량"], errors='coerce').fillna(0).astype(int)
     df_v5["추가오더 입력"] = 0 
 
-    # 2. 과거 입고량 데이터 병합 (시각적 확인용)
+    # 2. 과거 입고량 데이터 병합
     def get_v5_incoming_sum():
         try:
             sh_h = get_sheet().worksheet("입고기록")
@@ -367,7 +367,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_v5['일판매'] = df_v5.apply(lambda r: int(round(r[t7day]/7)) if r[t7day]>0 else (int(round(r[t3day]/3)) if r[t3day]>0 else 0), axis=1)
     df_v5['권장발주'] = ((df_v5['일판매'] * (lt + ss)) - (df_v5[avail] + df_v5['리오더 수량'])).clip(lower=0).astype(int)
 
-    # 4. 상단 레이아웃 (🚦 필터 / 🔍 검색 / 🗓️ 날짜)
+    # 4. 상단 레이아웃 (🚦 정렬 / 🔍 검색 / 🗓️ 날짜)
     v5_f1, v5_f2, v5_f3 = st.columns([1, 1.5, 1])
     with v5_f1: v5_filter = st.selectbox("🚦 정렬 기준", ["위험군 우선", "상품명 순", "공급쳐 순"], key="v5_sort_filter")
     with v5_f2: search_v5 = st.text_input("🔍 위험군 상품 검색", placeholder="상품명 입력...", key="v5_final_search")
@@ -396,7 +396,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     })
     final_cols_v5 = ["상태", "공급쳐", "상품명", "옵션", "공급상품명", "정상", "가용", "리오더 수량", "과거입고", "추가오더 입력", "일판매", "권장발주"]
 
-    # 7. 데이터 에디터 및 저장/다운로드 폼
+    # 7. 데이터 에디터 및 기록 저장 폼
     with st.form("v5_final_order_form"):
         st.info(f"🚩 정상 판매 중인 위험군 상품 {len(danger_item_names)}종의 전체 옵션을 표시합니다.")
         
@@ -415,22 +415,15 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 "권장발주": st.column_config.NumberColumn(width=70, format="%d"),
             }
         )
-
-        btn_c1, btn_c2 = st.columns(2)
-        with btn_c1:
-            submit_v5 = st.form_submit_button("📝 발주 확정 (기록 저장 및 합산)", use_container_width=True, type="primary")
-        with btn_c2:
-            # 엑셀 다운로드 준비
-            order_summary = df_v5_display[df_v5_display["추가오더 입력"] > 0] if not edited_v5.get("edited_rows") else df_v5_display
-            csv = df_v5_display[final_cols_v5].to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 현재 리스트 엑셀(CSV) 다운로드", data=csv, file_name=f"발주요청_{date_v5}.csv", mime='text/csv', use_container_width=True)
+        
+        submit_v5 = st.form_submit_button("📝 발주 확정 및 기록 저장", use_container_width=True, type="primary")
 
         if submit_v5:
             user_edits_v5 = st.session_state["v5_editor_final"].get("edited_rows", {})
             if user_edits_v5:
                 sheet = get_sheet()
                 m_sh = sheet.worksheet("시트1")
-                o_sh = sheet.worksheet("발주기록") # 발주기록 시트 별도 저장
+                o_sh = sheet.worksheet("발주기록")
                 save_time = f"{date_v5.strftime('%Y-%m-%d')} {datetime.now(KST).strftime('%H:%M:%S')}"
 
                 count = 0
@@ -439,10 +432,8 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     if "추가오더 입력" in changes:
                         add_qty = int(changes["추가오더 입력"])
                         if add_qty > 0:
-                            # 1) 마스터 시트 리오더 수량 합산
                             curr = int(st.session_state.df_raw.at[target_idx, "리오더 수량"])
                             st.session_state.df_raw.at[target_idx, "리오더 수량"] = curr + add_qty
-                            # 2) 발주기록 시트에 개별 저장
                             o_sh.append_row([save_time, str(df_v5_display.at[target_idx, "공급쳐"]), 
                                              str(df_v5_display.at[target_idx, "상품명"]), 
                                              str(df_v5_display.at[target_idx, "옵션"]), add_qty])
@@ -451,9 +442,20 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 if count > 0:
                     df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
                     m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-                    st.success(f"✅ {count}건의 발주 내역이 기록되었습니다!"); time.sleep(0.5); st.rerun()
+                    st.success(f"✅ {count}건의 발주 내역이 저장되었습니다!"); time.sleep(0.5); st.rerun()
             else:
                 st.warning("입력된 추가오더 수량이 없습니다.")
+
+    # 8. ⭐ [중요] 엑셀 다운로드 버튼은 st.form 밖으로 배치
+    st.write("") # 간격 조절
+    csv_data = df_v5_display[final_cols_v5].to_csv(index=False).encode('utf-8-sig')
+    st.download_button(
+        label="📥 현재 리스트 엑셀(CSV) 다운로드",
+        data=csv_data,
+        file_name=f"발주요청_{date_v5}.csv",
+        mime='text/csv',
+        use_container_width=True
+    )
 
 
 # ==========================================================
