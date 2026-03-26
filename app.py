@@ -234,7 +234,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     search_q = f_c2.text_input("🔍 상품명/옵션 검색", placeholder="검색어를 입력하세요...", key="v4_full_search")
     hist_date_4 = f_c3.date_input("🗓️ 입고 날짜", datetime.now(KST).date(), key="v4_full_date")
 
-    # 2. [입고 이력 불러오기] - 시트 이름: '입고기록'
+    # 2. [입고 이력 불러오기]
     def get_incoming_sum():
         try:
             sh_h = get_sheet().worksheet("입고기록")
@@ -254,15 +254,12 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
     # 4. 필터 로직
     is_soldout = df_work[sold_out_col].str.contains('품절', na=False)
-    if filter_m == "정상만": df_filtered = df_work[~is_soldout]
-    elif filter_m == "품절만": df_filtered = df_work[is_soldout]
-    else: df_filtered = df_work
-
+    df_filtered = df_work[is_soldout] if filter_m == "품절만" else (df_work[~is_soldout] if filter_m == "정상만" else df_work)
     if search_q:
         df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_q, case=False) | 
                                   df_filtered[option].astype(str).str.contains(search_q, case=False)]
 
-    # 5. 결과 출력 (컬럼명 변경 및 에디터)
+    # 5. 결과 출력 및 저장
     df_display = df_filtered.rename(columns={sold_out_col: "품절상태", vendor: "공급쳐", v_item: "공급쳐 상품명", item: "상품명", option: "옵션", stock: "정상재고", avail: "가용재고"})
     final_cols = ["품절상태", "공급쳐", "상품명", "옵션", "공급쳐 상품명", "정상재고", "가용재고", "리오더 수량", "리오더 입고수량", "과거리오더 입고", "3일 발주수량", "일판매량", "권장발주량"]
 
@@ -290,16 +287,16 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     if "리오더 입고수량" in val:
                         in_qty = int(val["리오더 입고수량"])
                         orig_idx = df_display.index[int(r_idx)]
-                        # 차감 로직
                         new_val = max(0, int(df_display.at[orig_idx, "리오더 수량"]) - in_qty)
                         st.session_state.df_raw.at[orig_idx, "리오더 수량"] = new_val
-                        # 이력 저장
                         h_sh.append_row([now_kst, df_display.at[orig_idx, "상품명"], df_display.at[orig_idx, "옵션"], in_qty])
                 
-                # 마스터 업데이트
-                m_sh.update([st.session_state.df_raw.columns.values.tolist()] + st.session_state.df_raw.values.tolist())
+                # [수정] 구글 시트 전송 전 데이터 클렌징 (JSON 에러 방지)
+                df_save = st.session_state.df_raw.copy().fillna("")
+                df_save = df_save.astype(str) # 모든 데이터를 텍스트로 변환하여 안전하게 전송
+                m_sh.update([df_save.columns.values.tolist()] + df_save.values.tolist())
+                
                 st.success("✅ 입고 차감 및 '시트1' 저장이 완료되었습니다."); time.sleep(1); st.rerun()
-
 
 # ==========================================================
 # --- [5단계: 최종 발주 (합산 및 시트1/발주기록 연동)] ---
