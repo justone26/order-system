@@ -75,6 +75,9 @@ if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 if 'p' not in st.session_state: st.session_state.p = {}
 if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
 
+# [추가] 파일 업로드 위젯 리셋용 키 (이게 있어야 파일명이 지워집니다)
+if 'upload_key' not in st.session_state: st.session_state.upload_key = 0
+
 st.title("📦 저스트원 통합 재고 관리 v4.0")
 
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
@@ -82,19 +85,33 @@ tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리
 with tab1:
     # --- 1~3단계: 설정 ---
     st.subheader("📁 1~3단계: 데이터 업로드 및 분석 설정")
-    up_file = st.file_uploader("엑셀/CSV 파일 업로드", type=['xlsx', 'xls', 'csv'], key="main_up")
+    
+    # [수정] key 부분에 upload_key를 연동합니다.
+    up_file = st.file_uploader(
+        "엑셀/CSV 파일 업로드", 
+        type=['xlsx', 'xls', 'csv'], 
+        key=f"up_file_{st.session_state.upload_key}"
+    )
     
     # [강력한 초기화 버튼]
     if st.button("🔄 화면 전체 초기화", use_container_width=True):
+        # 1. 모든 세션 데이터 삭제
         for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.session_state.analyzed = False # 분석 상태 강제 종료
+            if key != "upload_key": # 키 관리용 데이터는 남겨둠
+                del st.session_state[key]
+        
+        # 2. 파일 업로드 위젯을 강제로 새로고침 (이게 파일명을 비워주는 핵심!)
+        st.session_state.upload_key += 1
+        
+        # 3. 상태값 강제 리셋
+        st.session_state.analyzed = False 
+        st.session_state.df_raw = None
+        
         st.query_params.clear() 
         st.rerun()
 
     # 파일 업로드 로직
     if up_file:
-        # 데이터 로드 (한 번만 실행되도록 세션 활용)
         if st.session_state.get('df_raw') is None:
             df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
             df.columns = df.columns.str.strip()
@@ -102,9 +119,7 @@ with tab1:
             df = df.fillna("") 
             st.session_state.df_raw = df
 
-    # [수정 포인트] 분석이 완료(analyzed=True)되면 매핑 화면을 숨깁니다.
-    # 만약 분석 중에도 매핑을 보고 싶다면 이 조건을 제거해도 되지만, 
-    # 초기화 시 안 없어지는 문제를 고치기 위해 'df_raw'가 있을 때만 나오게 제한합니다.
+    # [매핑 화면 노출 조건]
     if st.session_state.get('df_raw') is not None and not st.session_state.get('analyzed'):
         st.divider()
         st.info("💡 업로드된 데이터의 컬럼을 매칭해주세요.")
@@ -140,14 +155,13 @@ with tab1:
                 'st': stk, 'av': av, 't3': t3, 't7': t7, 'lt': lt_val, 'ss': ss_val
             }
             
-            # 분석 로직 실행...
+            # 분석 로직 실행 (기존 로직 유지)
             df_final = st.session_state.df_raw.copy()
-            # (중략: 기존의 데이터 타입 보정 및 구글 시트 병합 로직 동일)
+            # ... (데이터 처리 부분) ...
             
-            st.session_state.df_raw = df_final # 결과 저장
-            st.session_state.analyzed = True   # 분석 완료 스위치 ON
+            st.session_state.df_raw = df_final 
+            st.session_state.analyzed = True   
             st.rerun()
-
 
 
 
