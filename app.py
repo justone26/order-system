@@ -328,73 +328,65 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 
-# --- [6단계: 전체 히스토리 내역 - 누락 방지 보강] ---
+# --- [6단계: 전체 히스토리 내역 - 날짜/컬럼 강제 매칭] ---
 st.divider()
 st.subheader("📜 6단계: 전체 히스토리 내역")
 
 try:
     sheet = get_sheet()
-    # 탭 이름이 정확히 "발주기록"인지 확인해주세요.
     worksheet = sheet.worksheet("발주기록")
     all_values = worksheet.get_all_values()
     
     if len(all_values) > 1:
-        headers = all_values[0]
-        # 컬럼 정제
-        clean_headers = []
-        for i, h in enumerate(headers):
-            h = h.strip()
-            if h == "" or h in clean_headers: clean_headers.append(f"empty_{i}")
-            else: clean_headers.append(h)
+        # 1. 사장님 시트 실제 데이터 구조에 맞게 헤더 강제 설정
+        # 보내주신 샘플 기준: 0:날짜, 1:공급처, 2:상품명, 3:옵션, 4:수량...
+        raw_df = pd.DataFrame(all_values[1:])
         
-        df_hist = pd.DataFrame(all_values[1:], columns=clean_headers)
+        # 컬럼 개수에 맞춰 이름 붙이기 (데이터가 더 많을 수 있으니 안전하게 처리)
+        cols = ["날짜", "공급처", "상품명", "옵션", "발주수량"] 
+        # 혹시 뒤에 컬럼이 더 있다면 임시 이름 부여
+        for i in range(len(raw_df.columns) - len(cols)):
+            cols.append(f"추가항목_{i}")
+        raw_df.columns = cols
+
+        # 2. 날짜 필터링용 전처리 (시/분/초 떼어내고 '날짜'만 남기기)
+        # "2026-03-25 13:55:53" -> "2026-03-25" 추출
+        raw_df["날짜_만"] = raw_df["날짜"].astype(str).str.split(" ").str[0]
         
-        # [핵심 수정] 날짜를 날짜 객체와 문자열 두 가지 방식으로 모두 준비
-        if "날짜" in df_hist.columns:
-            # 시트의 날짜를 깔끔한 'YYYY-MM-DD' 글자로 변환
-            df_hist["날짜_str"] = pd.to_datetime(df_hist["날짜"], errors='coerce').dt.strftime('%Y-%m-%d')
-            df_hist = df_hist.sort_values(by="날짜", ascending=False)
-        
-        # 6단계 필터 UI
-        h_f1, h_f2, h_f3 = st.columns([1.5, 1, 1.5])
+        # 3. 필터 UI
+        h_f1, h_f2 = st.columns([2, 2])
         with h_f1:
             today_dt = datetime.now().date()
-            # 달력 선택
-            date_range = st.date_input("🗓️ 조회 기간 선택", value=(today_dt, today_dt), key="h_date_range_v4")
+            # 달력 선택 (시작일, 종료일)
+            date_range = st.date_input("🗓️ 조회 기간 선택", value=(today_dt - timedelta(days=1), today_dt), key="h_date_v5")
         with h_f2:
-            h_stat = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 긴급", "⚠️ 주의", "✅ 정상"], key="h_status_v4")
-        with h_f3:
-            h_q = st.text_input("🔍 상품명/옵션 검색", placeholder="검색어 입력...", key="h_search_v4")
+            h_q = st.text_input("🔍 상품명 검색", placeholder="검색어 입력...", key="h_search_v5")
         
-        # --- 필터링 로직 보강 ---
+        # 4. 필터링 적용
         if len(date_range) == 2:
-            # 시작일과 종료일을 문자열로 변환하여 비교 (가장 확실함)
-            start_str = date_range[0].strftime('%Y-%m-%d')
-            end_str = date_range[1].strftime('%Y-%m-%d')
-            df_hist = df_hist[(df_hist["날짜_str"] >= start_str) & (df_hist["날짜_str"] <= end_str)]
-        
-        if h_stat != "전체보기":
-            df_hist = df_hist[df_hist["상태"] == h_stat]
-        
-        if h_q:
-            df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False) | 
-                              df_hist["옵션"].astype(str).str.contains(h_q, case=False)]
-            
-        if not df_hist.empty:
-            final_view_cols = ["날짜", "상태", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
-            existing_cols = [c for c in final_view_cols if c in df_hist.columns]
-            
-            st.write(f"✅ 총 **{len(df_hist)}**건의 기록을 찾았습니다.")
-            st.dataframe(df_hist[existing_cols], use_container_width=True, hide_index=True)
-            
-            csv_hist = df_hist[existing_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 현재 내역 다운로드", csv_hist, f"발주기록.csv", use_container_width=True, key="h_down_v4")
+            start_s = date_range[0].strftime('%Y-%m-%d')
+            end_s = date_range[1].strftime('%Y-%m-%d')
+            # 글자 대 글자로 비교 (가장 확실함)
+            df_hist = raw_df[(raw_df["날짜_만"] >= start_s) & (raw_df["날짜_만"] <= end_s)]
         else:
-            st.warning("🧐 해당 기간에 데이터가 없습니다. 시트를 확인해 보시거나 기간을 넓혀보세요.")
-            # 데이터가 왜 안 나오는지 디버깅용 (실제 시트의 날짜 값들을 출력)
-            with st.expander("🔍 데이터 연결 확인 (시트 내 실제 날짜들)"):
-                st.write(all_values[1][:5] if len(all_values) > 1 else "데이터 없음")
+            df_hist = raw_df
+
+        if h_q:
+            df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False)]
+            
+        # 5. 결과 출력
+        if not df_hist.empty:
+            st.write(f"✅ 총 **{len(df_hist)}**건의 기록이 조회되었습니다.")
+            # 보여줄 때는 필요한 컬럼만 (날짜_만 제외)
+            show_cols = ["날짜", "공급처", "상품명", "옵션", "발주수량"]
+            st.dataframe(df_hist[show_cols], use_container_width=True, hide_index=True)
+            
+            csv_out = df_hist[show_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 내역 다운로드", csv_out, "발주기록.csv", use_container_width=True, key="h_down_v5")
+        else:
+            st.warning("🧐 선택한 기간에 데이터가 없습니다. 달력을 어제 날짜로도 바꿔보세요!")
+            st.info(f"💡 현재 시트에 저장된 최근 날짜 예시: {raw_df['날짜_만'].iloc[-1] if not raw_df.empty else '없음'}")
     else:
-        st.info("💡 '발주기록' 시트가 비어있습니다. 5단계에서 저장을 먼저 해주세요.")
+        st.info("💡 '발주기록' 시트에 데이터가 없습니다.")
 except Exception as e:
     st.error(f"📡 오류 발생: {e}")
