@@ -84,8 +84,13 @@ with tab1:
     st.subheader("📁 1~3단계: 데이터 업로드 및 분석 설정")
     up_file = st.file_uploader("엑셀/CSV 파일 업로드", type=['xlsx', 'xls', 'csv'], key="main_up")
     
+    # [수정된 초기화 버튼] 데이터 삭제 + URL 파라미터 초기화로 1단계 강제 이동
     if st.button("🔄 화면 전체 초기화", use_container_width=True):
-        for key in list(st.session_state.keys()): del st.session_state[key]
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        
+        # 주소창의 탭 정보를 날려서 브라우저가 첫 화면(1~3단계)으로 인식하게 함
+        st.query_params.clear() 
         st.rerun()
 
     # 파일 업로드 시 로직 (데이터 타입 강제 지정 포함)
@@ -153,11 +158,9 @@ with tab1:
                     master_df = pd.DataFrame(m_sh.get_all_records())
 
                     if not master_df.empty and "리오더 수량" in master_df.columns:
-                        # 엑셀 데이터에서 '리오더 수량' 컬럼이 있으면 제거 (시트 데이터와 중복 방지)
                         if "리오더 수량" in df_final.columns:
                             df_final = df_final.drop(columns=["리오더 수량"])
                         
-                        # 상품명(it)과 옵션(op)을 기준으로 병합
                         reorder_data = master_df[[it, op, "리오더 수량"]].copy()
                         df_final = pd.merge(df_final, reorder_data, on=[it, op], how="left")
                         df_final["리오더 수량"] = pd.to_numeric(df_final["리오더 수량"], errors='coerce').fillna(0).astype(int)
