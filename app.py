@@ -205,7 +205,7 @@ with tab1:
 
 
 # ==========================================================
-# --- [4단계: 데이터 편집 및 재고 관리 (간격 최적화 완료)] ---
+# --- [4단계: 데이터 편집 및 재고 관리 (과거 입고량 열 복구)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -229,7 +229,25 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work["리오더 수량"] = pd.to_numeric(df_work["리오더 수량"], errors='coerce').fillna(0).astype(int)
     df_work["리오더 입고수량"] = 0 
 
-    # 2. 지표 계산 (정수 반올림)
+    # 2. ⭐ [복구] 입고 이력 합산 (과거리오더 입고 데이터 가져오기)
+    def get_incoming_sum():
+        try:
+            sh_h = get_sheet().worksheet("입고기록")
+            h_data = sh_h.get_all_records()
+            if h_data:
+                h_df = pd.DataFrame(h_data)
+                # 상품명과 옵션별로 입고수량 합산
+                return h_df.groupby(['상품명', '옵션'])['입고수량'].sum().reset_index()
+            return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
+        except: 
+            return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
+
+    in_sum_df = get_incoming_sum()
+    # 원본 데이터에 과거 입고 합계 병합
+    df_work = pd.merge(df_work, in_sum_df.rename(columns={"입고수량":"과거리오더 입고"}), 
+                       left_on=[item, option], right_on=['상품명', '옵션'], how="left").fillna(0)
+
+    # 3. 지표 계산 (정수 반올림)
     def calc_daily_sales_int(row):
         t7, t3 = row[t7day], row[t3day]
         if t7 > 0: return int(round(t7 / 7))
@@ -240,53 +258,51 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work['3일발주'] = (df_work['일판매'] * 3).astype(int)
     df_work['권장발주'] = ((df_work['일판매'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
-    # 3. 상단 레이아웃 (🚦 필터 / 🔍 검색 / 🗓️ 날짜)
-    f_c1, f_c2, f_c3 = st.columns([1, 1.5, 1])
-    filter_m = f_c1.selectbox("🚦 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_final_filter")
-    search_q = f_c2.text_input("🔍 검색", placeholder="상품명 또는 옵션...", key="v4_final_search")
-    hist_date_4 = f_c3.date_input("🗓️ 입고 날짜", datetime.now(KST).date(), key="v4_final_date")
+    # 4. 상단 레이아웃
+    f_c1, f_c2, f_c3 = st.columns([1, 2, 1])
+    with f_c1: filter_m = st.selectbox("🚦 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_fix_filter")
+    with f_c2: search_q = st.text_input("🔍 검색", placeholder="상품명 또는 옵션...", key="v4_fix_search")
+    with f_c3: hist_date_4 = st.date_input("🗓️ 입고 날짜", datetime.now(KST).date(), key="v4_fix_date")
 
-    # 필터링 적용
+    # 필터링
     is_soldout = df_work[sold_out_col].astype(str).str.contains('품절', na=False)
     df_filtered = df_work[~is_soldout] if filter_m == "정상만" else (df_work[is_soldout] if filter_m == "품절만" else df_work)
-
     if search_q:
         df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_q, case=False) | 
                                   df_filtered[option].astype(str).str.contains(search_q, case=False)]
 
-    # 4. 화면 출력용 컬럼명 축소
+    # 5. 화면 출력 설정 (과거 입고 열 포함)
     df_display = df_filtered.rename(columns={
         sold_out_col: "상태", vendor: "공급쳐", v_item: "공급상품명", 
         item: "상품명", option: "옵션", stock: "정상", avail: "가용"
     })
     
-    final_cols = ["상태", "공급쳐", "상품명", "옵션", "공급상품명", "정상", "가용", "리오더 수량", "리오더 입고수량", "3일발주", "일판매", "권장발주"]
+    # 사장님이 찾으시던 '과거리오더 입고'를 리스트에 다시 넣었습니다.
+    final_cols = ["상태", "공급쳐", "상품명", "옵션", "공급상품명", "정상", "가용", "리오더 수량", "리오더 입고수량", "과거리오더 입고", "3일발주", "일판매", "권장발주"]
 
-    # 5. 데이터 에디터 (간격 최적화 적용)
-    with st.form("v4_final_master_form"):
+    with st.form("v4_fix_master_form"):
         edited_v4 = st.data_editor(
             df_display[final_cols], 
             use_container_width=True, 
             hide_index=True, 
-            key="v4_editor_final",
+            key="v4_editor_fix",
             column_config={
-                "상태": st.column_config.TextColumn("상태", width=60), # 너비를 60px로 최소화 (품절/정상 딱 맞게)
-                "공급쳐": st.column_config.TextColumn(width="small"),
-                "상품명": st.column_config.TextColumn("상품명", width=400), # 아낀 공간만큼 대폭 확장
-                "옵션": st.column_config.TextColumn(width="small"),
-                "공급상품명": st.column_config.TextColumn(width="small"),
-                "정상": st.column_config.NumberColumn(width="small", format="%d"),
-                "가용": st.column_config.NumberColumn(width="small", format="%d"),
-                "리오더 수량": st.column_config.NumberColumn(width="small", format="%d"),
-                "리오더 입고수량": st.column_config.NumberColumn("입고입력", width="small", format="%d", min_value=0),
-                "3일발주": st.column_config.NumberColumn(width="small", format="%d"),
-                "일판매": st.column_config.NumberColumn(width="small", format="%d"),
-                "권장발주": st.column_config.NumberColumn(width="small", format="%d"),
+                "상태": st.column_config.TextColumn(width=60),
+                "공급쳐": st.column_config.TextColumn(width=80),
+                "상품명": st.column_config.TextColumn(width=350), # 열이 늘어나서 조금 조정했습니다.
+                "옵션": st.column_config.TextColumn(width=100),
+                "과거리오더 입고": st.column_config.NumberColumn("과거입고", width=70, format="%d"),
+                "리오더 입고수량": st.column_config.NumberColumn("입고입력", width=70, format="%d", min_value=0),
+                "정상": st.column_config.NumberColumn(width=50, format="%d"),
+                "가용": st.column_config.NumberColumn(width=50, format="%d"),
+                "리오더 수량": st.column_config.NumberColumn(width=70, format="%d"),
+                "일판매": st.column_config.NumberColumn(width=50, format="%d"),
+                "권장발주": st.column_config.NumberColumn(width=70, format="%d"),
             }
         )
 
         if st.form_submit_button("💾 데이터 저장 및 입고 반영", use_container_width=True, type="primary"):
-            user_edits = st.session_state["v4_editor_final"].get("edited_rows", {})
+            user_edits = st.session_state["v4_editor_fix"].get("edited_rows", {})
             if user_edits:
                 m_sh, h_sh = get_sheet().worksheet("시트1"), get_sheet().worksheet("입고기록")
                 save_time = f"{hist_date_4.strftime('%Y-%m-%d')} {datetime.now(KST).strftime('%H:%M:%S')}"
@@ -304,7 +320,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
                 df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
                 m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-                st.success(f"✅ 저장 완료! (날짜: {hist_date_4})"); time.sleep(0.5); st.rerun()
+                st.success(f"✅ 저장 및 차감 완료!"); time.sleep(0.5); st.rerun()
 
 
 
