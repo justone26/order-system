@@ -379,31 +379,38 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [6단계: 전체 히스토리 내역 (버튼 클릭 시 로드)] ---
+# --- [6단계: 전체 히스토리 관리 (검색 버튼 클릭 시 조회)] ---
 # ==========================================================
-# 1~3단계에서 분석이 완료된 상태(analyzed == True)일 때만 버튼이 나타납니다.
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📜 6단계: 전체 히스토리 관리")
+
+    # 1. 상단 필터 레이아웃 (날짜 / 검색 / 회차선택 / 검색버튼)
+    # 사장님 요청대로 필터와 검색 버튼을 한 줄에 배치합니다.
+    f1, f2, f3, f4 = st.columns([1, 1.2, 1.2, 0.6])
     
-    # [핵심] 버튼을 누르기 전에는 데이터를 불러오지 않습니다.
-    if "show_history" not in st.session_state:
-        st.session_state.show_history = False
+    with f1:
+        today = datetime.now(KST).date()
+        d_range = st.date_input("🗓️ 날짜 범위", value=(today, today), key="v6_date_final")
+    
+    with f2:
+        h_q = st.text_input("🔍 상품명 검색", placeholder="상품명 입력...", key="v6_search_final")
+        
+    with f3:
+        # 회차 정보는 조회를 한 번이라도 해야 가져올 수 있으므로, 
+        # 처음에는 '조회 버튼을 눌러주세요'라고 안내합니다.
+        selected_batch = st.selectbox("📥 저장 회차 선택", ["전체보기"], key="v6_batch_select")
 
-    # 히스토리 열기/닫기 버튼
-    if not st.session_state.show_history:
-        if st.button("🔍 과거 발주 히스토리 불러오기", use_container_width=True):
-            st.session_state.show_history = True
-            st.rerun()
-    else:
-        if st.button("❌ 히스토리 화면 접기", use_container_width=True):
-            st.session_state.show_history = False
-            st.rerun()
+    with f4:
+        st.write("") # 간격 맞춤용
+        st.write("") 
+        # 사장님이 빨간색으로 표시해주신 그 위치에 검색 버튼 배치
+        search_trigger = st.button("🔍 검색", use_container_width=True, type="primary")
 
-    # 버튼을 눌러서 show_history가 True가 된 경우에만 아래 로직 실행
-    if st.session_state.show_history:
+    # [핵심] 검색 버튼을 누른 경우에만 아래 로직이 실행됩니다.
+    if search_trigger:
         try:
-            with st.spinner("📡 구글 시트에서 기록을 읽어오는 중..."):
+            with st.spinner("📡 데이터를 불러오는 중..."):
                 sheet = get_sheet()
                 worksheet = sheet.worksheet("발주기록")
                 all_values = worksheet.get_all_values()
@@ -416,43 +423,31 @@ if st.session_state.get('analyzed'):
                     df_hist.columns = target_cols + list(df_hist.columns[8:])
                     df_hist = df_hist[target_cols]
 
+                # --- 필터링 적용 ---
+                # 1. 날짜 필터
                 df_hist["날짜_만"] = df_hist["날짜시간"].astype(str).str.slice(0, 10)
-                
-                # --- 필터 레이아웃 ---
-                f1, f2, f3 = st.columns([1, 1.5, 1.5])
-                with f1:
-                    today = datetime.now(KST).date()
-                    d_range = st.date_input("🗓️ 날짜 범위", value=(today, today), key="v6_date_final")
-                
                 if len(d_range) == 2:
                     s_s, e_s = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
                     df_hist = df_hist[(df_hist["날짜_만"] >= s_s) & (df_hist["날짜_만"] <= e_s)]
 
-                df_hist = df_hist.sort_values(by="날짜시간", ascending=False)
-                all_batches = df_hist["날짜시간"].unique().tolist()
-                
-                with f3:
-                    selected_batch = st.selectbox("📥 저장 회차 선택", ["전체보기"] + all_batches, key="v6_batch_select")
-
-                with f2:
-                    h_q = st.text_input("🔍 상품명 검색", key="v6_search_final")
-
-                # --- 최종 필터링 및 출력 ---
-                df_view = df_hist.copy()
-                if selected_batch not in ["전체보기"]:
-                    df_view = df_view[df_view["날짜시간"] == selected_batch]
+                # 2. 검색어 필터
                 if h_q:
-                    df_view = df_view[df_view["상품명"].astype(str).str.contains(h_q, case=False)]
+                    df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False)]
 
-                if not df_view.empty:
-                    st.write(f"✅ 총 **{len(df_view)}**건의 기록이 조회되었습니다.")
-                    st.dataframe(df_view, use_container_width=True, hide_index=True)
+                # 3. 최신순 정렬
+                df_hist = df_hist.sort_values(by="날짜시간", ascending=False)
+
+                # --- 결과 출력 ---
+                if not df_hist.empty:
+                    st.success(f"✅ 총 {len(df_hist)}건의 기록을 찾았습니다.")
+                    st.dataframe(df_hist, use_container_width=True, hide_index=True)
                     
-                    csv_data = df_view.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button("📥 현재 조회된 내역 다운로드", csv_data, "발주기록.csv", use_container_width=True)
+                    # 다운로드 버튼
+                    csv_data = df_hist.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                    st.download_button("📥 현재 결과 다운로드", csv_data, "발주기록_조회.csv", use_container_width=True)
                 else:
                     st.warning("🧐 해당 조건에 맞는 기록이 없습니다.")
             else:
                 st.info("💡 아직 저장된 발주 기록이 없습니다.")
         except Exception as e:
-            st.error(f"📡 히스토리 로딩 오류: {e}")
+            st.error(f"📡 데이터 로딩 오류: {e}")
