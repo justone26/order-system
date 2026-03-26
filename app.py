@@ -4,6 +4,33 @@ from datetime import datetime, timedelta, timezone
 import time
 import io
 import pytz  # 시간대 설정을 위한 라이브러리
+import streamlit.components.v1 as components # <-- 1. 이 라이브러리가 꼭 필요합니다!
+
+# --- [세션 상태 초기화] ---
+if 'df_raw' not in st.session_state: st.session_state.df_raw = None
+if 'analyzed' not in st.session_state: st.session_state.analyzed = False
+if 'p' not in st.session_state: st.session_state.p = {}
+if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
+if 'upload_key' not in st.session_state: st.session_state.upload_key = 0
+
+# --- [2. 새로고침 방지 경고창 스크립트] ---
+# 이 코드가 실행되면 사용자가 F5를 누를 때 "정말 나갈 거냐"고 물어봅니다.
+components.html(
+    """
+    <script>
+    window.onbeforeunload = function() {
+        return "데이터 분석 중입니다. 새로고침하면 작업 내용이 사라질 수 있습니다.";
+    };
+    </script>
+    """,
+    height=0, # 화면에는 안 보이게 높이를 0으로 설정
+)
+
+st.title("📦 저스트원 통합 재고 관리 v4.0")
+# ... (이후 탭 생성 및 1~6단계 로직)
+
+
+
 
 # 1. [환경 설정 - 한국 시간대 및 페이지 설정]
 KST = pytz.timezone('Asia/Seoul') # 한국 시간대 정의
