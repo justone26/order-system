@@ -481,94 +481,103 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [6단계: 전체 히스토리 관리 (UI 상시 노출 버전)] ---
+# --- [6단계: 전체 히스토리 관리 (순서: 날짜 -> 조회 -> 검색 -> 회차)] ---
 # ==========================================================
 st.divider()
 st.header("📜 6단계: 전체 히스토리 관리")
 
-# [1. 상단 필터 UI - 데이터 유무와 상관없이 무조건 먼저 표시]
-f_col1, f_col2, f_col3 = st.columns([1.5, 2, 1.5])
+# [1. 상단 필터 UI 배치]
+# 날짜(1.2), 조회버튼(0.5), 검색(1.8), 회차(1.5) 비율로 분할
+f_col1, f_btn, f_col2, f_col3 = st.columns([1.2, 0.5, 1.8, 1.5])
 
 with f_col1:
     log_date_range = st.date_input("🗓️ 조회 날짜 범위", 
                                    [datetime.now(KST).date(), datetime.now(KST).date()],
-                                   key="log_date_range_final")
+                                   key="v6_date_range")
+
+with f_btn:
+    st.write(" ") # 레이아웃 맞춤용 빈 공간
+    st.write(" ") 
+    search_clicked = st.button("🔍 조회", use_container_width=True)
 
 with f_col2:
-    log_search_q = st.text_input("🔍 상품명 검색", placeholder="검색어를 입력하세요...", key="log_search_final")
+    log_search_q = st.text_input("🔍 상품명 검색", placeholder="검색어 입력...", key="v6_search_q")
 
-# [2. 데이터 로드 로직 (캐시 없이 실시간으로 시도)]
-def get_log_data_safely():
+# [2. 데이터 로드 로직]
+def get_v6_data():
     try:
-        # '발주기록' 시트 확인
         sh_log = get_sheet().worksheet("발주기록")
         data = sh_log.get_all_records()
-        if not data:
-            return pd.DataFrame()
-        return pd.DataFrame(data)
-    except Exception as e:
-        # 시트명이 다르거나 연결 오류 시 빈 표 반환
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except:
         return pd.DataFrame()
 
-df_log_raw = get_log_data_safely()
+df_log_raw = get_v6_data()
 
-# [3. 회차 선택 UI (데이터가 있을 때만 목록 생성)]
+# [3. 회차 선택 목록 생성]
 session_list = ["전체 회차"]
 if not df_log_raw.empty and '날짜시간' in df_log_raw.columns:
     df_log_raw['날짜시간'] = pd.to_datetime(df_log_raw['날짜시간'], errors='coerce')
-    session_list += sorted(df_log_raw['날짜시간'].dt.strftime('%Y-%m-%d %H:%M').dropna().unique().tolist(), reverse=True)
+    # 현재 선택된 날짜 범위 내의 회차만 보여줌
+    mask = (df_log_raw['날짜시간'].dt.date >= log_date_range[0])
+    if len(log_date_range) == 2:
+        mask &= (df_log_raw['날짜시간'].dt.date <= log_date_range[1])
+    
+    sessions = sorted(df_log_raw[mask]['날짜시간'].dt.strftime('%Y-%m-%d %H:%M').dropna().unique().tolist(), reverse=True)
+    session_list += sessions
 
 with f_col3:
-    sel_session = st.selectbox("📥 저장 회차 선택", session_list, key="log_session_final")
+    sel_session = st.selectbox("📥 저장 회차 선택", session_list, key="v6_session")
 
-# [4. 데이터 처리 및 출력]
-if not df_log_raw.empty:
-    df_filtered = df_log_raw.copy()
+# [4. 결과 출력]
+# 조회 버튼을 눌렀거나, 검색어/회차를 변경했을 때 실행
+if search_clicked or log_search_q or sel_session != "전체 회차":
+    if not df_log_raw.empty:
+        df_filtered = df_log_raw.copy()
 
-    # (1) 날짜 범위 필터
-    if len(log_date_range) == 2:
-        df_filtered = df_filtered[
-            (df_filtered['날짜시간'].dt.date >= log_date_range[0]) & 
-            (df_filtered['날짜시간'].dt.date <= log_date_range[1])
-        ]
-    
-    # (2) 저장 회차 필터
-    if sel_session != "전체 회차":
-        df_filtered = df_filtered[df_filtered['날짜시간'].dt.strftime('%Y-%m-%d %H:%M') == sel_session]
-
-    # (3) 상품명 검색 필터
-    if log_search_q:
-        df_filtered = df_filtered[df_filtered['상품명'].astype(str).str.contains(log_search_q, case=False)]
-
-    if not df_filtered.empty:
-        # --- 컬럼 강제 교정 로직 ---
-        def set_status_icon(row):
-            qty = pd.to_numeric(row.get('권장 발주수량', 0), errors='coerce')
-            return "🚨 긴급" if qty >= 10 else "✅ 정상"
+        # (1) 날짜 범위 필터
+        if len(log_date_range) == 2:
+            df_filtered = df_filtered[
+                (df_filtered['날짜시간'].dt.date >= log_date_range[0]) & 
+                (df_filtered['날짜시간'].dt.date <= log_date_range[1])
+            ]
         
-        df_filtered['상태'] = df_filtered.apply(set_status_icon, axis=1)
-        df_filtered['날짜'] = df_filtered['날짜시간'].dt.strftime('%Y-%m-%d')
-        df_filtered['시간'] = df_filtered['날짜시간'].dt.strftime('%H:%M:%S')
+        # (2) 저장 회차 필터
+        if sel_session != "전체 회차":
+            df_filtered = df_filtered[df_filtered['날짜시간'].dt.strftime('%Y-%m-%d %H:%M') == sel_session]
 
-        # 컬럼명 유연하게 대응 (공백 제거 등)
-        df_filtered.columns = [c.strip() for c in df_filtered.columns]
-        
-        # 사장님이 원하시는 출력 순서
-        order_cols = ['상태', '날짜', '시간', '상품명', '옵션', '공급쳐상품명', '가용재고', '리오더수량', '추가발주수량', '권장 발주수량']
-        
-        # 실제 있는 컬럼만 골라내기
-        final_display_cols = [c for c in order_cols if c in df_filtered.columns or c in ['상태', '날짜', '시간']]
-        df_final_view = df_filtered[final_display_cols].sort_values(by='날짜시간', ascending=False)
+        # (3) 상품명 검색 필터
+        if log_search_q:
+            df_filtered = df_filtered[df_filtered['상품명'].astype(str).str.contains(log_search_q, case=False)]
 
-        st.info(f"✅ 총 {len(df_final_view)}건의 내역이 조회되었습니다.")
-        st.dataframe(df_final_view, use_container_width=True, hide_index=True)
+        if not df_filtered.empty:
+            # --- 컬럼 정렬 및 아이콘 복구 ---
+            def set_status(row):
+                qty = pd.to_numeric(row.get('권장 발주수량', 0), errors='coerce')
+                return "🚨 긴급" if qty >= 10 else "✅ 정상"
+            
+            df_filtered['상태'] = df_filtered.apply(set_status, axis=1)
+            df_filtered['날짜'] = df_filtered['날짜시간'].dt.strftime('%Y-%m-%d')
+            df_filtered['시간'] = df_filtered['날짜시간'].dt.strftime('%H:%M:%S')
 
-        # CSV 다운로드
-        csv_file = df_final_view.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        st.download_button("📥 현재 내역 CSV 다운로드", csv_file, f"발주기록_{datetime.now(KST).strftime('%m%d_%H%M')}.csv", use_container_width=True)
+            # 컬럼 순서 강제 교정 (스크린샷 기준 복구)
+            order_cols = ['상태', '날짜', '시간', '상품명', '옵션', '공급쳐상품명', '가용재고', '리오더수량', '추가발주수량', '권장 발주수량']
+            
+            # 실제 있는 컬럼만 필터링
+            df_filtered = df_filtered.rename(columns={"리오더수량": "리오더 수량"}) # 이름 불일치 방지
+            final_cols = [c for c in order_cols if c in df_filtered.columns or c in ['상태', '날짜', '시간']]
+            
+            df_final_view = df_filtered[final_cols].sort_values(by='날짜시간', ascending=False)
+
+            st.success(f"🔍 {len(df_final_view)}건의 내역을 찾았습니다.")
+            st.dataframe(df_final_view, use_container_width=True, hide_index=True)
+
+            # CSV 다운로드
+            csv_data = df_final_view.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 현재 내역 다운로드(CSV)", csv_data, f"발주기록_{log_date_range[0]}.csv", use_container_width=True)
+        else:
+            st.warning("⚠️ 조건에 맞는 내역이 없습니다.")
     else:
-        st.warning("⚠️ 필터 조건에 맞는 데이터가 없습니다.")
+        st.error("📍 '발주기록' 시트에서 데이터를 불러올 수 없습니다. 시트명을 확인해 주세요.")
 else:
-    # 데이터가 아예 없을 때 나오는 메시지
-    st.write("---")
-    st.warning("📍 현재 '발주기록' 시트에 저장된 데이터가 없습니다. 5단계에서 저장을 먼저 진행해 주세요.")
+    st.info("💡 위 필터를 설정한 후 [조회] 버튼을 눌러주세요.")
