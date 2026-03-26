@@ -325,7 +325,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [5단계: 추가 오더 관리 (공급처상품명 포함 최종본)] ---
+# --- [5단계: 추가 오더 관리 (2단 필터 및 세트 노출 최적화)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -333,11 +333,11 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
     p = st.session_state.p
     sold_out_col, item, option = p['so'], p['it'], p['op']
-    vendor_item_col = p['vi'] # 공급처상품명
+    vendor_item_col = p['vi']
     avail_col = p['av']
     lt, ss = p['lt'], p['ss']
 
-    # 1. 데이터 준비 및 숫자 타입 변환
+    # 1. 데이터 타입 변환 및 준비
     df_v5 = st.session_state.df_raw.copy()
     if "리오더 수량" not in df_v5.columns: df_v5["리오더 수량"] = 0
     
@@ -357,60 +357,67 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_v5 = pd.merge(df_v5, in_sum_v5.rename(columns={"입고수량":"과거입고"}), 
                      left_on=[item, option], right_on=['상품명', '옵션'], how="left").fillna(0)
 
-    # 3. 지표 계산
+    # 3. 지표 계산 및 위험 아이콘 분류
     df_v5['일판매'] = df_v5.apply(lambda r: int(round(r[p['t7']]/7)) if r[p['t7']]>0 else (int(round(r[p['t3']]/3)) if r[p['t3']]>0 else 0), axis=1)
     df_v5['권장발주'] = ((df_v5['일판매'] * (lt + ss)) - (df_v5[avail_col] + df_v5['리오더 수량'])).clip(lower=0).astype(int)
 
-    # 4. 상단 필터 레이아웃
+    def get_icon(row):
+        if row['권장발주'] >= 10: return "🚨 고위험"
+        elif row['권장발주'] > 0: return "⚠️ 주의"
+        return "✅ 정상"
+    df_v5['경고'] = df_v5.apply(get_icon, axis=1)
+
+    # 4. 상단 레이아웃 (🚦 2단 필터 / 🔍 검색 / 🗓️ 날짜)
     v5_f1, v5_f2, v5_f3 = st.columns([1, 1.5, 1])
-    with v5_f1: v5_filter = st.selectbox("🚦 정렬", ["위험군 우선", "상품명 순"], key="v5_sort")
-    with v5_f2: search_v5 = st.text_input("🔍 검색", placeholder="상품명 입력...", key="v5_search")
-    with v5_f3: date_v5 = st.date_input("🗓️ 발주 날짜", datetime.now(KST).date(), key="v5_date")
+    with v5_f1:
+        v5_filter = st.selectbox("🚦 보기 설정", ["🚨 고위험/주의", "✅ 정상"], key="v5_main_filter")
+    with v5_f2:
+        search_v5 = st.text_input("🔍 검색", placeholder="상품명 입력...", key="v5_search")
+    with v5_f3:
+        date_v5 = st.date_input("🗓️ 발주 날짜", datetime.now(KST).date(), key="v5_date")
 
-    # 5. 필터링 및 정렬 (품절 제외 + 위험군 세트)
+    # 5. [필터 로직] 품절 제외 및 세트 노출 적용
     df_ns = df_v5[~df_v5[sold_out_col].astype(str).str.contains('품절', na=False)].copy()
-    danger_names = df_ns[df_ns['권장발주'] > 0][item].unique()
-    df_v5_filtered = df_ns[df_ns[item].isin(danger_names)].copy()
 
-    if v5_filter == "위험군 우선":
-        df_v5_filtered = df_v5_filtered.sort_values(['권장발주', item, option], ascending=[False, True, True])
+    if v5_filter == "🚨 고위험/주의":
+        # 권장발주가 1개라도 있는 상품의 전체 옵션 추출
+        danger_names = df_ns[df_ns['권장발주'] > 0][item].unique()
+        df_v5_filtered = df_ns[df_ns[item].isin(danger_names)].copy()
     else:
-        df_v5_filtered = df_v5_filtered.sort_values([item, option])
+        # 권장발주가 0인 상품들만 추출 (정상)
+        danger_names = df_ns[df_ns['권장발주'] > 0][item].unique()
+        df_v5_filtered = df_ns[~df_ns[item].isin(danger_names)].copy()
 
+    # 정렬 및 검색
+    df_v5_filtered = df_v5_filtered.sort_values(['권장발주', item, option], ascending=[False, True, True])
     if search_v5:
         df_v5_filtered = df_v5_filtered[df_v5_filtered[item].str.contains(search_v5, case=False)]
 
-    # 6. 화면 출력용 컬럼 정리 (공급처상품명 추가!)
+    # 6. 화면 출력용 컬럼 정리 (사장님 요청 순서)
     df_v5_display = df_v5_filtered.rename(columns={
-        sold_out_col: "상태", item: "상품명", option: "옵션", 
-        vendor_item_col: "공급처상품명", avail_col: "가용"
+        item: "상품명", option: "옵션", vendor_item_col: "공급처상품명", avail_col: "가용"
     })
     df_v5_display["추가오더"] = 0
-    # 노출 순서: 상태 | 상품명 | 옵션 | 공급처상품명 | 가용 | 리오더수량 | 추가오더 | 과거입고 | 일판매 | 권장발주
-    final_cols = ["상태", "상품명", "옵션", "공급처상품명", "가용", "리오더 수량", "추가오더", "과거입고", "일판매", "권장발주"]
+    final_cols = ["경고", "상품명", "옵션", "공급처상품명", "가용", "리오더 수량", "추가오더", "과거입고", "일판매", "권장발주"]
 
     # 7. 데이터 에디터 (열 너비 최적화)
-    st.info(f"🚩 {len(danger_names)}종의 위험군 상품 세트가 노출 중입니다.")
+    st.info(f"📊 {v5_filter} - {len(df_v5_filtered)}건 노출 중")
     edited_data = st.data_editor(
         df_v5_display[final_cols],
         use_container_width=True,
         hide_index=True,
         key="v5_editor_final",
         column_config={
-            "상태": st.column_config.TextColumn(width=60),
+            "경고": st.column_config.TextColumn(width=80),
             "상품명": st.column_config.TextColumn(width=300),
-            "옵션": st.column_config.TextColumn(width=100),
-            "공급처상품명": st.column_config.TextColumn(width=200),
-            "가용": st.column_config.NumberColumn(width=60, format="%d"),
-            "리오더 수량": st.column_config.NumberColumn(width=80, format="%d"),
+            "공급처상품명": st.column_config.TextColumn(width=180),
             "추가오더": st.column_config.NumberColumn(width=80, format="%d", min_value=0),
-            "과거입고": st.column_config.NumberColumn(width=70, format="%d"),
-            "일판매": st.column_config.NumberColumn(width=60, format="%d"),
+            "가용": st.column_config.NumberColumn(width=60, format="%d"),
             "권장발주": st.column_config.NumberColumn(width=70, format="%d"),
         }
     )
 
-    # 8. 하단 버튼 나란히 배치
+    # 8. 하단 버튼 (나란히 배치)
     btn_c1, btn_c2 = st.columns(2)
     with btn_c1:
         if st.button("📝 발주 기록 저장", use_container_width=True, type="primary"):
@@ -427,7 +434,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 
                 df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
                 m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-                st.success("✅ 발주 내역이 성공적으로 저장되었습니다!"); time.sleep(0.5); st.rerun()
+                st.success("✅ 발주 내역 저장 완료!"); time.sleep(0.5); st.rerun()
 
     with btn_c2:
         csv_data = df_v5_display[final_cols].to_csv(index=False).encode('utf-8-sig')
