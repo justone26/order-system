@@ -351,7 +351,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             st.button("📥 다운로드할 데이터 없음", disabled=True, use_container_width=True)
         
             
- # --- [6단계: 전체 히스토리 내역] ---
+# --- [6단계: 전체 히스토리 내역 - 중복 컬럼 방어 버전] ---
 st.divider()
 st.subheader("📜 6단계: 전체 히스토리 내역")
 
@@ -359,23 +359,37 @@ try:
     sheet = get_sheet()
     worksheet = sheet.worksheet("발주기록")
     
-    # 1. 시트 데이터 가져오기 (비어있을 경우 대비)
-    all_data = worksheet.get_all_values()
+    # get_all_records 대신 get_all_values를 써서 직접 정제
+    all_values = worksheet.get_all_values()
     
-    if len(all_data) > 1:  # 헤더 제외하고 데이터가 최소 1줄 이상 있을 때
-        # 첫 줄은 컬럼명으로, 나머지는 데이터로 변환
-        df_hist = pd.DataFrame(all_data[1:], columns=all_data[0])
+    if len(all_values) > 1:
+        headers = all_values[0]
+        data = all_values[1:]
         
+        # [수정] 중복되거나 비어있는 컬럼명 자동 처리
+        clean_headers = []
+        for i, h in enumerate(headers):
+            h = h.strip()
+            if h == "" or h in clean_headers:
+                clean_headers.append(f"empty_{i}") # 빈칸이나 중복은 임시 이름 부여
+            else:
+                clean_headers.append(h)
+        
+        df_hist = pd.DataFrame(data, columns=clean_headers)
+        
+        # 실제 필요한 데이터만 필터링 (임시 이름 'empty_...' 컬럼들은 제거)
+        df_hist = df_hist[[c for c in df_hist.columns if not c.startswith("empty_")]]
+
         # 날짜순 정렬 (최신순)
         if "날짜" in df_hist.columns:
             df_hist = df_hist.sort_values(by="날짜", ascending=False)
         
-        # 필터 UI (6단계용)
+        # 필터 UI
         h_c1, h_c2 = st.columns([1, 2])
         with h_c1:
-            h_filter = st.selectbox("🚦 상태 필터 (기록)", ["전체", "🚨 긴급", "⚠️ 주의", "✅ 정상"], key="hist_f1")
+            h_filter = st.selectbox("🚦 상태 필터 (기록)", ["전체", "🚨 긴급", "⚠️ 주의", "✅ 정상"], key="hist_final_f1")
         with h_c2:
-            h_search = st.text_input("🔍 상품명 검색 (기록)", placeholder="검색어 입력...", key="hist_f2")
+            h_search = st.text_input("🔍 상품명 검색 (기록)", placeholder="검색어 입력...", key="hist_final_f2")
         
         # 필터 적용
         if h_filter != "전체":
@@ -385,15 +399,9 @@ try:
             
         st.dataframe(df_hist, use_container_width=True, hide_index=True)
         
-        # 기록 삭제 버튼 (선택 사항)
-        if st.button("🗑️ 전체 기록 삭제 (주의)", use_container_width=True):
-            # 헤더만 남기고 삭제하는 로직 (필요 시 주석 해제)
-            # worksheet.resize(rows=1)
-            # st.rerun()
-            pass
     else:
-        st.info("💡 아직 저장된 발주 기록이 없습니다. 5단계에서 '구글 시트 저장'을 먼저 진행해 주세요.")
+        st.info("💡 저장된 기록이 없습니다. 5단계에서 저장을 먼저 진행해 주세요.")
 
 except Exception as e:
-    st.error(f"📡 구글 시트 연결 오류: {e}")
-    st.info("팁: '발주기록' 시트의 첫 번째 줄에 [날짜, 상태, 상품명, 옵션, 공급처상품명, 가용재고, 리오더수량, 추가발주수량, 권장 발주수량] 항목이 있는지 확인해 주세요.")
+    st.error(f"📡 시트 로딩 오류: {e}")
+    st.warning("팁: 구글 시트 '발주기록' 탭의 첫 줄(제목줄)에 중복된 이름이나 불필요한 공백이 있는지 확인해 주세요.")
