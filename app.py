@@ -205,7 +205,7 @@ with tab1:
 
 
 # ==========================================================
-# --- [4단계: 데이터 편집 및 재고 관리 (날짜 필터 복구 완료)] ---
+# --- [4단계: 데이터 편집 및 재고 관리 (간격 최적화 완료)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -241,19 +241,14 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work['권장발주'] = ((df_work['일판매'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
     # 3. 상단 레이아웃 (🚦 필터 / 🔍 검색 / 🗓️ 날짜)
-    # 가로바 방지를 위해 컬럼 비율을 1:1.5:1로 배분했습니다.
     f_c1, f_c2, f_c3 = st.columns([1, 1.5, 1])
     filter_m = f_c1.selectbox("🚦 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_final_filter")
     search_q = f_c2.text_input("🔍 검색", placeholder="상품명 또는 옵션...", key="v4_final_search")
-    
-    # [복구 확인] 입고 날짜 선택기
     hist_date_4 = f_c3.date_input("🗓️ 입고 날짜", datetime.now(KST).date(), key="v4_final_date")
 
     # 필터링 적용
     is_soldout = df_work[sold_out_col].astype(str).str.contains('품절', na=False)
-    if filter_m == "정상만": df_filtered = df_work[~is_soldout]
-    elif filter_m == "품절만": df_filtered = df_work[is_soldout]
-    else: df_filtered = df_work
+    df_filtered = df_work[~is_soldout] if filter_m == "정상만" else (df_work[is_soldout] if filter_m == "품절만" else df_work)
 
     if search_q:
         df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_q, case=False) | 
@@ -267,7 +262,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     
     final_cols = ["상태", "공급쳐", "상품명", "옵션", "공급상품명", "정상", "가용", "리오더 수량", "리오더 입고수량", "3일발주", "일판매", "권장발주"]
 
-    # 5. 데이터 에디터 (가로바 제거 옵션 포함)
+    # 5. 데이터 에디터 (간격 최적화 적용)
     with st.form("v4_final_master_form"):
         edited_v4 = st.data_editor(
             df_display[final_cols], 
@@ -275,9 +270,9 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             hide_index=True, 
             key="v4_editor_final",
             column_config={
-                "상태": st.column_config.TextColumn(width="small"),
+                "상태": st.column_config.TextColumn("상태", width=60), # 너비를 60px로 최소화 (품절/정상 딱 맞게)
                 "공급쳐": st.column_config.TextColumn(width="small"),
-                "상품명": st.column_config.TextColumn(width="medium"),
+                "상품명": st.column_config.TextColumn("상품명", width=400), # 아낀 공간만큼 대폭 확장
                 "옵션": st.column_config.TextColumn(width="small"),
                 "공급상품명": st.column_config.TextColumn(width="small"),
                 "정상": st.column_config.NumberColumn(width="small", format="%d"),
@@ -292,35 +287,24 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
         if st.form_submit_button("💾 데이터 저장 및 입고 반영", use_container_width=True, type="primary"):
             user_edits = st.session_state["v4_editor_final"].get("edited_rows", {})
-            
             if user_edits:
-                sheet = get_sheet()
-                m_sh = sheet.worksheet("시트1") 
-                h_sh = sheet.worksheet("입고기록")
-                
-                # 상단에서 선택한 hist_date_4 날짜를 사용합니다.
+                m_sh, h_sh = get_sheet().worksheet("시트1"), get_sheet().worksheet("입고기록")
                 save_time = f"{hist_date_4.strftime('%Y-%m-%d')} {datetime.now(KST).strftime('%H:%M:%S')}"
 
-                count = 0
                 for r_idx_str, changes in user_edits.items():
                     target_idx = df_display.index[int(r_idx_str)]
-                    
                     if "리오더 수량" in changes:
                         st.session_state.df_raw.at[target_idx, "리오더 수량"] = int(changes["리오더 수량"])
-                    
                     if "리오더 입고수량" in changes:
                         in_qty = int(changes["리오더 입고수량"])
                         if in_qty > 0:
                             old_v = int(st.session_state.df_raw.at[target_idx, "리오더 수량"])
                             st.session_state.df_raw.at[target_idx, "리오더 수량"] = max(0, old_v - in_qty)
                             h_sh.append_row([save_time, str(df_display.at[target_idx, "상품명"]), str(df_display.at[target_idx, "옵션"]), in_qty])
-                    count += 1
 
-                if count > 0:
-                    df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
-                    m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-                    st.success(f"✅ {count}건 저장 완료! (기록 날짜: {hist_date_4})")
-                    time.sleep(1); st.rerun()
+                df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
+                m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
+                st.success(f"✅ 저장 완료! (날짜: {hist_date_4})"); time.sleep(0.5); st.rerun()
 
 
 
