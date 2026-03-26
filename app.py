@@ -351,7 +351,30 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                         int(r[avail]),         # 4. 가용재고
                         int(r['리오더 수량']),     # 5. 리오더수량
                         int(r['추가발주수량']),    # 6. 추가발주수량
-                        int(r['권장 발
+                        int(r['권장 발주수량'])    # 7. 권장 발주수량
+                    ])
+                
+                try:
+                    sheet = get_sheet()
+                    sheet.worksheet("발주기록").append_rows(log_rows)
+                    st.success(f"✅ {now_kst_str} 저장 완료!"); 
+                    st.session_state.add_order_dict = {}; time.sleep(1); st.rerun()
+                except Exception as e: 
+                    st.error(f"📡 시트 저장 실패: {e}")
+            else:
+                st.warning("⚠️ 저장할 수량이 없습니다.")
+
+    with col_b2:
+        # CSV 다운로드 (발주 수량 있는 것만 7개 항목)
+        df_5['합계'] = df_5['권장 발주수량'] + df_5['추가발주수량']
+        csv_target = df_5[df_5['합계'] > 0]
+        if not csv_target.empty:
+            csv_cols = [item, option, v_item, avail, '리오더 수량', '추가발주수량', '권장 발주수량']
+            csv_df = csv_target[csv_cols].rename(columns={item:"상품명", option:"옵션", v_item:"공급쳐상품명", avail:"가용재고", "리오더 수량":"리오더수량"})
+            csv_file = csv_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 최종 발주서 CSV 다운로드", csv_file, f"발주서_{d5_date.strftime('%m%d')}.csv", "text/csv", use_container_width=True)
+        else:
+            st.button("📥 다운로드할 데이터 없음", disabled=True, use_container_width=True)
 
 
 # ==========================================================
