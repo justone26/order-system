@@ -481,111 +481,115 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [6단계: 전체 히스토리 관리 (이모지 선별 교정 & 정렬 고정)] ---
+# --- [6단계: 전체 히스토리 관리 (데이터 실종 및 밀림 해결)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📜 6단계: 전체 히스토리 관리")
 
+    # [1. 데이터 로드 함수 - 가장 보수적으로 가져오기]
     @st.cache_data(ttl=3)
-    def load_fixed_history():
+    def get_history_safe():
         try:
             sh = get_sheet().worksheet("발주기록")
             vals = sh.get_all_values()
             if len(vals) < 2: return pd.DataFrame()
             
-            # 헤더에서 공백 제거 (인식률 상승)
+            # 헤더 정리 (공백/이모지 제거해서 비교 가능하게 만듦)
             raw_header = [str(h).replace(' ', '').strip() for h in vals[0]]
             df_raw = pd.DataFrame(vals[1:])
             
-            # 실제 시트 컬럼 수가 헤더와 다를 경우 강제 조정
+            # 컬럼 수가 헤더보다 많으면 자르기
             if df_raw.shape[1] > len(raw_header):
                 df_raw = df_raw.iloc[:, :len(raw_header)]
             df_raw.columns = raw_header
-
-            # 매핑할 표준 컬럼명
-            target_cols = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
-            final_df = pd.DataFrame()
-
-            # 시트에서 정확한 컬럼 찾기 (순서가 바뀌어 있어도 이름으로 찾음)
-            for col in target_cols:
-                matching_col = [c for c in df_raw.columns if col in c or c in col]
-                if matching_col:
-                    final_df[col] = df_raw[matching_col[0]]
-                else:
-                    final_df[col] = "" # 없는 컬럼은 빈칸 처리하여 밀림 방지
-
-            # [핵심] 이모지 있는 셀만 골라서 정리하고 나머지는 원본 유지
-            def clean_emoji_text(text):
-                text = str(text)
-                # 줄바꿈만 한 칸 공백으로 변경 (표 틀어짐 방지)
-                return text.replace('\n', ' ').strip()
-
-            final_df["상품명"] = final_df["상품명"].apply(clean_emoji_text)
-            
-            return final_df
+            return df_raw
         except: return pd.DataFrame()
 
-    df_origin = load_fixed_history()
+    df_origin = get_history_safe()
 
-    # 상단 UI
+    # [2. 상단 UI 배치]
     f1, f2, f3, f4 = st.columns([1, 0.5, 1.2, 1.2])
     with f1:
         today = datetime.now(KST).date()
-        d_range = st.date_input("🗓️ 날짜 범위", value=(today, today), key="v6_fix_final_date")
+        d_range = st.date_input("🗓️ 날짜 범위", value=(today, today), key="v6_date_final")
     with f2:
         st.write(""); st.write("")
-        search_trigger = st.button("🔍 검색", use_container_width=True, type="primary")
+        # 버튼을 누르지 않아도 데이터가 있으면 아래에서 처리됨
+        search_trigger = st.button("🔍 검색", use_container_width=True, type="primary", key="v6_search_btn")
     with f3:
-        h_q = st.text_input("🔍 상품명 검색", key="v6_fix_final_q")
+        h_q = st.text_input("🔍 상품명 검색", placeholder="결과 내 검색...", key="v6_search_final")
     with f4:
         batch_list = ["전체보기"]
         if not df_origin.empty:
-            df_origin["날짜_만"] = df_origin["날짜시간"].str.slice(0, 10)
+            # 날짜시간 컬럼에서 날짜만 추출 (에러 방지용)
+            first_col = df_origin.columns[0] # 보통 날짜시간
+            df_origin["_D"] = df_origin[first_col].astype(str).str.slice(0, 10)
+            
             if len(d_range) == 2:
                 s_d, e_d = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
-                f_b = df_origin[(df_origin["날짜_만"] >= s_d) & (df_origin["날짜_만"] <= e_d)]
-                batch_list += sorted(f_b["날짜시간"].str.slice(0, 16).unique().tolist(), reverse=True)
-        selected_batch = st.selectbox("📥 저장 회차 선택", batch_list)
+                f_b = df_origin[(df_origin["_D"] >= s_d) & (df_origin["_D"] <= e_d)]
+                batch_list += sorted(f_b[first_col].astype(str).str.slice(0, 16).unique().tolist(), reverse=True)
+        selected_batch = st.selectbox("📥 저장 회차 선택", batch_list, key="v6_batch_select")
 
-    # 출력
+    # [3. 결과 출력 - 검색 버튼 클릭 혹은 필터 입력 시]
     if search_trigger or h_q or selected_batch != "전체보기":
         if not df_origin.empty:
             df_view = df_origin.copy()
+            
+            # (A) 날짜 필터링 - 형식이 달라도 문자열로 비교
             if len(d_range) == 2:
                 s_s, e_s = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
-                df_view = df_view[(df_view["날짜_만"] >= s_s) & (df_view["날짜_만"] <= e_s)]
+                df_view = df_view[(df_view["_D"] >= s_s) & (df_view["_D"] <= e_s)]
+
+            # (B) 회차 필터링
             if selected_batch != "전체보기":
-                df_view = df_view[df_view["날짜시간"].str.contains(selected_batch)]
+                df_view = df_view[df_view.iloc[:,0].astype(str).str.contains(selected_batch)]
+
+            # (C) 상품명 검색
             if h_q:
-                df_view = df_view[df_view["상품명"].str.contains(h_q, case=False)]
+                # '상품명' 컬럼을 못 찾을 경우를 대비해 모든 컬럼에서 검색 시도
+                mask = df_view.astype(str).apply(lambda x: x.str.contains(h_q, case=False)).any(axis=1)
+                df_view = df_view[mask]
 
             if not df_view.empty:
-                # 상태 계산
-                def get_st(row):
+                # [강제 정렬 및 밀림 방지]
+                # 사장님이 보셔야 할 순서대로 컬럼을 새로 정의
+                target_cols = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
+                final_display = pd.DataFrame()
+                
+                for tc in target_cols:
+                    # 시트 헤더 중 해당 글자가 포함된 열을 찾음
+                    found_col = [c for c in df_view.columns if tc in c or c in tc]
+                    if found_col:
+                        final_display[tc] = df_view[found_col[0]]
+                    else:
+                        final_display[tc] = "데이터없음"
+
+                # 상태 아이콘 (권장 발주수량 기준)
+                def make_status(row):
                     try:
-                        v = str(row["권장 발주수량"]).replace(',', '').strip()
+                        v = str(row.get("권장 발주수량", "0")).replace(',', '').strip()
                         return "🚨 긴급" if int(float(v)) >= 10 else "✅ 정상"
                     except: return "✅ 정상"
                 
-                # 아이콘 삽입 및 컬럼 정리
-                df_view.insert(0, "상태", df_view.apply(get_st, axis=1))
-                display_cols = ["상태", "날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
-                df_final = df_view[display_cols].sort_values(by="날짜시간", ascending=False)
+                final_display.insert(0, "상태", final_display.apply(make_status, axis=1))
 
-                st.success(f"✅ 총 {len(df_final)}건 조회")
+                st.success(f"✅ 총 {len(final_display)}건을 찾았습니다.")
                 
-                # [최종] 테이블 설정: 너비를 고정하여 이모지가 밀어도 칸이 유지되게 함
+                # 표 출력 (너비 고정하여 이모지 밀림 차단)
                 st.dataframe(
-                    df_final,
+                    final_display,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "상태": st.column_config.TextColumn("상태", width="small"),
-                        "상품명": st.column_config.TextColumn("상품명", width=400), # 넉넉하게 고정
-                        "옵션": st.column_config.TextColumn("옵션", width=150),
-                        "날짜시간": st.column_config.TextColumn("날짜시간", width=180)
+                        "상품명": st.column_config.TextColumn("상품명", width=350), # 이모지 칸 넉넉히
+                        "옵션": st.column_config.TextColumn("옵션", width=120),
+                        "날짜시간": st.column_config.TextColumn("날짜시간", width=180),
                     }
                 )
             else:
-                st.warning("🧐 내역이 없습니다.")
+                st.warning("🧐 해당 조건의 데이터가 시트에 없습니다.")
+        else:
+            st.error("📍
