@@ -481,122 +481,100 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [6단계: 전체 히스토리 관리 (헤더 중복 에러 해결 및 강제 매핑)] ---
+# --- [6단계: 전체 히스토리 관리 (백업 기반 복구 버전)] ---
 # ==========================================================
-st.divider()
-st.header("📜 6단계: 전체 히스토리 관리")
+if st.session_state.get('analyzed'):
+    st.divider()
+    st.subheader("📜 6단계: 전체 히스토리 관리")
 
-# [1. 상단 필터 UI 배치]
-f_col1, f_btn, f_col2, f_col3 = st.columns([1.2, 0.5, 1.8, 1.5])
-
-with f_col1:
-    log_date_range = st.date_input("🗓️ 조회 날짜 범위", 
-                                   [datetime.now(KST).date(), datetime.now(KST).date()],
-                                   key="v6_date_final_fix")
-
-with f_btn:
-    st.write(" ")
-    st.write(" ") 
-    search_clicked = st.button("🔍 조회", use_container_width=True, key="v6_btn_final_fix")
-
-with f_col2:
-    log_search_q = st.text_input("🔍 상품명 검색", placeholder="검색어 입력...", key="v6_q_final_fix")
-
-# [2. 데이터 로드 로직 (헤더 중복 에러 방지용)]
-def get_v6_data_no_header_error():
-    try:
-        sh_log = get_sheet().worksheet("발주기록")
-        # get_all_values()로 전체를 가져온 뒤 첫 줄은 버리고 강제로 헤더 지정
-        all_values = sh_log.get_all_values()
-        
-        if len(all_values) <= 1: # 헤더만 있거나 아예 비어있는 경우
-            return "EMPTY_DATA"
-            
-        # 강제로 지정할 헤더 목록 (사장님 시트의 데이터 순서와 맞아야 함)
-        # 보통 [날짜시간, 상품명, 옵션, 공급쳐상품명, 가용재고, 리오더수량, 추가발주수량, 권장 발주수량] 순서
-        expected_cols = ['날짜시간', '상품명', '옵션', '공급쳐상품명', '가용재고', '리오더수량', '추가발주수량', '권장 발주수량']
-        
-        # 데이터프레임 생성 (첫 줄 제외하고 데이터만, 컬럼은 위 목록으로 강제 지정)
-        # 만약 실제 시트 컬럼 수가 더 많다면 그만큼만 잘라냄
-        data_rows = all_values[1:] 
-        df = pd.DataFrame(data_rows)
-        
-        # 실제 데이터 열 개수에 맞춰 헤더 할당 (부족하면 채우고 남으면 자름)
-        df.columns = expected_cols[:len(df.columns)]
-        
-        return df
-    except Exception as e:
-        return f"ERROR: {str(e)}"
-
-result = get_v6_data_no_header_error()
-
-# [3. 상태별 처리]
-if isinstance(result, str):
-    if "EMPTY_DATA" in result:
-        st.warning("📍 '발주기록' 시트에 저장된 데이터가 없습니다. 5단계에서 저장을 먼저 진행해 주세요.")
-    else:
-        st.error(f"❌ 시트 연결 중 오류가 발생했습니다: {result}")
+    # 사장님 요청 순서: 날짜 -> 검색버튼 -> 상품명 -> 회차
+    f1, f2, f3, f4 = st.columns([1, 0.5, 1.2, 1.2])
     
-    with f_col3:
-        st.selectbox("📥 저장 회차 선택", ["전체 회차"], key="v6_session_empty_fix")
-
-else:
-    # --- 데이터 정상 로드 시 ---
-    df_log_raw = result
-    # 날짜시간 변환
-    df_log_raw['날짜시간'] = pd.to_datetime(df_log_raw['날짜시간'], errors='coerce')
+    with f1:
+        today = datetime.now(KST).date()
+        d_range = st.date_input("🗓️ 날짜 범위", value=(today, today), key="v6_date_final")
     
-    # 회차 목록 필터링용
-    mask_s = (df_log_raw['날짜시간'].dt.date >= log_date_range[0])
-    if len(log_date_range) == 2:
-        mask_s &= (df_log_raw['날짜시간'].dt.date <= log_date_range[1])
-    
-    sessions = sorted(df_log_raw[mask_s]['날짜시간'].dt.strftime('%Y-%m-%d %H:%M').dropna().unique().tolist(), reverse=True)
-    session_list = ["전체 회차"] + sessions
+    with f2:
+        st.write("") # 높이 맞춤용
+        st.write("") 
+        search_trigger = st.button("🔍 검색", use_container_width=True, type="primary", key="v6_search_btn")
 
-    with f_col3:
-        sel_session = st.selectbox("📥 저장 회차 선택", session_list, key="v6_session_final_fix")
-
-    # [조회 버튼 클릭 시 결과 출력]
-    if search_clicked or log_search_q or sel_session != "전체 회차":
-        df_filtered = df_log_raw.copy()
-
-        # 필터링
-        if len(log_date_range) == 2:
-            df_filtered = df_filtered[
-                (df_filtered['날짜시간'].dt.date >= log_date_range[0]) & 
-                (df_filtered['날짜시간'].dt.date <= log_date_range[1])
-            ]
+    with f3:
+        h_q = st.text_input("🔍 상품명 검색", placeholder="결과 내 검색...", key="v6_search_final")
         
-        if sel_session != "전체 회차":
-            df_filtered = df_filtered[df_filtered['날짜시간'].dt.strftime('%Y-%m-%d %H:%M') == sel_session]
+    with f4:
+        # 회차 선택박스 (데이터가 있을 때 세션에서 가져와서 업데이트)
+        batch_list = ["전체보기"]
+        if "v6_batches" in st.session_state:
+            batch_list = st.session_state.v6_batches
+        selected_batch = st.selectbox("📥 저장 회차 선택", batch_list, key="v6_batch_select")
 
-        if log_search_q:
-            df_filtered = df_filtered[df_filtered['상품명'].astype(str).str.contains(log_search_q, case=False)]
-
-        if not df_filtered.empty:
-            # 아이콘 및 포맷 복구
-            def set_status(row):
-                qty = pd.to_numeric(row.get('권장 발주수량', 0), errors='coerce').fillna(0)
-                return "🚨 긴급" if qty >= 10 else "✅ 정상"
+    # 검색 버튼 클릭 시 로직
+    if search_trigger:
+        try:
+            with st.spinner("📡 기록을 불러오는 중..."):
+                sheet = get_sheet()
+                worksheet = sheet.worksheet("발주기록")
+                all_values = worksheet.get_all_values()
             
-            df_filtered['상태'] = df_filtered.apply(set_status, axis=1)
-            df_filtered['날짜'] = df_filtered['날짜시간'].dt.strftime('%Y-%m-%d')
-            df_filtered['시간'] = df_filtered['날짜시간'].dt.strftime('%H:%M:%S')
+            if len(all_values) > 1:
+                # 1. 데이터프레임 생성 (첫 줄 제외)
+                df_hist = pd.DataFrame(all_values[1:])
+                
+                # [보정] 실제 시트의 컬럼 수와 우리가 정한 제목 수 맞추기 (에러 방지)
+                target_cols = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
+                actual_col_count = len(df_hist.columns)
+                
+                if actual_col_count >= 8:
+                    # 8개까지만 정확히 매칭하고 남는 건 버림 (틀어짐 방지)
+                    df_hist.columns = target_cols + [f"extra_{i}" for i in range(actual_col_count - 8)]
+                    df_hist = df_hist[target_cols].copy()
+                else:
+                    # 혹시라도 컬럼이 모자라면 있는 만큼만 매칭
+                    df_hist.columns = target_cols[:actual_col_count]
 
-            # 사장님 화면 맞춤형 순서 재배치
-            order_cols = ['상태', '날짜', '시간', '상품명', '옵션', '공급쳐상품명', '가용재고', '리오더수량', '추가발주수량', '권장 발주수량']
-            
-            # 실제 존재하는 컬럼 위주로 노출
-            final_cols = [c for c in order_cols if c in df_filtered.columns or c in ['상태', '날짜', '시간']]
-            df_final_view = df_filtered[final_cols].sort_values(by='날짜시간', ascending=False)
+                # 2. 날짜 필터링 (가장 우선 적용)
+                df_hist["날짜_만"] = df_hist["날짜시간"].astype(str).str.slice(0, 10)
+                
+                if len(d_range) == 2:
+                    s_s, e_s = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
+                    df_hist = df_hist[(df_hist["날짜_만"] >= s_s) & (df_hist["날짜_만"] <= e_s)]
 
-            st.success(f"🔍 {len(df_final_view)}건의 내역을 찾았습니다.")
-            st.dataframe(df_final_view, use_container_width=True, hide_index=True)
+                # 3. 결과 최신순 정렬
+                df_hist = df_hist.sort_values(by="날짜시간", ascending=False)
 
-            csv_data = df_final_view.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 현재 내역 다운로드(CSV)", csv_data, f"발주기록_{log_date_range[0]}.csv", use_container_width=True)
-        else:
-            st.warning("⚠️ 선택한 조건에 맞는 데이터가 없습니다.")
-    else:
-        st.info("💡 필터를 설정한 후 [조회] 버튼을 눌러주세요.")
+                # 4. 회차(시간대) 목록 업데이트 (세션에 저장하여 selectbox 반영)
+                batches = ["전체보기"] + sorted(df_hist["날짜시간"].astype(str).str.slice(0, 16).unique().tolist(), reverse=True)
+                st.session_state.v6_batches = batches
+                st.session_state.v6_data_raw = df_hist # 원본 데이터 저장
+
+                # 5. [출력용 필터 적용] 상품명 검색 + 회차 선택
+                df_view = df_hist.copy()
+                
+                # 상품명 검색
+                if h_q:
+                    df_view = df_view[df_view["상품명"].astype(str).str.contains(h_q, case=False)]
+                
+                # 회차 선택 (선택된 경우에만)
+                if selected_batch != "전체보기":
+                    df_view = df_view[df_view["날짜시간"].astype(str).str.contains(selected_batch)]
+
+                # 6. 화면 표시 (아이콘 추가로 시인성 확보)
+                def add_icon(row):
+                    try:
+                        qty = int(str(row["권장 발주수량"]).replace(',', ''))
+                        return "🚨 긴급" if qty >= 10 else "✅ 정상"
+                    except: return "✅ 정상"
+
+                df_view.insert(0, "상태", df_view.apply(add_icon, axis=1))
+
+                st.success(f"✅ 총 **{len(df_view)}**건의 내역이 조회되었습니다.")
+                st.dataframe(df_view, use_container_width=True, hide_index=True)
+                
+                csv_data = df_view.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                st.download_button("📥 내역 다운로드(CSV)", csv_data, f"발주기록_{d_range[0]}.csv", use_container_width=True)
+
+            else:
+                st.info("💡 아직 저장된 발주 기록이 없습니다.")
+        except Exception as e:
+            st.error(f"📡 데이터 로딩 오류: {e}")
