@@ -227,13 +227,13 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [5단계: 최종 발주 및 구글 시트 저장] ---
+# --- [5단계: 최종 발주 및 구글 시트 저장 (필터 통합 및 정렬)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📋 5단계: 최종 발주 리스트 요약")
 
-    # 1. 설정값 및 변수 로드
+    # 1. 설정값 및 데이터 복사
     p = st.session_state.p
     avail, t7day, t3day = p['av'], p['t7'], p['t3']
     item, option, v_item = p['it'], p['op'], p['vi']
@@ -241,58 +241,77 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
     df_5 = st.session_state.df_raw.copy()
     
-    # 데이터 전처리
+    # 데이터 전처리 (숫자 변환 및 리오더 컬럼 확인)
     for c in [avail, t7day, t3day]:
         if c in df_5.columns:
             df_5[c] = pd.to_numeric(df_5[c], errors='coerce').fillna(0).astype(int)
     if '리오더 수량' not in df_5.columns: df_5['리오더 수량'] = 0
     else: df_5['리오더 수량'] = pd.to_numeric(df_5['리오더 수량'], errors='coerce').fillna(0).astype(int)
 
-    # 2. 계산 로직 (상태/일판매량/권장발주)
+    # 2. 계산 로직 (일판매량/권장발주/상태)
     df_5['일판매량'] = df_5.apply(lambda x: round(x[t7day] / 7) if x[t7day] > 0 else (round(x[t3day] / 3) if x[t3day] > 0 else 0), axis=1).astype(int)
     df_5['권장 발주수량'] = ((df_5['일판매량'] * (lt + ss)) - (df_5[avail] + df_5['리오더 수량'])).clip(lower=0).astype(int)
     
     if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
     df_5['추가발주수량'] = df_5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
 
-    def get_stat_v5_revived(r):
+    # [상태 정의]
+    def get_stat_v5_final(r):
         tot = r[avail] + r['리오더 수량']
         day = r['일판매량']
         if day > 0:
             if tot < (day * 3): return "🚨 긴급"
             if tot < (day * 5): return "⚠️ 주의"
         return "✅ 정상"
-    df_5['상태'] = df_5.apply(get_stat_v5_revived, axis=1)
+    df_5['상태'] = df_5.apply(get_stat_v5_final, axis=1)
 
-    # 3. 상단 필터 (복구 완료)
-    f_c1, f_c2, f_c3 = st.columns([1, 2, 1])
+    # [정렬 로직 추가] 긴급(0) > 주의(1) > 정상(2) 순으로 점수 부여 후 정렬
+    stat_score = {"🚨 긴급": 0, "⚠️ 주의": 1, "✅ 정상": 2}
+    df_5['정렬순서'] = df_5['상태'].map(stat_score)
+    df_5 = df_5.sort_values(by=['정렬순서', item]).drop(columns=['정렬순서'])
+
+    # 3. 상단 필터 (통합 필터 추가)
+    f_c1, f_c2, f_c3 = st.columns([1.5, 2, 1])
     with f_c1:
-        m5_filter = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 긴급", "⚠️ 주의", "✅ 정상"], index=0, key="v5_stat_revive")
+        # 필터 목록에 '🚨 위험군(긴급+주의)' 추가
+        m5_filter = st.selectbox(
+            "🚦 상태 필터", 
+            ["전체보기", "🔥 위험군(긴급+주의)", "🚨 긴급", "⚠️ 주의", "✅ 정상"], 
+            index=1, # 기본값을 위험군으로 설정
+            key="v5_stat_combined"
+        )
     with f_c2:
-        s5_search = st.text_input("🔍 상품명/옵션 검색", placeholder="검색어 입력...", key="v5_name_revive")
+        s5_search = st.text_input("🔍 상품명/옵션 검색", placeholder="검색어 입력...", key="v5_name_search_combined")
     with f_c3:
-        d5_date = st.date_input("🗓️ 기록 기준 날짜", datetime.now().date(), key="v5_date_revive")
+        d5_date = st.date_input("🗓️ 기록 기준 날짜", datetime.now().date(), key="v5_date_combined")
 
-    # 필터 적용
+    # 필터 적용 로직
     df_disp_5 = df_5.copy()
-    if m5_filter != "전체보기":
+    if m5_filter == "🔥 위험군(긴급+주의)":
+        df_disp_5 = df_disp_5[df_disp_5["상태"].isin(["🚨 긴급", "⚠️ 주의"])]
+    elif m5_filter != "전체보기":
         df_disp_5 = df_disp_5[df_disp_5["상태"] == m5_filter]
+        
     if s5_search:
         df_disp_5 = df_disp_5[df_disp_5[item].astype(str).str.contains(s5_search, case=False) | 
                               df_disp_5[option].astype(str).str.contains(s5_search, case=False)]
 
-    # 4. 화면 표시 (상태 포함 8가지 항목)
+    # 4. 화면 표시
     display_map = {"상태":"상태", item:"상품명", option:"옵션", v_item:"공급쳐상품명", avail:"가용재고", "리오더 수량":"리오더수량", "추가발주수량":"추가발주수량", "권장 발주수량":"권장 발주수량"}
     
-    with st.form("final_order_form_v5_revive"):
+    with st.form("final_order_form_v5_combined"):
         df_to_edit = df_disp_5[list(display_map.keys())].rename(columns=display_map)
         edited_df = st.data_editor(
-            df_to_edit, use_container_width=True, hide_index=True, key="v5_editor_revive",
-            column_config={"추가발주수량": st.column_config.NumberColumn(format="%d"), "권장 발주수량": st.column_config.NumberColumn(format="%d", disabled=True)}
+            df_to_edit, use_container_width=True, hide_index=True, key="v5_editor_combined",
+            column_config={
+                "상태": st.column_config.TextColumn(width="small"),
+                "추가발주수량": st.column_config.NumberColumn(format="%d"),
+                "권장 발주수량": st.column_config.NumberColumn(format="%d", disabled=True)
+            }
         )
         
         if st.form_submit_button("✅ 수량 확정 및 반영", use_container_width=True, type="primary"):
-            changes = st.session_state["v5_editor_revive"].get("edited_rows", {})
+            changes = st.session_state["v5_editor_combined"].get("edited_rows", {})
             for r_idx, change in changes.items():
                 orig_idx = df_disp_5.index[int(r_idx)]
                 if "추가발주수량" in change:
@@ -301,45 +320,24 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     st.session_state.add_order_dict[orig_idx] = val
             st.success("✅ 반영되었습니다!"); time.sleep(1); st.rerun()
 
-    # 5. 저장 및 다운로드 (저장 시 '상태' 제외)
+    # 5. 저장 및 다운로드 (저장 시 '상태' 제외 7개 항목)
     st.write("---")
     col_b1, col_b2 = st.columns(2)
     with col_b1:
-        if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, key="btn_save_7only"):
+        if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, key="btn_save_final_7only"):
             df_5['합계'] = df_5['권장 발주수량'] + df_5['추가발주수량']
             ready_to_save = df_5[df_5['합계'] > 0]
             
             if not ready_to_save.empty:
                 now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                log_rows = []
-                for _, r in ready_to_save.iterrows():
-                    # [저장 포인트] 여기서 '상태'는 빼고 7개 항목만 담습니다.
-                    log_rows.append([
-                        now_str,               # 0. 날짜시간
-                        r[item],               # 1. 상품명
-                        r[option],             # 2. 옵션
-                        r[v_item],             # 3. 공급쳐상품명
-                        int(r[avail]),         # 4. 가용재고
-                        int(r['리오더 수량']),     # 5. 리오더수량
-                        int(r['추가발주수량']),    # 6. 추가발주수량
-                        int(r['권장 발주수량'])    # 7. 권장 발주수량
-                    ])
+                log_rows = [[now_str, r[item], r[option], r[v_item], int(r[avail]), int(r['리오더 수량']), int(r['추가발주수량']), int(r['권장 발주수량'])] for _, r in ready_to_save.iterrows()]
                 try:
                     sheet = get_sheet()
                     sheet.worksheet("발주기록").append_rows(log_rows)
-                    st.success(f"✅ {now_str} 저장 완료 (상태 제외 7개 항목)"); 
+                    st.success(f"✅ {now_str} 저장 완료!"); 
                     st.session_state.add_order_dict = {}; time.sleep(1); st.rerun()
                 except Exception as e: st.error(f"📡 저장 실패: {e}")
-            else: st.warning("⚠️ 저장할 수량이 없습니다.")
-
-    with col_b2:
-        if '권장 발주수량' in df_5.columns:
-            csv_target = df_5[(df_5['권장 발주수량'] + df_5['추가발주수량']) > 0]
-            if not csv_target.empty:
-                # 엑셀 다운로드 시에도 사장님 요청대로 7개 항목만!
-                csv_cols = [item, option, v_item, avail, '리오더 수량', '추가발주수량', '권장 발주수량']
-                csv_file = csv_target[csv_cols].rename(columns=display_map).to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                st.download_button("📥 최종 발주서 CSV 다운로드", csv_file, f"발주서_{d5_date.strftime('%m%d')}.csv", use_container_width=True)
+            else
                 
 
 
