@@ -104,17 +104,17 @@ st.title("📦 저스트원 통합 재고 관리 v4.0")
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
 with tab1:
-    # --- 1~3단계: 설정 ---
-    st.subheader("📁 1~3단계: 데이터 업로드 및 분석 설정")
+    # --- 1단계: 데이터 업로드 ---
+    st.subheader("📁 1단계: 데이터 업로드")
     
-    # [파일명 초기화 연동] key 부분에 upload_key 적용
+    # 파일 업로드 위젯 (초기화 시 파일명 삭제 기능 포함)
     up_file = st.file_uploader(
         "엑셀/CSV 파일 업로드", 
         type=['xlsx', 'xls', 'csv'], 
         key=f"up_file_{st.session_state.upload_key}"
     )
     
-    # [강력한 초기화 버튼]
+    # [🔄 화면 전체 초기화 버튼]
     if st.button("🔄 화면 전체 초기화", use_container_width=True):
         for key in list(st.session_state.keys()):
             if key != "upload_key": 
@@ -125,18 +125,24 @@ with tab1:
         st.query_params.clear() 
         st.rerun()
 
-    # 파일 업로드 로직
+    # 데이터 로드 로직
     if up_file:
         if st.session_state.get('df_raw') is None:
-            df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
-            df.columns = df.columns.str.strip()
-            if "리오더 수량" not in df.columns: df["리오더 수량"] = 0
-            df = df.fillna("") 
-            st.session_state.df_raw = df
+            try:
+                df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
+                df.columns = df.columns.str.strip()
+                if "리오더 수량" not in df.columns: df["리오더 수량"] = 0
+                df = df.fillna("") 
+                st.session_state.df_raw = df
+            except Exception as e:
+                st.error(f"파일 로드 오류: {e}")
 
-    # [매핑 화면] 분석 후에도 유지되도록 조건 수정 (and not analyzed 삭제)
+    # --- 2~3단계: 매핑 및 분석 설정 (파일이 업로드된 경우만 표시) ---
     if st.session_state.get('df_raw') is not None:
         st.divider()
+        
+        # --- 2단계: 매핑 항목 ---
+        st.subheader("📋 2단계: 매핑 항목")
         st.info("💡 업로드된 데이터의 컬럼을 매칭해주세요.")
         cols = st.session_state.df_raw.columns.tolist()
         
@@ -147,6 +153,7 @@ with tab1:
                 if any(k in column_name for k in keys): return i
             return 0
 
+        # 매핑 선택 상자 (3열 배치)
         c1, c2, c3 = st.columns(3)
         with c1:
             so = st.selectbox("품절 여부", cols, index=auto_idx(['품절']), key="sel_so")
@@ -159,26 +166,30 @@ with tab1:
         with c3:
             av = st.selectbox("가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
             
-            # --- [수정] 3일 판매 고정 로직 ---
+            # [고정] 3일 판매: '3일 발주합계' 최우선
             t3_target = "3일 발주합계"
-            if t3_target in cols:
-                t3_idx = cols.index(t3_target)
-            else:
-                t3_idx = auto_idx(['3일'], exclude_keys=['1주', '7일', '품절'])
+            t3_idx = cols.index(t3_target) if t3_target in cols else auto_idx(['3일'], exclude_keys=['1주', '7일', '품절'])
             t3 = st.selectbox("3일 판매", cols, index=t3_idx, key="sel_t3")
             
-            # --- [수정] 7일 판매 고정 로직 ---
+            # [고정] 7일 판매: '1주발주합계' 최우선
             t7_target = "1주발주합계"
-            if t7_target in cols:
-                t7_idx = cols.index(t7_target)
-            else:
-                t7_idx = auto_idx(['7일', '1주'], exclude_keys=['3일', '품절'])
+            t7_idx = cols.index(t7_target) if t7_target in cols else auto_idx(['7일', '1주'], exclude_keys=['3일', '품절'])
             t7 = st.selectbox("7일 판매", cols, index=t7_idx, key="sel_t7")
-        
-        lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
-        ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
 
-        if st.button("🚀 데이터 분석 시작", use_container_width=True, type="primary"):
+        st.write("") # 간격 조절
+        
+        # --- 3단계: 데이터 분석 설정 ---
+        st.subheader("🚀 3단계: 데이터 분석 설정")
+        
+        # [리드타임/안전재고 한 줄 배치]
+        s1, s2 = st.columns(2)
+        with s1:
+            lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
+        with s2:
+            ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
+
+        # 분석 시작 버튼
+        if st.button("📊 데이터 분석 시작", use_container_width=True, type="primary"):
             st.session_state.p = {
                 'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 
                 'st': stk, 'av': av, 't3': t3, 't7': t7, 'lt': lt_val, 'ss': ss_val
@@ -186,7 +197,7 @@ with tab1:
             
             # 분석 로직 실행
             df_final = st.session_state.df_raw.copy()
-            # (데이터 처리 로직...)
+            # (이하 기존의 데이터 가공 및 구글 시트 데이터 병합 로직을 그대로 사용하세요)
             
             st.session_state.df_raw = df_final 
             st.session_state.analyzed = True   
