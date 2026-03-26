@@ -388,7 +388,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 
 
 
-# --- [6단계: 전체 히스토리 내역] ---
+# --- [6단계: 전체 히스토리 내역 - 에러 방지 보강] ---
 st.divider()
 st.subheader("📜 6단계: 전체 히스토리 내역")
 
@@ -398,24 +398,41 @@ try:
     all_values = worksheet.get_all_values()
     
     if len(all_values) > 1:
-        # 데이터 로드 (헤더 제외)
-        df_hist = pd.DataFrame(all_values[1:])
+        # 1. 데이터 로드 (헤더 제외)
+        raw_data = all_values[1:]
+        df_hist = pd.DataFrame(raw_data)
         
-        # 사장님 요청 순서대로 컬럼명 강제 지정 (총 8개)
-        df_hist.columns = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
+        # 2. [핵심] 칸 개수 자동 맞춤 로직
+        # 사장님이 원하시는 최종 8개 항목 이름
+        target_cols = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
+        
+        current_width = len(df_hist.columns) # 현재 시트의 칸 개수
+        
+        if current_width == 9:
+            # 예전 데이터(상태 포함 9칸)가 섞여 있을 경우
+            df_hist.columns = ["날짜시간", "상태", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
+            # '상태'만 빼고 8개로 맞춤
+            df_hist = df_hist[["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]]
+        elif current_width == 8:
+            # 현재 설정(8칸)대로 잘 들어온 경우
+            df_hist.columns = target_cols
+        else:
+            # 그 외의 경우 (이름을 임시로 붙여서 에러 방지)
+            df_hist.columns = [f"항목_{i}" for i in range(current_width)]
+            if current_width > 0: df_hist.rename(columns={df_hist.columns[0]: "날짜시간", df_hist.columns[1]: "상품명"}, inplace=True)
 
-        # 날짜 검색용 (글자 10자리 'YYYY-MM-DD'만 추출)
+        # 3. 날짜 필터링용 전처리
         df_hist["날짜_만"] = df_hist["날짜시간"].astype(str).str.slice(0, 10)
         
-        # 필터 UI
+        # 4. 필터 UI
         h_f1, h_f2 = st.columns([2, 2])
         with h_f1:
             today = datetime.now().date()
-            date_range = st.date_input("🗓️ 조회 날짜 범위", value=(today, today), key="h_date_final_7")
+            date_range = st.date_input("🗓️ 조회 날짜 범위", value=(today, today), key="h_date_v6_final")
         with h_f2:
-            h_q = st.text_input("🔍 상품명 검색", placeholder="검색어를 입력하세요", key="h_search_final_7")
+            h_q = st.text_input("🔍 상품명 검색", key="h_search_v6_final")
 
-        # 필터링 적용
+        # 5. 필터 적용
         if len(date_range) == 2:
             start_s = date_range[0].strftime('%Y-%m-%d')
             end_s = date_range[1].strftime('%Y-%m-%d')
@@ -424,20 +441,19 @@ try:
         if h_q:
             df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False)]
 
-        # 결과 출력
+        # 6. 결과 출력
         if not df_hist.empty:
             st.write(f"✅ 총 **{len(df_hist)}**건의 기록이 있습니다.")
-            # 화면에 보일 컬럼 순서 고정
-            final_view = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
-            st.dataframe(df_hist[final_view], use_container_width=True, hide_index=True)
+            # 보여줄 컬럼만 필터링 (날짜_만 제외)
+            view_final = [c for c in target_cols if c in df_hist.columns]
+            st.dataframe(df_hist[view_final], use_container_width=True, hide_index=True)
             
-            # 엑셀용 다운로드 버튼 추가
-            csv_data = df_hist[final_view].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 조회 결과 다운로드", csv_data, f"발주기록_{today}.csv", use_container_width=True)
+            csv_data = df_hist[view_final].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 조회 결과 다운로드", csv_data, f"발주기록_{today}.csv", use_container_width=True, key="btn_v6_down")
         else:
-            st.warning("🧐 해당 조건에 맞는 데이터가 없습니다.")
+            st.warning("🧐 해당 기간에 데이터가 없습니다.")
             
     else:
-        st.info("💡 아직 저장된 발주 기록이 없습니다.")
+        st.info("💡 저장된 기록이 없습니다.")
 except Exception as e:
     st.error(f"📡 데이터 로딩 오류: {e}")
