@@ -351,10 +351,49 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             st.button("📥 다운로드할 데이터 없음", disabled=True, use_container_width=True)
         
             
-        # --- [6단계: 히스토리] ---
-        st.divider(); st.subheader("📜 6단계: 전체 히스토리 내역")
-        if st.button("🔄 히스토리 새로고침", use_container_width=True):
-            sheet = get_sheet()
-            if sheet:
-                df_hist = pd.DataFrame(sheet.worksheet("발주기록").get_all_records())
-                st.dataframe(df_hist.sort_values(by=df_hist.columns[0], ascending=False), use_container_width=True, hide_index=True)
+ # --- [6단계: 전체 히스토리 내역] ---
+st.divider()
+st.subheader("📜 6단계: 전체 히스토리 내역")
+
+try:
+    sheet = get_sheet()
+    worksheet = sheet.worksheet("발주기록")
+    
+    # 1. 시트 데이터 가져오기 (비어있을 경우 대비)
+    all_data = worksheet.get_all_values()
+    
+    if len(all_data) > 1:  # 헤더 제외하고 데이터가 최소 1줄 이상 있을 때
+        # 첫 줄은 컬럼명으로, 나머지는 데이터로 변환
+        df_hist = pd.DataFrame(all_data[1:], columns=all_data[0])
+        
+        # 날짜순 정렬 (최신순)
+        if "날짜" in df_hist.columns:
+            df_hist = df_hist.sort_values(by="날짜", ascending=False)
+        
+        # 필터 UI (6단계용)
+        h_c1, h_c2 = st.columns([1, 2])
+        with h_c1:
+            h_filter = st.selectbox("🚦 상태 필터 (기록)", ["전체", "🚨 긴급", "⚠️ 주의", "✅ 정상"], key="hist_f1")
+        with h_c2:
+            h_search = st.text_input("🔍 상품명 검색 (기록)", placeholder="검색어 입력...", key="hist_f2")
+        
+        # 필터 적용
+        if h_filter != "전체":
+            df_hist = df_hist[df_hist["상태"] == h_filter]
+        if h_search:
+            df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_search, case=False)]
+            
+        st.dataframe(df_hist, use_container_width=True, hide_index=True)
+        
+        # 기록 삭제 버튼 (선택 사항)
+        if st.button("🗑️ 전체 기록 삭제 (주의)", use_container_width=True):
+            # 헤더만 남기고 삭제하는 로직 (필요 시 주석 해제)
+            # worksheet.resize(rows=1)
+            # st.rerun()
+            pass
+    else:
+        st.info("💡 아직 저장된 발주 기록이 없습니다. 5단계에서 '구글 시트 저장'을 먼저 진행해 주세요.")
+
+except Exception as e:
+    st.error(f"📡 구글 시트 연결 오류: {e}")
+    st.info("팁: '발주기록' 시트의 첫 번째 줄에 [날짜, 상태, 상품명, 옵션, 공급처상품명, 가용재고, 리오더수량, 추가발주수량, 권장 발주수량] 항목이 있는지 확인해 주세요.")
