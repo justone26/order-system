@@ -84,27 +84,36 @@ with tab1:
     st.subheader("📁 1~3단계: 데이터 업로드 및 분석 설정")
     up_file = st.file_uploader("엑셀/CSV 파일 업로드", type=['xlsx', 'xls', 'csv'], key="main_up")
     
-    # [수정된 초기화 버튼] 데이터 삭제 + URL 파라미터 초기화로 1단계 강제 이동
+    # [수정된 초기화 버튼] 클릭 시 4~6단계 화면을 완전히 숨깁니다.
     if st.button("🔄 화면 전체 초기화", use_container_width=True):
+        # 1. 모든 세션 데이터 삭제
         for key in list(st.session_state.keys()):
-            del st.session_state[key]
+            if key != "main_up": # 파일 업로드 위젯 키만 제외하고 삭제
+                del st.session_state[key]
         
-        # 주소창의 탭 정보를 날려서 브라우저가 첫 화면(1~3단계)으로 인식하게 함
+        # 2. 필수 상태값 초기화 (이게 있어야 아래쪽 화면이 사라집니다)
+        st.session_state.df_raw = None
+        st.session_state.analyzed = False
+        st.session_state.p = {}
+        st.session_state.add_order_dict = {}
+        
+        # 3. 브라우저 탭 위치 초기화 및 새로고침
         st.query_params.clear() 
         st.rerun()
 
-    # 파일 업로드 시 로직 (데이터 타입 강제 지정 포함)
+    # 파일 업로드 시 로직
     if up_file:
         df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
         df.columns = df.columns.str.strip()
         
-        # [중요] 업로드한 엑셀에 리오더 수량이 없더라도 일단 0으로 세팅 (나중에 시트값으로 덮어씀)
+        # 리오더 수량 컬럼이 없으면 0으로 생성 (나중에 시트값으로 업데이트됨)
         if "리오더 수량" not in df.columns: 
             df["리오더 수량"] = 0
             
         df = df.fillna("") 
         st.session_state.df_raw = df
 
+    # 데이터가 로드된 경우에만 설정 화면 표시
     if st.session_state.get('df_raw') is not None:
         cols = st.session_state.df_raw.columns.tolist()
         
@@ -148,9 +157,7 @@ with tab1:
             for num_col in [stk, av, t3, t7]:
                 df_final[num_col] = pd.to_numeric(df_final[num_col], errors='coerce').fillna(0).astype(int)
 
-            # ------------------------------------------------------
-            # [핵심] 구글 시트('시트1')에서 기존 리오더 수량 가져오기
-            # ------------------------------------------------------
+            # --- 구글 시트('시트1')에서 기존 리오더 수량 가져와서 병합 ---
             with st.spinner("🔄 구글 시트에서 기존 리오더 수량을 불러오는 중..."):
                 try:
                     sheet = get_sheet()
@@ -167,15 +174,13 @@ with tab1:
                         st.info("✅ 구글 시트의 최신 리오더 수량을 불러왔습니다.")
                     else:
                         if "리오더 수량" not in df_final.columns: df_final["리오더 수량"] = 0
-                        st.warning("⚠️ 시트에 리오더 정보가 없어 0으로 시작합니다.")
                 except Exception as e:
                     st.error(f"⚠️ 시트 연동 에러: {e}")
                     if "리오더 수량" not in df_final.columns: df_final["리오더 수량"] = 0
-            # ------------------------------------------------------
 
             st.session_state.df_raw = df_final
             st.session_state.analyzed = True
-            st.success("데이터 분석 완료! 4단계로 이동하세요.")
+            st.success("데이터 분석 완료! 아래 4단계로 이동하세요.")
             st.rerun()
 
 
