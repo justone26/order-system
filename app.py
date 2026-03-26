@@ -26,12 +26,6 @@ components.html(
     height=0, # 화면에는 안 보이게 높이를 0으로 설정
 )
 
-st.title("📦 저스트원 통합 재고 관리 v4.0")
-# ... (이후 탭 생성 및 1~6단계 로직)
-
-
-
-
 # 1. [환경 설정 - 한국 시간대 및 페이지 설정]
 KST = pytz.timezone('Asia/Seoul') # 한국 시간대 정의
 now = datetime.now(KST)          # 현재 한국 시간 가져오기
@@ -69,30 +63,30 @@ def get_incoming_history():
         return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
 
 
-# --- 시트 연결 테스트 모드 ---
-st.sidebar.subheader("🔍 시트 연결 상태 점검")
-if st.sidebar.button("연결된 시트 탭 목록 확인하기"):
-    try:
-        sheet = get_sheet() # 기존에 만드신 시트 가져오는 함수
-        # 현재 구글 시트 파일 안에 있는 모든 탭(Worksheet) 이름을 가져옵니다.
-        worksheets = sheet.worksheets()
-        sheet_names = [s.title for s in worksheets]
-        
-        st.sidebar.success("✅ 시트 연결 성공!")
-        st.sidebar.write("**현재 발견된 탭 목록:**")
-        for name in sheet_names:
-            st.sidebar.code(name) # 탭 이름을 복사하기 좋게 코드로 출력
-            
-        # 필수 탭이 있는지 자동 체크
-        required = ["재고현황", "입고이력", "발주기록"]
-        for req in required:
-            if req in sheet_names:
-                st.sidebar.write(f"✔️ `{req}`: 확인됨")
-            else:
-                st.sidebar.error(f"❌ `{req}`: 탭을 찾을 수 없습니다!")
-                
-    except Exception as e:
-        st.sidebar.error(f"❌ 시트 연결 실패: {e}")
+# --- 시트 연결 테스트 모드 (필요할 때만 아래 줄들의 #을 지워서 사용하세요) ---
+# st.sidebar.subheader("🔍 시트 연결 상태 점검")
+# if st.sidebar.button("연결된 시트 탭 목록 확인하기"):
+#     try:
+#         sheet = get_sheet() # 기존에 만드신 시트 가져오는 함수
+#         # 현재 구글 시트 파일 안에 있는 모든 탭(Worksheet) 이름을 가져옵니다.
+#         worksheets = sheet.worksheets()
+#         sheet_names = [s.title for s in worksheets]
+#         
+#         st.sidebar.success("✅ 시트 연결 성공!")
+#         st.sidebar.write("**현재 발견된 탭 목록:**")
+#         for name in sheet_names:
+#             st.sidebar.code(name) # 탭 이름을 복사하기 좋게 코드로 출력
+#             
+#         # 필수 탭이 있는지 자동 체크
+#         required = ["재고현황", "입고이력", "발주기록"]
+#         for req in required:
+#             if req in sheet_names:
+#                 st.sidebar.write(f"✔️ `{req}`: 확인됨")
+#             else:
+#                 st.sidebar.error(f"❌ `{req}`: 탭을 찾을 수 없습니다!")
+#                 
+#     except Exception as e:
+#         st.sidebar.error(f"❌ 시트 연결 실패: {e}")
 
 
 
