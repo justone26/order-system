@@ -40,7 +40,35 @@ def get_incoming_history():
         return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
     except:
         return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
+
+
+# --- 시트 연결 테스트 모드 ---
+st.sidebar.subheader("🔍 시트 연결 상태 점검")
+if st.sidebar.button("연결된 시트 탭 목록 확인하기"):
+    try:
+        sheet = get_sheet() # 기존에 만드신 시트 가져오는 함수
+        # 현재 구글 시트 파일 안에 있는 모든 탭(Worksheet) 이름을 가져옵니다.
+        worksheets = sheet.worksheets()
+        sheet_names = [s.title for s in worksheets]
         
+        st.sidebar.success("✅ 시트 연결 성공!")
+        st.sidebar.write("**현재 발견된 탭 목록:**")
+        for name in sheet_names:
+            st.sidebar.code(name) # 탭 이름을 복사하기 좋게 코드로 출력
+            
+        # 필수 탭이 있는지 자동 체크
+        required = ["재고현황", "입고이력", "발주기록"]
+        for req in required:
+            if req in sheet_names:
+                st.sidebar.write(f"✔️ `{req}`: 확인됨")
+            else:
+                st.sidebar.error(f"❌ `{req}`: 탭을 찾을 수 없습니다!")
+                
+    except Exception as e:
+        st.sidebar.error(f"❌ 시트 연결 실패: {e}")
+
+
+
 # --- [세션 상태 초기화] ---
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'analyzed' not in st.session_state: st.session_state.analyzed = False
