@@ -107,7 +107,7 @@ with tab1:
     # --- 1~3단계: 설정 ---
     st.subheader("📁 1~3단계: 데이터 업로드 및 분석 설정")
     
-    # [파일명 초기화 연동] key 부분에 upload_key를 적용했습니다.
+    # [파일명 초기화 연동] key 부분에 upload_key 적용
     up_file = st.file_uploader(
         "엑셀/CSV 파일 업로드", 
         type=['xlsx', 'xls', 'csv'], 
@@ -116,18 +116,12 @@ with tab1:
     
     # [강력한 초기화 버튼]
     if st.button("🔄 화면 전체 초기화", use_container_width=True):
-        # 1. 모든 세션 데이터 삭제
         for key in list(st.session_state.keys()):
-            if key != "upload_key": # 키 관리용 데이터는 남겨둠
+            if key != "upload_key": 
                 del st.session_state[key]
-        
-        # 2. 파일 업로드 위젯 강제 리셋 (파일명 삭제)
         st.session_state.upload_key += 1
-        
-        # 3. 상태값 완전 리셋
         st.session_state.analyzed = False 
         st.session_state.df_raw = None
-        
         st.query_params.clear() 
         st.rerun()
 
@@ -140,7 +134,7 @@ with tab1:
             df = df.fillna("") 
             st.session_state.df_raw = df
 
-    # [핵심 수정] analyzed 조건문을 삭제하여 분석 후에도 매핑 화면이 유지되도록 했습니다.
+    # [매핑 화면] 분석 후에도 유지되도록 조건 수정 (and not analyzed 삭제)
     if st.session_state.get('df_raw') is not None:
         st.divider()
         st.info("💡 업로드된 데이터의 컬럼을 매칭해주세요.")
@@ -164,8 +158,22 @@ with tab1:
             stk = st.selectbox("정상재고", cols, index=auto_idx(['정상재고']), key="sel_stk")
         with c3:
             av = st.selectbox("가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
-            t3 = st.selectbox("3일 판매", cols, index=auto_idx(['3일', '발주'], exclude_keys=['품절']), key="sel_t3")
-            t7 = st.selectbox("7일 판매", cols, index=auto_idx(['7일', '1주', '발주'], exclude_keys=['품절']), key="sel_t7")
+            
+            # --- [수정] 3일 판매 고정 로직 ---
+            t3_target = "3일 발주합계"
+            if t3_target in cols:
+                t3_idx = cols.index(t3_target)
+            else:
+                t3_idx = auto_idx(['3일'], exclude_keys=['1주', '7일', '품절'])
+            t3 = st.selectbox("3일 판매", cols, index=t3_idx, key="sel_t3")
+            
+            # --- [수정] 7일 판매 고정 로직 ---
+            t7_target = "1주발주합계"
+            if t7_target in cols:
+                t7_idx = cols.index(t7_target)
+            else:
+                t7_idx = auto_idx(['7일', '1주'], exclude_keys=['3일', '품절'])
+            t7 = st.selectbox("7일 판매", cols, index=t7_idx, key="sel_t7")
         
         lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
         ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
@@ -176,9 +184,9 @@ with tab1:
                 'st': stk, 'av': av, 't3': t3, 't7': t7, 'lt': lt_val, 'ss': ss_val
             }
             
-            # 분석 로직 실행 (기존 로직 유지)
+            # 분석 로직 실행
             df_final = st.session_state.df_raw.copy()
-            # ... (데이터 처리 부분 동일하게 유지) ...
+            # (데이터 처리 로직...)
             
             st.session_state.df_raw = df_final 
             st.session_state.analyzed = True   
