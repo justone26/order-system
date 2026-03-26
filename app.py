@@ -58,37 +58,77 @@ with tab1:
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.rerun()
 
-    if up_file and st.session_state.df_raw is None:
+    # 파일 업로드 시 로직 (데이터 타입 강제 지정 포함)
+    if up_file:
+        # 매번 파일을 새로 읽을 수 있도록 세션 상태 체크 방식을 보강
         df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
         df.columns = df.columns.str.strip()
-        if "리오더 수량" not in df.columns: df["리오더 수량"] = 0
+        
+        # [유실 방지 1] 리오더 수량 컬럼이 없으면 생성
+        if "리오더 수량" not in df.columns: 
+            df["리오더 수량"] = 0
+            
+        # [유실 방지 2] 품절 컬럼 등 모든 텍스트 컬럼의 빈값을 '정상'으로 채우기
+        df = df.fillna("") 
+        
         st.session_state.df_raw = df
-        st.rerun()
 
-    if st.session_state.df_raw is not None:
+    if st.session_state.get('df_raw') is not None:
         cols = st.session_state.df_raw.columns.tolist()
-        def auto_idx(keys):
+        
+        # 키워드 우선순위를 조정하여 '품절'이 숫자칸에 안 들어가게 방어
+        def auto_idx(keys, exclude_keys=None):
             for i, c in enumerate(cols):
-                if any(k in str(c) for k in keys): return i
+                column_name = str(c)
+                # 제외 키워드가 포함된 컬럼은 패스 (예: 7일판매 칸에 '품절' 컬럼 제외)
+                if exclude_keys and any(ek in column_name for ek in exclude_keys):
+                    continue
+                if any(k in column_name for k in keys): 
+                    return i
             return 0
+
         c1, c2, c3 = st.columns(3)
         with c1:
-            so = st.selectbox("품절 여부", cols, index=auto_idx(['품절'])); vn = st.selectbox("공급처", cols, index=auto_idx(['공급처']))
-            vi = st.selectbox("공급처 상품명", cols, index=auto_idx(['공급처상품명']))
+            # 품절 여부는 '품절' 키워드 우선
+            so = st.selectbox("품절 여부", cols, index=auto_idx(['품절']), key="sel_so")
+            vn = st.selectbox("공급처", cols, index=auto_idx(['공급처']), key="sel_vn")
+            vi = st.selectbox("공급처 상품명", cols, index=auto_idx(['공급처상품명']), key="sel_vi")
         with c2:
-            it = st.selectbox("상품명", cols, index=auto_idx(['상품명'])); op = st.selectbox("옵션", cols, index=auto_idx(['옵션']))
-            stk = st.selectbox("정상재고", cols, index=auto_idx(['정상재고']))
+            it = st.selectbox("상품명", cols, index=auto_idx(['상품명']), key="sel_it")
+            op = st.selectbox("옵션", cols, index=auto_idx(['옵션']), key="sel_op")
+            stk = st.selectbox("정상재고", cols, index=auto_idx(['정상재고']), key="sel_stk")
         with c3:
-            av = st.selectbox("가용재고", cols, index=auto_idx(['가용재고'])); t3 = st.selectbox("3일 판매", cols, index=auto_idx(['3일']))
-            t7 = st.selectbox("7일 판매", cols, index=auto_idx(['7일']))
+            av = st.selectbox("가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
+            # 3일/7일 판매 칸에는 '품절' 컬럼이 자동으로 들어가지 않게 제외 설정
+            t3 = st.selectbox("3일 판매", cols, index=auto_idx(['3일', '발주'], exclude_keys=['품절']), key="sel_t3")
+            t7 = st.selectbox("7일 판매", cols, index=auto_idx(['7일', '1주', '발주'], exclude_keys=['품절']), key="sel_t7")
         
-        lt_val = st.number_input("⏳ 리드타임 (일)", value=7)
-        ss_val = st.number_input("🛡️ 안전재고 (일)", value=3)
+        lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
+        ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
 
         if st.button("🚀 데이터 분석 시작", use_container_width=True, type="primary"):
-            st.session_state.p = {'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 'st': stk, 'av': av, 't3': t3, 't7': t7, 'lt': lt_val, 'ss': ss_val}
+            # 분석 시작 시점에 선택된 컬럼 정보를 세션에 저장
+            st.session_state.p = {
+                'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 
+                'st': stk, 'av': av, 't3': t3, 't7': t7, 
+                'lt': lt_val, 'ss': ss_val
+            }
+            
+            # [유실 방지 3] 분석 직전 데이터 타입 강제 변환
+            # 품절 컬럼을 문자열로, 판매량 컬럼을 숫자로 확실히 변환해서 4단계로 넘김
+            df_final = st.session_state.df_raw.copy()
+            df_final[so] = df_final[so].astype(str).str.strip()
+            
+            # 숫자 데이터 보정
+            for num_col in [stk, av, t3, t7]:
+                df_final[num_col] = pd.to_numeric(df_final[num_col], errors='coerce').fillna(0)
+            
+            st.session_state.df_raw = df_final
             st.session_state.analyzed = True
-            st.rerun()
+            st.success("데이터 분석 준비 완료! 4단계 탭을 확인하세요.")
+            # 분석 완료 후 4단계로 바로 볼 수 있게 rerun (필요시)
+            # st.rerun()
+
 
 # --- 4단계 시작 ---
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
