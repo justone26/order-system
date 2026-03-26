@@ -301,22 +301,59 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     st.session_state.add_order_dict[orig_idx] = val
             st.success("✅ 업데이트 완료!"); time.sleep(1); st.rerun()
 
-    # 5. 하단 버튼 구역
+   # --- [5단계: 최종 발주 및 구글 시트 저장] ---
+if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
+    st.divider()
+    st.subheader("📋 5단계: 최종 발주 리스트 요약")
+
+    p = st.session_state.p
+    item, option, v_item, avail = p['it'], p['op'], p['vi'], p['av']
+    df_5 = st.session_state.df_raw.copy()
+
+    # (기존 일판매량, 권장발주, 추가발주 계산 로직이 이 위에 있다고 가정합니다)
+
+    # 하단 버튼 구역
     st.write("---")
     col_b1, col_b2 = st.columns(2)
     with col_b1:
-        if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, key="btn_save_v5"):
+        if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True, key="save_v5_final_7"):
+            # 발주할 수량이 있는 데이터만 추출
             df_5['합계'] = df_5['권장 발주수량'] + df_5['추가발주수량']
             ready_to_save = df_5[df_5['합계'] > 0]
+            
             if not ready_to_save.empty:
-                log_date_str = d5_date.strftime('%Y-%m-%d')
-                log_rows = [[log_date_str, r['상태'], r[item], r[option], r[v_item], int(r[avail]), int(r['리오더 수량']), int(r['추가발주수량']), int(r['권장 발주수량'])] for _, r in ready_to_save.iterrows()]
+                # 현재 시간 (초 단위까지)
+                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                # 사장님이 요청한 순서대로 데이터 구성 (날짜시간 + 7개 항목)
+                log_rows = []
+                for _, r in ready_to_save.iterrows():
+                    log_rows.append([
+                        now_str,               # 0. 날짜시간
+                        r[item],               # 1. 상품명
+                        r[option],             # 2. 옵션
+                        r[v_item],             # 3. 공급쳐상품명
+                        int(r[avail]),         # 4. 가용재고
+                        int(r['리오더 수량']),     # 5. 리오더수량
+                        int(r['추가발주수량']),    # 6. 추가발주수량
+                        int(r['권장 발주수량'])    # 7. 권장 발주수량
+                    ])
+                
                 try:
                     sheet = get_sheet()
                     sheet.worksheet("발주기록").append_rows(log_rows)
-                    st.success(f"✅ {log_date_str} 저장 완료!"); st.session_state.add_order_dict = {}; time.sleep(1); st.rerun()
-                except Exception as e: st.error(f"📡 저장 실패: {e}")
-            else: st.warning("⚠️ 저장할 데이터가 없습니다.")
+                    st.success(f"✅ {now_str} 발주 기록 저장 완료!")
+                    # 저장 후 입력값 초기화 및 새로고침
+                    st.session_state.add_order_dict = {}
+                    time.sleep(1); st.rerun()
+                except Exception as e:
+                    st.error(f"📡 시트 저장 중 오류 발생: {e}")
+            else:
+                st.warning("⚠️ 저장할 수량이 있는 품목이 없습니다.")
+
+    with col_b2:
+        # (기존 CSV 다운로드 버튼 로직 유지)
+        pass
 
     with col_b2:
         csv_target = df_5[(df_5['권장 발주수량'] + df_5['추가발주수량']) > 0]
@@ -328,7 +365,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 
-# --- [6단계: 전체 히스토리 내역 - 날짜/컬럼 강제 매칭] ---
+# --- [6단계: 전체 히스토리 내역] ---
 st.divider()
 st.subheader("📜 6단계: 전체 히스토리 내역")
 
@@ -338,55 +375,46 @@ try:
     all_values = worksheet.get_all_values()
     
     if len(all_values) > 1:
-        # 1. 사장님 시트 실제 데이터 구조에 맞게 헤더 강제 설정
-        # 보내주신 샘플 기준: 0:날짜, 1:공급처, 2:상품명, 3:옵션, 4:수량...
-        raw_df = pd.DataFrame(all_values[1:])
+        # 데이터 로드 (헤더 제외)
+        df_hist = pd.DataFrame(all_values[1:])
         
-        # 컬럼 개수에 맞춰 이름 붙이기 (데이터가 더 많을 수 있으니 안전하게 처리)
-        cols = ["날짜", "공급처", "상품명", "옵션", "발주수량"] 
-        # 혹시 뒤에 컬럼이 더 있다면 임시 이름 부여
-        for i in range(len(raw_df.columns) - len(cols)):
-            cols.append(f"추가항목_{i}")
-        raw_df.columns = cols
+        # 사장님 요청 순서대로 컬럼명 강제 지정 (총 8개)
+        df_hist.columns = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
 
-        # 2. 날짜 필터링용 전처리 (시/분/초 떼어내고 '날짜'만 남기기)
-        # "2026-03-25 13:55:53" -> "2026-03-25" 추출
-        raw_df["날짜_만"] = raw_df["날짜"].astype(str).str.split(" ").str[0]
+        # 날짜 검색용 (글자 10자리 'YYYY-MM-DD'만 추출)
+        df_hist["날짜_만"] = df_hist["날짜시간"].astype(str).str.slice(0, 10)
         
-        # 3. 필터 UI
+        # 필터 UI
         h_f1, h_f2 = st.columns([2, 2])
         with h_f1:
-            today_dt = datetime.now().date()
-            # 달력 선택 (시작일, 종료일)
-            date_range = st.date_input("🗓️ 조회 기간 선택", value=(today_dt - timedelta(days=1), today_dt), key="h_date_v5")
+            today = datetime.now().date()
+            date_range = st.date_input("🗓️ 조회 날짜 범위", value=(today, today), key="h_date_final_7")
         with h_f2:
-            h_q = st.text_input("🔍 상품명 검색", placeholder="검색어 입력...", key="h_search_v5")
-        
-        # 4. 필터링 적용
+            h_q = st.text_input("🔍 상품명 검색", placeholder="검색어를 입력하세요", key="h_search_final_7")
+
+        # 필터링 적용
         if len(date_range) == 2:
             start_s = date_range[0].strftime('%Y-%m-%d')
             end_s = date_range[1].strftime('%Y-%m-%d')
-            # 글자 대 글자로 비교 (가장 확실함)
-            df_hist = raw_df[(raw_df["날짜_만"] >= start_s) & (raw_df["날짜_만"] <= end_s)]
-        else:
-            df_hist = raw_df
-
+            df_hist = df_hist[(df_hist["날짜_만"] >= start_s) & (df_hist["날짜_만"] <= end_s)]
+            
         if h_q:
             df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False)]
-            
-        # 5. 결과 출력
+
+        # 결과 출력
         if not df_hist.empty:
-            st.write(f"✅ 총 **{len(df_hist)}**건의 기록이 조회되었습니다.")
-            # 보여줄 때는 필요한 컬럼만 (날짜_만 제외)
-            show_cols = ["날짜", "공급처", "상품명", "옵션", "발주수량"]
-            st.dataframe(df_hist[show_cols], use_container_width=True, hide_index=True)
+            st.write(f"✅ 총 **{len(df_hist)}**건의 기록이 있습니다.")
+            # 화면에 보일 컬럼 순서 고정
+            final_view = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
+            st.dataframe(df_hist[final_view], use_container_width=True, hide_index=True)
             
-            csv_out = df_hist[show_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 내역 다운로드", csv_out, "발주기록.csv", use_container_width=True, key="h_down_v5")
+            # 엑셀용 다운로드 버튼 추가
+            csv_data = df_hist[final_view].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 조회 결과 다운로드", csv_data, f"발주기록_{today}.csv", use_container_width=True)
         else:
-            st.warning("🧐 선택한 기간에 데이터가 없습니다. 달력을 어제 날짜로도 바꿔보세요!")
-            st.info(f"💡 현재 시트에 저장된 최근 날짜 예시: {raw_df['날짜_만'].iloc[-1] if not raw_df.empty else '없음'}")
+            st.warning("🧐 해당 조건에 맞는 데이터가 없습니다.")
+            
     else:
-        st.info("💡 '발주기록' 시트에 데이터가 없습니다.")
+        st.info("💡 아직 저장된 발주 기록이 없습니다.")
 except Exception as e:
-    st.error(f"📡 오류 발생: {e}")
+    st.error(f"📡 데이터 로딩 오류: {e}")
