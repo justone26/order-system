@@ -481,77 +481,100 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [6단계: 히스토리 긴급 복구 및 컬럼 재배치] ---
+# --- [6단계: 전체 히스토리 관리 (필터 복구 및 데이터 교정)] ---
 # ==========================================================
 st.divider()
-st.header("📜 6단계: 발주 히스토리 (데이터 복구 모드)")
+st.header("📜 6단계: 전체 히스토리 관리")
 
-def get_recovered_logs():
+# 1. 데이터 로드 및 전처리
+@st.cache_data(ttl=10) # 10초 캐시로 실시간성 유지
+def get_final_history_logs():
     try:
         sh_log = get_sheet().worksheet("발주기록")
         data = sh_log.get_all_records()
         if not data: return pd.DataFrame()
-        
         df = pd.DataFrame(data)
         
-        # 1. [날짜/시간 복구] 텍스트로 저장된 시간을 실제 시간 데이터로 변환
+        # 날짜시간 데이터 복구
         if '날짜시간' in df.columns:
             df['날짜시간'] = pd.to_datetime(df['날짜시간'], errors='coerce')
-        
-        # 2. [컬럼명 통일] 혹시라도 이름이 바뀐 컬럼이 있다면 원래 이름으로 복구
-        # (예: '가용재고'가 다른 이름으로 들어갔을 경우를 대비)
-        rename_map = {
-            "가용재고": "가용재고", "리오더 수량": "리오더수량", 
-            "추가발주수량": "추가발주수량", "권장 발주수량": "권장 발주수량"
-        }
-        df = df.rename(columns=rename_map)
-        
         return df
     except: return pd.DataFrame()
 
-df_log_raw = get_recovered_logs()
+df_log_raw = get_final_history_logs()
 
 if not df_log_raw.empty:
-    # --- 필터 영역 (기본값: 오늘) ---
-    f_c1, f_c2 = st.columns([2, 2])
-    with f_c1:
-        log_date = st.date_input("🗓️ 날짜 선택", datetime.now(KST).date(), key="log_date_fix")
-    with f_c2:
-        log_search = st.text_input("🔍 상품명 검색", key="log_search_fix")
-
-    # 데이터 필터링 (선택한 날짜 데이터만)
-    df_filtered = df_log_raw[df_log_raw['날짜시간'].dt.date == log_date].copy()
+    # 2. 상단 필터 UI (날짜 범위, 상품명, 저장 회차)
+    f_col1, f_col2, f_col3 = st.columns([1.5, 2, 1.5])
     
-    if log_search:
-        df_filtered = df_filtered[df_filtered['상품명'].astype(str).str.contains(log_search, case=False)]
+    with f_col1:
+        # 날짜 범위 검색 (기본값: 오늘)
+        log_date_range = st.date_input("🗓️ 조회 날짜 범위", 
+                                       [datetime.now(KST).date(), datetime.now(KST).date()],
+                                       key="log_date_range_v6")
+    
+    with f_col2:
+        # 상품명 검색
+        log_search_q = st.text_input("🔍 상품명 검색", placeholder="검색어를 입력하세요...", key="log_search_v6")
+    
+    with f_col3:
+        # 저장 회차(시간대별) 선택
+        session_list = ["전체 회차"] + sorted(df_log_raw['날짜시간'].dt.strftime('%Y-%m-%d %H:%M').unique().tolist(), reverse=True)
+        sel_session = st.selectbox("📥 저장 회차 선택", session_list, key="log_session_v6")
+
+    # 3. 데이터 필터링 적용
+    df_filtered = df_log_raw.copy()
+
+    # (1) 날짜 범위 필터
+    if len(log_date_range) == 2:
+        df_filtered = df_filtered[
+            (df_filtered['날짜시간'].dt.date >= log_date_range[0]) & 
+            (df_filtered['날짜시간'].dt.date <= log_date_range[1])
+        ]
+    
+    # (2) 저장 회차 필터
+    if sel_session != "전체 회차":
+        df_filtered = df_filtered[df_filtered['날짜시간'].dt.strftime('%Y-%m-%d %H:%M') == sel_session]
+
+    # (3) 상품명 검색 필터
+    if log_search_q:
+        df_filtered = df_filtered[df_filtered['상품명'].astype(str).str.contains(log_search_q, case=False)]
 
     if not df_filtered.empty:
-        # 3. [상태 아이콘 생성] 권장 발주수량 기준 (10개 이상 🚨)
-        def set_log_icon(row):
+        # 4. [상태 아이콘 & 시간 포맷] 강제 생성
+        def set_status_icon(row):
             qty = pd.to_numeric(row.get('권장 발주수량', 0), errors='coerce')
             return "🚨 긴급" if qty >= 10 else "✅ 정상"
         
-        df_filtered['상태'] = df_filtered.apply(set_log_icon, axis=1)
-        
-        # 4. [시간 표시 포맷팅]
+        df_filtered['상태'] = df_filtered.apply(set_status_icon, axis=1)
+        df_filtered['날짜'] = df_filtered['날짜시간'].dt.strftime('%Y-%m-%d')
         df_filtered['시간'] = df_filtered['날짜시간'].dt.strftime('%H:%M:%S')
 
-        # ⭐ [핵심: 컬럼 순서 강제 재배치] 
-        # 시트에 어떤 순서로 있든 상관없이 화면에는 아래 순서로만 나옵니다.
-        order_cols = ['상태', '시간', '상품명', '옵션', '공급쳐상품명', '가용재고', '리오더수량', '추가발주수량', '권장 발주수량']
+        # 5. [컬럼 순서 강제 교정] 스크린샷의 깨진 순서를 바로잡음
+        # 원하는 순서: 상태, 날짜, 시간, 상품명, 옵션, 공급쳐상품명, 가용재고, 리오더수량, 추가발주수량, 권장 발주수량
+        order_cols = ['상태', '날짜', '시간', '상품명', '옵션', '공급쳐상품명', '가용재고', '리오더수량', '추가발주수량', '권장 발주수량']
         
-        # 실제로 존재하는 컬럼만 필터링해서 에러 방지
-        display_cols = [c for c in order_cols if c in df_filtered.columns]
-        df_final_display = df_filtered[display_cols].sort_values(by='시간', ascending=False)
+        # '리오더 수량' 공백 유무에 따른 예외 처리
+        df_filtered = df_filtered.rename(columns={"리오더수량": "리오더 수량", "추가발주수량": "추가발주수량"})
+        
+        # 실제 존재하는 컬럼만 매칭
+        final_display_cols = [c for c in order_cols if c in df_filtered.columns or c in ['상태', '날짜', '시간']]
+        df_final_view = df_filtered[final_display_cols].sort_values(by='날짜시간', ascending=False)
 
-        # 5. [화면 출력]
-        st.info(f"💡 {log_date} 기준 총 {len(df_final_display)}건의 기록이 있습니다.")
-        st.dataframe(df_final_display, use_container_width=True, hide_index=True)
+        # 6. 테이블 출력
+        st.info(f"✅ 조회 조건에 맞는 데이터가 {len(df_final_view)}건 있습니다.")
+        st.dataframe(df_final_view, use_container_width=True, hide_index=True)
 
-        # 6. [CSV 다운로드] - 화면에 보이는 '예쁜 순서' 그대로 다운로드
-        csv_fix = df_final_display.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        st.download_button("📥 정렬된 발주내역 다운로드", csv_fix, f"발주기록_복구_{log_date}.csv", use_container_width=True)
+        # 7. CSV 다운로드
+        csv_file = df_final_view.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        st.download_button(
+            label="📥 현재 화면 내역 다운로드(CSV)",
+            data=csv_file,
+            file_name=f"발주히스토리_{datetime.now(KST).strftime('%m%d_%H%M')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
     else:
-        st.warning(f"{log_date}에 기록된 발주 데이터가 없습니다.")
+        st.warning("조회된 내역이 없습니다. 날짜나 검색어를 확인해주세요.")
 else:
-    st.error("발주기록 시트에서 데이터를 불러올 수 없습니다.")
+    st.error("발주기록 시트가 비어있거나 불러올 수 없습니다.")
