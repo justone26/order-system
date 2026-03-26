@@ -205,7 +205,7 @@ with tab1:
 
 
 # ==========================================================
-# --- [4단계: 데이터 편집 및 재고 관리 (최종 완결본)] ---
+# --- [4단계: 데이터 편집 및 재고 관리 (날짜 필터 복구 완료)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -217,38 +217,36 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     stock, avail, t3day, t7day = p['st'], p['av'], p['t3'], p['t7']
     lt, ss = p['lt'], p['ss']
 
-    # 1. 데이터 복사 및 숫자 타입 강제 변환 (계산 오류 방지)
+    # 1. 데이터 준비 및 숫자 타입 변환
     df_work = st.session_state.df_raw.copy()
     num_cols = [stock, avail, t3day, t7day]
     for col in num_cols:
         if col in df_work.columns:
             df_work[col] = pd.to_numeric(df_work[col], errors='coerce').fillna(0).astype(int)
     
-    # 리오더 수량 컬럼 초기화 및 타입 변환
     if "리오더 수량" not in df_work.columns: 
         df_work["리오더 수량"] = 0
     df_work["리오더 수량"] = pd.to_numeric(df_work["리오더 수량"], errors='coerce').fillna(0).astype(int)
-    
-    # 입력용 임시 컬럼
     df_work["리오더 입고수량"] = 0 
 
-    # 2. 지표 계산 (일판매량 정수 반올림 및 발주량 계산)
+    # 2. 지표 계산 (정수 반올림)
     def calc_daily_sales_int(row):
         t7, t3 = row[t7day], row[t3day]
-        # 7일 판매량 우선, 없으면 3일 판매량 기준 -> 계산 후 반올림
         if t7 > 0: return int(round(t7 / 7))
         elif t3 > 0: return int(round(t3 / 3))
         return 0
 
     df_work['일판매'] = df_work.apply(calc_daily_sales_int, axis=1)
     df_work['3일발주'] = (df_work['일판매'] * 3).astype(int)
-    # 권장발주: (일판매 * (LT + SS)) - (가용재고 + 리오더수량)
     df_work['권장발주'] = ((df_work['일판매'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
-    # 3. 상단 필터 및 날짜 레이아웃
+    # 3. 상단 레이아웃 (🚦 필터 / 🔍 검색 / 🗓️ 날짜)
+    # 가로바 방지를 위해 컬럼 비율을 1:1.5:1로 배분했습니다.
     f_c1, f_c2, f_c3 = st.columns([1, 1.5, 1])
     filter_m = f_c1.selectbox("🚦 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_final_filter")
     search_q = f_c2.text_input("🔍 검색", placeholder="상품명 또는 옵션...", key="v4_final_search")
+    
+    # [복구 확인] 입고 날짜 선택기
     hist_date_4 = f_c3.date_input("🗓️ 입고 날짜", datetime.now(KST).date(), key="v4_final_date")
 
     # 필터링 적용
@@ -261,7 +259,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_q, case=False) | 
                                   df_filtered[option].astype(str).str.contains(search_q, case=False)]
 
-    # 4. 화면 출력 컬럼명 축소 및 정리 (가로바 제거용)
+    # 4. 화면 출력용 컬럼명 축소
     df_display = df_filtered.rename(columns={
         sold_out_col: "상태", vendor: "공급쳐", v_item: "공급상품명", 
         item: "상품명", option: "옵션", stock: "정상", avail: "가용"
@@ -269,12 +267,12 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     
     final_cols = ["상태", "공급쳐", "상품명", "옵션", "공급상품명", "정상", "가용", "리오더 수량", "리오더 입고수량", "3일발주", "일판매", "권장발주"]
 
-    # 5. 데이터 에디터 출력
+    # 5. 데이터 에디터 (가로바 제거 옵션 포함)
     with st.form("v4_final_master_form"):
         edited_v4 = st.data_editor(
             df_display[final_cols], 
             use_container_width=True, 
-            hide_index=True,  # 앞쪽 번호 셀 제거
+            hide_index=True, 
             key="v4_editor_final",
             column_config={
                 "상태": st.column_config.TextColumn(width="small"),
@@ -292,7 +290,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             }
         )
 
-        if st.form_submit_button("💾 데이터 저장 및 입고 반영 (차감)", use_container_width=True, type="primary"):
+        if st.form_submit_button("💾 데이터 저장 및 입고 반영", use_container_width=True, type="primary"):
             user_edits = st.session_state["v4_editor_final"].get("edited_rows", {})
             
             if user_edits:
@@ -300,42 +298,30 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 m_sh = sheet.worksheet("시트1") 
                 h_sh = sheet.worksheet("입고기록")
                 
-                # 선택한 날짜와 현재 시간 조합
+                # 상단에서 선택한 hist_date_4 날짜를 사용합니다.
                 save_time = f"{hist_date_4.strftime('%Y-%m-%d')} {datetime.now(KST).strftime('%H:%M:%S')}"
 
                 count = 0
                 for r_idx_str, changes in user_edits.items():
                     target_idx = df_display.index[int(r_idx_str)]
                     
-                    # 리오더 수량 직접 수정 반영
                     if "리오더 수량" in changes:
                         st.session_state.df_raw.at[target_idx, "리오더 수량"] = int(changes["리오더 수량"])
                     
-                    # 리오더 입고수량 입력 시 차감 및 이력 저장
                     if "리오더 입고수량" in changes:
                         in_qty = int(changes["리오더 입고수량"])
                         if in_qty > 0:
                             old_v = int(st.session_state.df_raw.at[target_idx, "리오더 수량"])
                             st.session_state.df_raw.at[target_idx, "리오더 수량"] = max(0, old_v - in_qty)
-                            # 입고기록 시트에 저장
-                            h_sh.append_row([
-                                save_time, 
-                                str(df_display.at[target_idx, "상품명"]), 
-                                str(df_display.at[target_idx, "옵션"]), 
-                                in_qty
-                            ])
+                            h_sh.append_row([save_time, str(df_display.at[target_idx, "상품명"]), str(df_display.at[target_idx, "옵션"]), in_qty])
                     count += 1
 
                 if count > 0:
-                    # 구글 시트 마스터 업데이트 (전체 문자열 변환)
                     df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
                     m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-                    
-                    st.success(f"✅ {count}건의 변경사항이 저장되었습니다! (입고 날짜: {hist_date_4})")
-                    time.sleep(1)
-                    st.rerun()
-            else:
-                st.info("💡 수정된 데이터가 없습니다.")
+                    st.success(f"✅ {count}건 저장 완료! (기록 날짜: {hist_date_4})")
+                    time.sleep(1); st.rerun()
+
 
 
 # ==========================================================
