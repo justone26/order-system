@@ -137,71 +137,83 @@ with tab1:
             except Exception as e:
                 st.error(f"파일 로드 오류: {e}")
 
-    # --- 2~3단계: 매핑 및 분석 설정 (파일이 업로드된 경우만 표시) ---
-    if st.session_state.get('df_raw') is not None:
-        st.divider()
-        
-        # --- 2단계: 매핑 항목 ---
-        st.subheader("📋 2단계: 매핑 항목")
-        st.info("💡 업로드된 데이터의 컬럼을 매칭해주세요.")
-        cols = st.session_state.df_raw.columns.tolist()
-        
-        def auto_idx(keys, exclude_keys=None):
-            for i, c in enumerate(cols):
-                column_name = str(c)
-                if exclude_keys and any(ek in column_name for ek in exclude_keys): continue
-                if any(k in column_name for k in keys): return i
-            return 0
+  # --- 2~3단계: 매핑 및 분석 설정 (파일이 업로드된 경우만 표시) ---
+if st.session_state.get('df_raw') is not None:
+    st.divider()
+    
+    # --- 2단계: 매핑 항목 ---
+    st.subheader("📋 2단계: 매핑 항목")
+    st.info("💡 업로드된 데이터의 컬럼을 매칭해주세요. 특히 '등록일'은 신상품 판매량 보정에 사용됩니다.")
+    cols = st.session_state.df_raw.columns.tolist()
+    
+    def auto_idx(keys, exclude_keys=None):
+        for i, c in enumerate(cols):
+            column_name = str(c)
+            if exclude_keys and any(ek in column_name for ek in exclude_keys): continue
+            if any(k in column_name for k in keys): return i
+        return 0
 
-        # 매핑 선택 상자 (3열 배치)
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            so = st.selectbox("품절 여부", cols, index=auto_idx(['품절']), key="sel_so")
-            vn = st.selectbox("공급처", cols, index=auto_idx(['공급처']), key="sel_vn")
-            vi = st.selectbox("공급처 상품명", cols, index=auto_idx(['공급처상품명']), key="sel_vi")
-        with c2:
-            it = st.selectbox("상품명", cols, index=auto_idx(['상품명']), key="sel_it")
-            op = st.selectbox("옵션", cols, index=auto_idx(['옵션']), key="sel_op")
-            stk = st.selectbox("정상재고", cols, index=auto_idx(['정상재고']), key="sel_stk")
-        with c3:
-            av = st.selectbox("가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
-            
-            # [고정] 3일 판매: '3일 발주합계' 최우선
-            t3_target = "3일 발주합계"
-            t3_idx = cols.index(t3_target) if t3_target in cols else auto_idx(['3일'], exclude_keys=['1주', '7일', '품절'])
-            t3 = st.selectbox("3일 판매", cols, index=t3_idx, key="sel_t3")
-            
-            # [고정] 7일 판매: '1주발주합계' 최우선
-            t7_target = "1주발주합계"
-            t7_idx = cols.index(t7_target) if t7_target in cols else auto_idx(['7일', '1주'], exclude_keys=['3일', '품절'])
-            t7 = st.selectbox("7일 판매", cols, index=t7_idx, key="sel_t7")
-
-        st.write("") # 간격 조절
+    # 매핑 선택 상자 (3열 배치)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        so = st.selectbox("품절 여부", cols, index=auto_idx(['품절']), key="sel_so")
+        vn = st.selectbox("공급처", cols, index=auto_idx(['공급처']), key="sel_vn")
+        vi = st.selectbox("공급처 상품명", cols, index=auto_idx(['공급처상품명']), key="sel_vi")
+    with c2:
+        it = st.selectbox("상품명", cols, index=auto_idx(['상품명']), key="sel_it")
+        op = st.selectbox("옵션", cols, index=auto_idx(['옵션']), key="sel_op")
+        stk = st.selectbox("정상재고", cols, index=auto_idx(['정상재고']), key="sel_stk")
+    with c3:
+        av = st.selectbox("가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
         
-        # --- 3단계: 데이터 분석 설정 ---
-        st.subheader("🚀 3단계: 데이터 분석 설정")
+        # [추가] 등록일 매핑: '등록일' 또는 '날짜' 키워드 자동 매칭
+        reg = st.selectbox("📅 상품 등록일", cols, index=auto_idx(['등록일', '등록일자', '최초등록']), key="sel_reg")
         
-        # [리드타임/안전재고 한 줄 배치]
-        s1, s2 = st.columns(2)
-        with s1:
-            lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
-        with s2:
-            ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
+        # [고정] 3일 판매: '3일 발주합계' 최우선
+        t3_target = "3일 발주합계"
+        t3_idx = cols.index(t3_target) if t3_target in cols else auto_idx(['3일'], exclude_keys=['1주', '7일', '품절'])
+        t3 = st.selectbox("3일 판매", cols, index=t3_idx, key="sel_t3")
+        
+        # [고정] 7일 판매: '1주발주합계' 최우선
+        t7_target = "1주발주합계"
+        t7_idx = cols.index(t7_target) if t7_target in cols else auto_idx(['7일', '1주'], exclude_keys=['3일', '품절'])
+        t7 = st.selectbox("7일 판매", cols, index=t7_idx, key="sel_t7")
 
-        # 분석 시작 버튼
-        if st.button("📊 데이터 분석 시작", use_container_width=True, type="primary"):
-            st.session_state.p = {
-                'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 
-                'st': stk, 'av': av, 't3': t3, 't7': t7, 'lt': lt_val, 'ss': ss_val
-            }
-            
-            # 분석 로직 실행
-            df_final = st.session_state.df_raw.copy()
-            # (이하 기존의 데이터 가공 및 구글 시트 데이터 병합 로직을 그대로 사용하세요)
-            
-            st.session_state.df_raw = df_final 
-            st.session_state.analyzed = True   
-            st.rerun()
+    st.write("") # 간격 조절
+    
+    # --- 3단계: 데이터 분석 설정 ---
+    st.subheader("🚀 3단계: 데이터 분석 설정")
+    
+    # [리드타임/안전재고 한 줄 배치]
+    s1, s2 = st.columns(2)
+    with s1:
+        lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
+    with s2:
+        ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
+
+    # 분석 시작 버튼
+    if st.button("📊 데이터 분석 시작", use_container_width=True, type="primary"):
+        # 사장님, 여기에 'reg': reg 항목을 추가해서 4, 5단계에서 쓸 수 있게 저장합니다.
+        st.session_state.p = {
+            'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 
+            'st': stk, 'av': av, 't3': t3, 't7': t7, 'reg': reg,  # 등록일 추가됨
+            'lt': lt_val, 'ss': ss_val
+        }
+        
+        # 분석 로직 실행
+        df_final = st.session_state.df_raw.copy()
+        
+        # [보정] 등록일 데이터를 날짜 형식으로 미리 변환해두기 (나중에 계산하기 편하게)
+        if reg in df_final.columns:
+            df_final[reg] = pd.to_datetime(df_final[reg], errors='coerce')
+        
+        # (기타 기존 가공 로직 유지...)
+        
+        st.session_state.df_raw = df_final 
+        st.session_state.analyzed = True   
+        st.rerun()
+
+
 
 
 # ==========================================================
