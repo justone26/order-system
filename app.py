@@ -325,7 +325,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [5단계: 최종 발주 (저장 시트 규격 및 트리거 최적화)] ---
+# --- [5단계: 최종 발주 (수량 변동 상품만 선별 저장)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -338,7 +338,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     item, option, v_item = p['it'], p['op'], p['vi']
     lt, ss = p['lt'], p['ss']
 
-    # 데이터 복사 및 숫자 형변환
+    # 데이터 복사 및 숫자 형환
     df_v5_base = st.session_state.df_raw.copy()
     for c in [avail, t7day, t3day]:
         if c in df_v5_base.columns:
@@ -450,21 +450,20 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
                 st.success("✅ 시트1 반영 완료!"); time.sleep(1); st.rerun()
 
-    # [7. 하단 버튼 - ⚠️ 사장님 요청사항에 맞춰 저장 조건 및 항목 수정]
+    # [7. 하단 버튼 - ⚠️ 변화가 있는 상품만 선별하여 저장]
     st.write("---")
     col_b1, col_b2 = st.columns(2)
     with col_b1:
         if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-            # 수량 변동이 있는 것만 필터링 (리오더 > 0 또는 추가발주 > 0 또는 권장발주 > 0)
+            # 사장님 요청: 변화가 있는 상품(리오더 조절 OR 추가발주 입력 OR 권장발주 발생)만 필터링
             ready = df_display[
-                (df_display['리오더 수량'] > 0) | 
-                (df_display['추가발주수량'] > 0) | 
-                (df_display['권장 발주수량'] > 0)
+                (df_display['리오더 수량'] != 0) |    # 리오더 수량이 0이 아니거나 (수정됨)
+                (df_display['추가발주수량'] > 0) |    # 추가 발주가 입력되었거나
+                (df_display['권장 발주수량'] > 0)     # 권장 발주가 잡힌 경우
             ].copy()
 
             if not ready.empty:
                 now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
-                # 사장님이 요청하신 딱 8개 항목만 순서대로 리스트 생성
                 log_rows = []
                 for _, r in ready.iterrows():
                     log_rows.append([
@@ -479,11 +478,11 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     ])
                 try:
                     get_sheet().worksheet("발주기록").append_rows(log_rows)
-                    st.success(f"✅ 총 {len(log_rows)}건의 수량 변동 내역이 저장되었습니다!"); time.sleep(1); st.rerun()
+                    st.success(f"✅ 변화가 있는 {len(log_rows)}건의 항목만 저장되었습니다!"); time.sleep(1); st.rerun()
                 except Exception as e:
                     st.error(f"저장 실패: {e}")
             else:
-                st.warning("⚠️ 저장할 수량 변동(리오더/추가발주/권장수량) 내역이 없습니다.")
+                st.warning("⚠️ 수량 변화가 있는 상품이 없어 저장하지 않았습니다.")
 
     with col_b2:
         df_display['합계'] = df_display['권장 발주수량'] + df_display['추가발주수량']
@@ -491,6 +490,8 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         if not csv_target.empty:
             csv_df = csv_target[[item, option, v_item, avail, '리오더 수량', '추가발주수량', '권장 발주수량']].rename(columns={item:"상품명", option:"옵션", v_item:"공급쳐상품명", avail:"가용재고", "리오더 수량":"리오더수량"})
             st.download_button("📥 최종 발주서 CSV 다운로드", csv_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'), f"발주서_{d5_d.strftime('%m%d')}.csv", use_container_width=True)
+
+
 
 
 # ==========================================================
