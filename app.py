@@ -215,7 +215,7 @@ if st.session_state.get('df_raw') is not None:
 
 
 # ==========================================================
-# --- [4단계: 데이터 편집 및 재고 관리 (과거 입고량 열 복구)] ---
+# --- [4단계: 데이터 편집 및 재고 관리 (등록일 보정 로직 적용)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -225,6 +225,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     sold_out_col, item, option = p['so'], p['it'], p['op']
     vendor, v_item = p['vn'], p['vi']
     stock, avail, t3day, t7day = p['st'], p['av'], p['t3'], p['t7']
+    reg_date_col = p.get('reg')  # 2단계에서 매핑한 등록일 컬럼
     lt, ss = p['lt'], p['ss']
 
     # 1. 데이터 준비 및 숫자 타입 변환
@@ -239,32 +240,45 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work["리오더 수량"] = pd.to_numeric(df_work["리오더 수량"], errors='coerce').fillna(0).astype(int)
     df_work["리오더 입고수량"] = 0 
 
-    # 2. ⭐ [복구] 입고 이력 합산 (과거리오더 입고 데이터 가져오기)
+    # 2. 입고 이력 합산 (과거리오더 입고 데이터 가져오기)
+    @st.cache_data(ttl=60)
     def get_incoming_sum():
         try:
             sh_h = get_sheet().worksheet("입고기록")
             h_data = sh_h.get_all_records()
             if h_data:
                 h_df = pd.DataFrame(h_data)
-                # 상품명과 옵션별로 입고수량 합산
                 return h_df.groupby(['상품명', '옵션'])['입고수량'].sum().reset_index()
             return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
         except: 
             return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
 
     in_sum_df = get_incoming_sum()
-    # 원본 데이터에 과거 입고 합계 병합
     df_work = pd.merge(df_work, in_sum_df.rename(columns={"입고수량":"과거리오더 입고"}), 
                        left_on=[item, option], right_on=['상품명', '옵션'], how="left").fillna(0)
 
-    # 3. 지표 계산 (정수 반올림)
-    def calc_daily_sales_int(row):
+    # 3. ⭐ [핵심 수정] 신상품 보정 일판매량 계산 로직
+    def calc_daily_sales_with_reg(row):
         t7, t3 = row[t7day], row[t3day]
+        
+        # 등록일 기준 보정 계산
+        if reg_date_col and reg_date_col in row and pd.notnull(row[reg_date_col]):
+            # 기준 날짜(오늘)와 등록일의 차이 계산
+            today = datetime.now(KST).date()
+            reg_dt = row[reg_date_col].date() if hasattr(row[reg_date_col], 'date') else pd.to_datetime(row[reg_date_col]).date()
+            days_diff = (today - reg_dt).days
+            
+            # 등록 3일 이내 신상품인 경우
+            if 0 <= days_diff < 3:
+                actual_days = days_diff + 1  # 당일은 1일차
+                return int(round(t3 / actual_days)) if t3 > 0 else 0
+        
+        # 일반 상품 (기존 로직)
         if t7 > 0: return int(round(t7 / 7))
         elif t3 > 0: return int(round(t3 / 3))
         return 0
 
-    df_work['일판매'] = df_work.apply(calc_daily_sales_int, axis=1)
+    df_work['일판매'] = df_work.apply(calc_daily_sales_with_reg, axis=1)
     df_work['3일발주'] = (df_work['일판매'] * 3).astype(int)
     df_work['권장발주'] = ((df_work['일판매'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
@@ -279,15 +293,14 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_filtered = df_work[~is_soldout] if filter_m == "정상만" else (df_work[is_soldout] if filter_m == "품절만" else df_work)
     if search_q:
         df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_q, case=False) | 
-                                  df_filtered[option].astype(str).str.contains(search_q, case=False)]
+                                 df_filtered[option].astype(str).str.contains(search_q, case=False)]
 
-    # 5. 화면 출력 설정 (과거 입고 열 포함)
+    # 5. 화면 출력 설정
     df_display = df_filtered.rename(columns={
         sold_out_col: "상태", vendor: "공급쳐", v_item: "공급상품명", 
         item: "상품명", option: "옵션", stock: "정상", avail: "가용"
     })
     
-    # 사장님이 찾으시던 '과거리오더 입고'를 리스트에 다시 넣었습니다.
     final_cols = ["상태", "공급쳐", "상품명", "옵션", "공급상품명", "정상", "가용", "리오더 수량", "리오더 입고수량", "과거리오더 입고", "3일발주", "일판매", "권장발주"]
 
     with st.form("v4_fix_master_form"):
@@ -299,7 +312,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             column_config={
                 "상태": st.column_config.TextColumn(width=60),
                 "공급쳐": st.column_config.TextColumn(width=80),
-                "상품명": st.column_config.TextColumn(width=350), # 열이 늘어나서 조금 조정했습니다.
+                "상품명": st.column_config.TextColumn(width=350),
                 "옵션": st.column_config.TextColumn(width=100),
                 "과거리오더 입고": st.column_config.NumberColumn("과거입고", width=70, format="%d"),
                 "리오더 입고수량": st.column_config.NumberColumn("입고입력", width=70, format="%d", min_value=0),
