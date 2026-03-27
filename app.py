@@ -594,69 +594,76 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 전체 리오더 및 발주 현황판 (에러 방지 로직 적용)] ---
+# --- [7단계: 실시간 전체 리오더 현황 (메인 시트 데이터)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
-    st.subheader("📂 7단계: 전체 리오더 및 발주 현황판")
+    st.subheader("📦 7단계: 실시간 전체 리오더 현황판")
+    st.info("💡 현재 메인 시트(시트1)에 '리오더 수량'이 남아있는 모든 상품을 불러옵니다.")
+
+    # [1. 메인 데이터 로드 및 정제]
+    # st.session_state.df_raw는 1단계에서 불러온 최신 메인 시트 데이터입니다.
+    df_total = st.session_state.df_raw.copy()
     
-    # [에러 방지용 데이터 로드 함수]
-    def get_safe_df(sheet_name):
-        try:
-            sh = get_sheet().worksheet(sheet_name)
-            all_values = sh.get_all_values() # 모든 값을 리스트로 가져옴
-            if len(all_values) > 1:
-                # 첫 줄을 헤더로, 나머지를 데이터로 변환 (중복 헤더 문제 해결)
-                df = pd.DataFrame(all_values[1:], columns=all_values[0])
-                # 빈 컬럼명 제거 및 데이터 정제
-                df = df.loc[:, df.columns != ''] 
-                return df
-            return pd.DataFrame()
-        except Exception as e:
-            st.error(f"{sheet_name} 로드 중 오류: {e}")
-            return pd.DataFrame()
-
-    tab1, tab2 = st.tabs(["📝 누적 발주 기록", "📥 누적 입고 기록"])
-
-    with tab1:
-        st.markdown("##### 🔍 누적 발주 기록 조회")
-        df_log = get_safe_df("발주기록")
+    p = st.session_state.p
+    it_col, op_col, vn_col = p['it'], p['op'], p['vn']
+    
+    # 리오더 수량 숫자형 변환 (에러 방지)
+    if "리오더 수량" in df_total.columns:
+        df_total["리오더 수량"] = pd.to_numeric(df_total["리오더 수량"], errors='coerce').fillna(0).astype(int)
         
-        if not df_log.empty:
-            l_c1, l_c2 = st.columns([2, 1])
-            search_log = l_c1.text_input("🔎 상품명/옵션 검색 (발주)", key="search_log_input")
-            
-            if search_log:
-                df_log = df_log[
-                    df_log['상품명'].astype(str).str.contains(search_log, case=False) |
-                    df_log['옵션'].astype(str).str.contains(search_log, case=False)
-                ]
-            
-            # 최신 기록이 위로 오게 (역순 출력)
-            st.dataframe(df_log.iloc[::-1], use_container_width=True, hide_index=True)
-            st.caption(f"📢 총 {len(df_log)}건의 발주 기록이 있습니다.")
-        else:
-            st.info("조회할 발주 기록이 없거나 시트가 비어있습니다.")
-
-    with tab2:
-        st.markdown("##### 🔍 누적 입고 기록 조회")
-        df_in = get_safe_df("입고기록")
+        # [2. 리오더 수량이 있는 상품만 필터링]
+        df_reorder_active = df_total[df_total["리오더 수량"] > 0].copy()
         
-        if not df_in.empty:
-            i_c1, i_c2 = st.columns([2, 1])
-            search_in = i_c1.text_input("🔎 상품명/옵션 검색 (입고)", key="search_in_input")
+        if not df_reorder_active.empty:
+            # [3. 상단 요약 정보]
+            total_items = len(df_reorder_active)
+            total_qty = df_reorder_active["리오더 수량"].sum()
             
-            if search_in:
-                df_in = df_in[
-                    df_in['상품명'].astype(str).str.contains(search_in, case=False) |
-                    df_in['옵션'].astype(str).str.contains(search_in, case=False)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("리스트 품목 수", f"{total_items}건")
+            c2.metric("전체 리오더 총수량", f"{total_qty:,}개")
+            
+            # [4. 검색 및 정렬]
+            search_re = st.text_input("🔎 현황판 내 상품 검색", placeholder="상품명 또는 공급처 입력...", key="search_re_active")
+            
+            if search_re:
+                df_reorder_active = df_reorder_active[
+                    df_reorder_active[it_col].astype(str).str.contains(search_re, case=False) |
+                    df_reorder_active[vn_col].astype(str).str.contains(search_re, case=False)
                 ]
-            
-            st.dataframe(df_in.iloc[::-1], use_container_width=True, hide_index=True)
-            st.caption(f"📢 총 {len(df_in)}건의 입고 처리 기록이 있습니다.")
-        else:
-            st.info("조회할 입고 기록이 없거나 시트가 비어있습니다.")
 
-    if st.button("🔄 데이터 새로고침", use_container_width=True):
+            # [5. 화면 출력용 컬럼 정리]
+            # 사장님이 보기 편하시게 공급처, 상품명, 옵션, 리오더수량 위주로 배치
+            display_cols = [vn_col, it_col, op_col, "리오더 수량"]
+            # 만약 가용재고 등 다른 컬럼도 보고 싶으시면 여기에 추가 가능합니다.
+            
+            st.dataframe(
+                df_reorder_active[display_cols].sort_values(by=[vn_col, it_col]),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    vn_col: st.column_config.TextColumn("공급처", width="small"),
+                    it_col: st.column_config.TextColumn("상품명", width="medium"),
+                    op_col: st.column_config.TextColumn("옵션", width="small"),
+                    "리오더 수량": st.column_config.NumberColumn("현재 리오더 수량", format="%d개")
+                }
+            )
+            
+            # [6. 엑셀 다운로드 버튼 (현재 리오더 명단만)]
+            st.download_button(
+                label="📥 현재 리오더 명단 다운로드 (CSV)",
+                data=df_reorder_active[display_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'),
+                file_name=f"전체_리오더_현황_{datetime.now(KST).strftime('%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
+        else:
+            st.success("✅ 현재 리오더 중인 상품이 없습니다! (모든 리오더 수량 0)")
+    else:
+        st.error("'리오더 수량' 컬럼을 찾을 수 없습니다. 시트 확인이 필요합니다.")
+
+    if st.button("🔄 메인 데이터 다시 불러오기", use_container_width=True, key="refresh_v7"):
         st.cache_data.clear()
         st.rerun()
