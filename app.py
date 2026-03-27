@@ -594,84 +594,69 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 전체 리오더 및 발주 현황판 (히스토리 통합 조회)] ---
+# --- [7단계: 전체 리오더 및 발주 현황판 (에러 방지 로직 적용)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📂 7단계: 전체 리오더 및 발주 현황판")
-    st.info("💡 구글 시트에 기록된 전체 히스토리를 불러와서 확인합니다.")
+    
+    # [에러 방지용 데이터 로드 함수]
+    def get_safe_df(sheet_name):
+        try:
+            sh = get_sheet().worksheet(sheet_name)
+            all_values = sh.get_all_values() # 모든 값을 리스트로 가져옴
+            if len(all_values) > 1:
+                # 첫 줄을 헤더로, 나머지를 데이터로 변환 (중복 헤더 문제 해결)
+                df = pd.DataFrame(all_values[1:], columns=all_values[0])
+                # 빈 컬럼명 제거 및 데이터 정제
+                df = df.loc[:, df.columns != ''] 
+                return df
+            return pd.DataFrame()
+        except Exception as e:
+            st.error(f"{sheet_name} 로드 중 오류: {e}")
+            return pd.DataFrame()
 
-    # [1. 조회 대상 선택]
-    tab1, tab2 = st.tabs(["📝 발주 기록 (누적)", "📥 입고 기록 (누적)"])
+    tab1, tab2 = st.tabs(["📝 누적 발주 기록", "📥 누적 입고 기록"])
 
     with tab1:
         st.markdown("##### 🔍 누적 발주 기록 조회")
-        try:
-            # 발주기록 시트 로드
-            sh_log = get_sheet().worksheet("발주기록")
-            log_data = sh_log.get_all_records()
+        df_log = get_safe_df("발주기록")
+        
+        if not df_log.empty:
+            l_c1, l_c2 = st.columns([2, 1])
+            search_log = l_c1.text_input("🔎 상품명/옵션 검색 (발주)", key="search_log_input")
             
-            if log_data:
-                df_log = pd.DataFrame(log_data)
-                
-                # 검색 및 필터 UI
-                l_c1, l_c2 = st.columns([2, 1])
-                search_log = l_c1.text_input("🔎 상품명/옵션 검색 (발주)", key="search_log_input")
-                
-                if search_log:
-                    df_log = df_log[
-                        df_log['상품명'].astype(str).str.contains(search_log, case=False) |
-                        df_log['옵션'].astype(str).str.contains(search_log, case=False)
-                    ]
-                
-                # 최신순 정렬 (날짜 컬럼이 첫 번째라고 가정)
-                if not df_log.empty:
-                    st.dataframe(
-                        df_log.sort_index(ascending=False), 
-                        use_container_width=True, 
-                        hide_index=True
-                    )
-                    
-                    # 간단 요약 통계
-                    st.caption(f"📢 총 {len(df_log)}건의 발주 기록이 있습니다.")
-            else:
-                st.warning("조회할 발주 기록이 없습니다.")
-        except Exception as e:
-            st.error(f"발주 기록 로드 실패: {e}")
+            if search_log:
+                df_log = df_log[
+                    df_log['상품명'].astype(str).str.contains(search_log, case=False) |
+                    df_log['옵션'].astype(str).str.contains(search_log, case=False)
+                ]
+            
+            # 최신 기록이 위로 오게 (역순 출력)
+            st.dataframe(df_log.iloc[::-1], use_container_width=True, hide_index=True)
+            st.caption(f"📢 총 {len(df_log)}건의 발주 기록이 있습니다.")
+        else:
+            st.info("조회할 발주 기록이 없거나 시트가 비어있습니다.")
 
     with tab2:
         st.markdown("##### 🔍 누적 입고 기록 조회")
-        try:
-            # 입고기록 시트 로드
-            sh_in = get_sheet().worksheet("입고기록")
-            in_data = sh_in.get_all_records()
+        df_in = get_safe_df("입고기록")
+        
+        if not df_in.empty:
+            i_c1, i_c2 = st.columns([2, 1])
+            search_in = i_c1.text_input("🔎 상품명/옵션 검색 (입고)", key="search_in_input")
             
-            if in_data:
-                df_in = pd.DataFrame(in_data)
-                
-                # 검색 및 필터 UI
-                i_c1, i_c2 = st.columns([2, 1])
-                search_in = i_c1.text_input("🔎 상품명/옵션 검색 (입고)", key="search_in_input")
-                
-                if search_in:
-                    df_in = df_in[
-                        df_in['상품명'].astype(str).str.contains(search_in, case=False) |
-                        df_in['옵션'].astype(str).str.contains(search_in, case=False)
-                    ]
-                
-                if not df_in.empty:
-                    st.dataframe(
-                        df_in.sort_index(ascending=False), 
-                        use_container_width=True, 
-                        hide_index=True
-                    )
-                    st.caption(f"📢 총 {len(df_in)}건의 입고 처리 기록이 있습니다.")
-            else:
-                st.warning("조회할 입고 기록이 없습니다.")
-        except Exception as e:
-            st.error(f"입고 기록 로드 실패: {e}")
+            if search_in:
+                df_in = df_in[
+                    df_in['상품명'].astype(str).str.contains(search_in, case=False) |
+                    df_in['옵션'].astype(str).str.contains(search_in, case=False)
+                ]
+            
+            st.dataframe(df_in.iloc[::-1], use_container_width=True, hide_index=True)
+            st.caption(f"📢 총 {len(df_in)}건의 입고 처리 기록이 있습니다.")
+        else:
+            st.info("조회할 입고 기록이 없거나 시트가 비어있습니다.")
 
-    # [3. 새로고침 버튼]
-    if st.button("🔄 히스토리 데이터 새로고침", use_container_width=True):
+    if st.button("🔄 데이터 새로고침", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
