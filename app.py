@@ -502,7 +502,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     sold_out_col = p['so']
     avail, t7day, t3day = p['av'], p['t7'], p['t3']
     item, option, v_item = p['it'], p['op'], p['vi']
-    reg_date_col = p.get('reg') # 매핑된 등록일 컬럼
+    reg_date_col = p.get('reg') 
     lt, ss = p['lt'], p['ss']
 
     # 데이터 복사 및 숫자 형변환
@@ -545,32 +545,26 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_display.index = df_v5_base.index
     df_display = df_display.drop(columns=['_m_i', '_m_o', '상품명_match', '옵션_match'], errors='ignore')
 
-    # [4. 계산 로직 - ⭐ 등록일 기준 신상품 보정 적용]
+    # [4. 계산 로직]
     def calculate_v5_daily_sales(row, target_date):
         t7, t3 = row[t7day], row[t3day]
-        
-        # 신상품 판단 (등록일 매핑 정보가 있을 때)
         if reg_date_col and reg_date_col in row and pd.notnull(row[reg_date_col]):
             reg_dt = row[reg_date_col].date() if hasattr(row[reg_date_col], 'date') else pd.to_datetime(row[reg_date_col]).date()
             days_diff = (target_date - reg_dt).days
-            
-            # 등록 3일 이내 (0, 1, 2일차)
             if 0 <= days_diff < 3:
                 actual_days = days_diff + 1
                 return round(t3 / actual_days) if t3 > 0 else 0
-        
-        # 일반 상품 로직
         if t7 > 0: return round(t7 / 7)
         elif t3 > 0: return round(t3 / 3)
         return 0
 
-    # 기준 날짜 선택 UI (계산에 사용됨)
+    # UI 설정
     f1, f2, f3 = st.columns([1.5, 2, 1])
     m5_f = f1.selectbox("🚦 상태 필터", ["🚨 고위험/주의", "✅ 전체정상"], key="v5_filter_fixed")
-    s5_q = f2.text_input("🔍 상품명 검색", key="v5_search_fixed")
+    s5_q = f2.text_input("🔍 상품명 검색 (전체 대상)", key="v5_search_fixed") # 검색어 힌트 수정
     d5_d = f3.date_input("🗓️ 기준 날짜", datetime.now(KST).date(), key="v5_date_fixed")
 
-    # 일판매량 및 권장발주 계산 적용
+    # 계산 적용
     df_display['일판매량'] = df_display.apply(lambda x: calculate_v5_daily_sales(x, d5_d), axis=1).astype(int)
     df_display['권장 발주수량'] = ((df_display['일판매량'] * (lt + ss)) - (df_display[avail] + df_display['리오더 수량'])).clip(lower=0).astype(int)
     
@@ -583,22 +577,23 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         return "✅ 정상"
     df_display['상태분류'] = df_display.apply(get_stat, axis=1)
 
-    # [5. 필터 및 정렬]
+    # [5. 필터 및 정렬 ⭐ 검색 우선 로직으로 수정]
     df_ns = df_display[~df_display[sold_out_col].astype(str).str.contains('품절', na=False)].copy()
 
-    if item in df_ns.columns:
+    # 1순위: 검색어가 있으면 필터 무시하고 전체에서 검색
+    if s5_q:
+        df_final_view = df_ns[df_ns[item].astype(str).str.contains(s5_q, case=False)].copy()
+    # 2순위: 검색어가 없으면 선택한 필터(고위험/정상) 적용
+    else:
+        danger_names = df_ns[df_ns['권장 발주수량'] > 0][item].unique()
         if m5_f == "🚨 고위험/주의":
-            danger_names = df_ns[df_ns['권장 발주수량'] > 0][item].unique()
             df_final_view = df_ns[df_ns[item].isin(danger_names)].copy()
         else:
-            danger_names = df_ns[df_ns['권장 발주수량'] > 0][item].unique()
             df_final_view = df_ns[~df_ns[item].isin(danger_names)].copy()
-        
-        df_final_view = df_final_view.sort_values(by=[item, option], ascending=[True, True])
-        if s5_q: 
-            df_final_view = df_final_view[df_final_view[item].astype(str).str.contains(s5_q, case=False)]
 
-   # [6. 데이터 에디터 출력]
+    df_final_view = df_final_view.sort_values(by=[item, option], ascending=[True, True])
+
+    # [6. 데이터 에디터 출력]
     display_map = {
         "상태분류": "상태", item: "상품명", option: "옵션", v_item: "공급쳐상품명", 
         avail: "가용재고", "리오더 수량": "리오더수량", "추가발주수량": "추가발주수량", 
@@ -609,7 +604,6 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         valid_cols = [c for c in display_map.keys() if c in df_final_view.columns]
         df_edit = df_final_view[valid_cols].rename(columns=display_map)
         
-        # ⭐ 중요: 에디터 출력 (key값 확인)
         st.data_editor(
             df_edit, use_container_width=True, hide_index=True, key="v5_editor_fixed",
             column_config={
@@ -620,32 +614,21 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         )
         
         if st.form_submit_button("✅ 수량 확정 및 리오더 합산", use_container_width=True, type="primary"):
-            # 1. 세션에서 수정된 데이터 가져오기
             edits = st.session_state["v5_editor_fixed"].get("edited_rows", {})
-            
             if edits:
                 try:
                     with st.spinner("🔄 시트에 반영 중..."):
                         m_sh = get_sheet().worksheet("시트1")
-                        
-                        # 2. 수정된 내역을 하나씩 순회
                         for r_idx_str, val in edits.items():
                             if "추가발주수량" in val:
                                 r_idx = int(r_idx_str)
-                                # ⭐ 핵심: 현재 화면(df_final_view)의 줄 번호로 원본 인덱스 추출
                                 orig_idx = df_final_view.index[r_idx]
-                                
                                 input_val = int(val["추가발주수량"])
-                                
-                                # 원본 데이터(df_raw)에 즉시 합산
                                 st.session_state.df_raw.at[orig_idx, "리오더 수량"] += input_val
-                                # 세션 딕셔너리에도 기록 (히스토리용)
                                 st.session_state.add_order_dict[orig_idx] = input_val
                         
-                        # 3. 전체 데이터 시트 업데이트
                         df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
                         m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-                        
                         st.success("✅ 리오더 수량이 성공적으로 합산되었습니다!")
                         time.sleep(1)
                         st.rerun()
@@ -653,6 +636,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     st.error(f"❌ 저장 중 오류 발생: {e}")
             else:
                 st.warning("⚠️ 입력된 수량이 없습니다. 숫자를 넣고 '엔터'를 친 후 버튼을 눌러주세요.")
+
 
 # ==========================================================
 # --- [7. 하단 버튼 - 안전장치 강화 버전] ---
