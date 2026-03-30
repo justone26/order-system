@@ -884,84 +884,88 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 실시간 전체 리오더 현황 (사장님 요청 컬럼 순서)] ---
+# --- [7단계: 실시간 전체 리오더 현황 (불러오기 버튼 추가)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📦 7단계: 실시간 전체 리오더 현황판")
-    st.info("💡 현재 메인 시트(시트1)에서 '리오더 수량'이 남아있는 상품들을 정해진 순서대로 보여줍니다.")
 
-    # [1. 메인 데이터 로드 및 정제]
-    df_total = st.session_state.df_raw.copy()
+    # [1. 불러오기/새로고침 버튼 UI]
+    c_btn1, c_btn2 = st.columns([1, 3])
+    with c_btn1:
+        # 시트에서 직접 다시 불러오기 위한 버튼
+        load_trigger = st.button("🔄 현황 불러오기", use_container_width=True, type="primary", key="v7_load_btn")
     
+    if load_trigger:
+        with st.spinner("📡 최신 리오더 데이터를 불러오는 중..."):
+            # 구글 시트에서 최신 df_raw 다시 로드
+            sh_main = get_sheet().worksheet("시트1")
+            new_data = sh_main.get_all_records()
+            if new_data:
+                st.session_state.df_raw = pd.DataFrame(new_data)
+                st.success("✅ 최신 데이터를 불러왔습니다.")
+                time.sleep(0.5)
+                st.rerun()
+
+    st.info("💡 현재 메인 시트(시트1)에서 '리오더 수량'이 남아있는 상품들을 보여줍니다.")
+
+    # [2. 데이터 로드 및 정제]
+    df_total = st.session_state.df_raw.copy()
     p = st.session_state.p
     it_col, op_col, vn_col, vi_col = p['it'], p['op'], p['vn'], p['vi']
     
-    # 리오더 수량 숫자형 변환
+    # 리오더 수량 숫자형 변환 (에러 방지)
     if "리오더 수량" in df_total.columns:
         df_total["리오더 수량"] = pd.to_numeric(df_total["리오더 수량"], errors='coerce').fillna(0).astype(int)
         
-        # [2. 리오더 수량이 0보다 큰 상품만 필터링]
+        # [3. 리오더 수량이 0보다 큰 상품만 필터링]
         df_reorder_active = df_total[df_total["리오더 수량"] > 0].copy()
         
         if not df_reorder_active.empty:
-            # [3. 상단 요약 정보 계산]
-            total_items = len(df_reorder_active)
-            total_qty = df_reorder_active["리오더 수량"].sum()
+            # [4. 상단 요약 정보]
+            t_items = len(df_reorder_active)
+            t_qty = df_reorder_active["리오더 수량"].sum()
             
-            c1, c2 = st.columns(2)
-            c1.metric("총 리오더 품목 수", f"{total_items}건")
-            c2.metric("전체 리오더 총합계", f"{total_qty:,}개")
+            m1, m2 = st.columns(2)
+            m1.metric("총 리오더 품목 수", f"{t_items}건")
+            m2.metric("전체 리오더 총합계", f"{t_qty:,}개")
             
-            # [4. 검색 UI]
-            search_re = st.text_input("🔎 공급처 또는 상품명으로 검색", placeholder="검색어를 입력하세요...", key="search_re_active_v2")
+            # [5. 검색 UI]
+            s_re = st.text_input("🔎 공급처 또는 상품명으로 검색", placeholder="검색어를 입력하세요...", key="v7_search_input")
             
-            if search_re:
+            if s_re:
                 df_reorder_active = df_reorder_active[
-                    df_reorder_active[it_col].astype(str).str.contains(search_re, case=False) |
-                    df_reorder_active[vn_col].astype(str).str.contains(search_re, case=False) |
-                    df_reorder_active[vi_col].astype(str).str.contains(search_re, case=False)
+                    df_reorder_active[it_col].astype(str).str.contains(s_re, case=False) |
+                    df_reorder_active[vn_col].astype(str).str.contains(s_re, case=False) |
+                    df_reorder_active[vi_col].astype(str).str.contains(s_re, case=False)
                 ]
 
-            # [5. 컬럼 순서 재배치 및 이름 변경]
-            # 사장님 요청 순서: 공급처 => 상품명 => 옵션 => 공급쳐상품명 => 현재리오더수량
-            display_map = {
-                vn_col: "공급처",
-                it_col: "상품명",
-                op_col: "옵션",
-                vi_col: "공급처상품명",
-                "리오더 수량": "현재 리오더 수량"
-            }
+            # [6. 컬럼 배치 및 이름 변경]
+            d_map = {vn_col: "공급처", it_col: "상품명", op_col: "옵션", vi_col: "공급처상품명", "리오더 수량": "현재 리오더 수량"}
+            f_cols = [vn_col, it_col, op_col, vi_col, "리오더 수량"]
+            df_re_disp = df_reorder_active[f_cols].rename(columns=d_map)
             
-            # 실제 존재하는 컬럼만 선별하여 순서대로 배치
-            final_cols = [vn_col, it_col, op_col, vi_col, "리오더 수량"]
-            df_reorder_display = df_reorder_active[final_cols].rename(columns=display_map)
-            
-            # [6. 데이터 에디터 출력 (공급처 -> 상품명 순으로 정렬)]
+            # [7. 데이터 에디터 출력]
             st.data_editor(
-                df_reorder_display.sort_values(by=["공급처", "상품명"]),
+                df_re_disp.sort_values(by=["공급처", "상품명"]),
                 use_container_width=True,
                 hide_index=True,
-                disabled=True, # 현황판이므로 수정 불가 모드
+                disabled=True,
                 column_config={
-                    "공급처": st.column_config.TextColumn(width=100),
-                    "상품명": st.column_config.TextColumn(width=300),
-                    "옵션": st.column_config.TextColumn(width=120),
-                    "공급처상품명": st.column_config.TextColumn(width=150),
-                    "현재 리오더 수량": st.column_config.NumberColumn(width=100, format="%d개")
+                    "공급처": st.column_config.TextColumn(width="small"),
+                    "상품명": st.column_config.TextColumn(width="medium"),
+                    "현재 리오더 수량": st.column_config.NumberColumn(format="%d개")
                 }
             )
             
-            # [7. 다운로드 버튼]
+            # [8. 다운로드 버튼]
             st.download_button(
                 label="📥 현재 리오더 현황 명단 다운로드 (CSV)",
-                data=df_reorder_display.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'),
+                data=df_re_disp.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'),
                 file_name=f"전체리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.csv",
-                mime="text/csv",
                 use_container_width=True
             )
-            
         else:
             st.success("✅ 현재 리오더 중인 상품이 없습니다.")
     else:
-        st.error("'리오더 수량' 컬럼을 찾을 수 없습니다. 시트의 컬럼명을 확인해 주세요.")
+        st.error("'리오더 수량' 컬럼을 찾을 수 없습니다.")
