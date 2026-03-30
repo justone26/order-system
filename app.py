@@ -618,22 +618,20 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [6단계: 전체 히스토리 관리 (날짜 -> 검색 -> 필터링)] ---
+# --- [6단계: 전체 히스토리 관리 (중복 컬럼 에러 방지 버전)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📜 6단계: 전체 히스토리 관리")
 
-    # [1. 상단 컨트롤러 레이아웃]
     f1, f2, f3, f4 = st.columns([1, 0.5, 1.2, 1.2])
     
     with f1:
         today = datetime.now(KST).date()
-        # 기본값은 오늘 하루로 설정
         d_range = st.date_input("🗓️ 날짜 범위", value=(today, today), key="v6_date_final")
     
     with f2:
-        st.write("") # 높이 맞춤용
+        st.write("") 
         st.write("") 
         search_trigger = st.button("🔍 검색", use_container_width=True, type="primary", key="v6_search_btn")
 
@@ -641,10 +639,8 @@ if st.session_state.get('analyzed'):
         h_q = st.text_input("🔍 상품명 검색", placeholder="결과 내 검색...", key="v6_search_final")
         
     with f4:
-        # 향후 회차별 필터링을 위한 예비 박스
         selected_batch = st.selectbox("📥 저장 회차 선택", ["전체보기"], key="v6_batch_select")
 
-    # [2. 검색 버튼 클릭 시 시트 데이터 로드]
     if search_trigger:
         try:
             with st.spinner("📡 발주 기록을 불러오는 중..."):
@@ -653,77 +649,61 @@ if st.session_state.get('analyzed'):
                 all_values = worksheet.get_all_values()
             
             if len(all_values) > 1:
-                # 데이터프레임 생성 (첫 줄을 제목으로 사용)
-                header = all_values[0]
-                df_hist = pd.DataFrame(all_values[1:], columns=header)
+                # 🚨 [해결 포인트] 제목줄을 시트에서 읽지 않고, 우리가 약속한 순서대로 강제 지정합니다.
+                # 이렇게 하면 시트 내용에 중복된 숫자가 있어도 에러가 나지 않습니다.
+                target_cols = ["날짜시간", "상품명", "옵션", "공급쳐", "가용재고", "기존리오더", "추가발주수량", "권장발주수량"]
                 
-                # 🚨 [중요: 에러 방지] '날짜시간' 컬럼명이 다를 경우 첫 번째 열로 강제 지정
-                if "날짜시간" not in df_hist.columns:
-                    df_hist.rename(columns={df_hist.columns[0]: "날짜시간"}, inplace=True)
+                # 시트의 실제 데이터만 가져와서 데이터프레임 생성
+                raw_data = all_values[1:] 
+                
+                # 데이터의 열 개수와 우리 제목 개수를 맞춥니다 (혹시 모를 에러 방지)
+                num_cols = len(raw_data[0])
+                if num_cols > len(target_cols):
+                    final_cols = target_cols + [f"미지정_{i}" for i in range(num_cols - len(target_cols))]
+                else:
+                    final_cols = target_cols[:num_cols]
+
+                df_hist = pd.DataFrame(raw_data, columns=final_cols)
 
                 # --- 데이터 필터링 시작 ---
-                # 1) 날짜 텍스트에서 날짜 부분(10자)만 추출
+                # 1) 날짜 필터
                 df_hist["날짜_만"] = df_hist["날짜시간"].astype(str).str.slice(0, 10)
-                
-                # 2) 날짜 범위 필터 (시작일 ~ 종료일)
                 if len(d_range) == 2:
                     s_date, e_date = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
                     df_hist = df_hist[(df_hist["날짜_만"] >= s_date) & (df_hist["날짜_만"] <= e_date)]
 
-                # 3) ⭐ [사장님 핵심 요청] 추가발주수량이 0보다 큰 항목만 필터링
-                # (컬럼명이 '추가발주수량'인지 '추가발주'인지 유연하게 체크)
-                target_col = None
-                for c in ["추가발주수량", "추가발주", "수량"]:
-                    if c in df_hist.columns:
-                        target_col = c
-                        break
-                
-                if target_col:
-                    df_hist[target_col] = pd.to_numeric(df_hist[target_col], errors='coerce').fillna(0)
-                    df_hist = df_hist[df_hist[target_col] > 0]
+                # 2) 추가발주수량 > 0 필터
+                if "추가발주수량" in df_hist.columns:
+                    df_hist["추가발주수량"] = pd.to_numeric(df_hist["추가발주수량"], errors='coerce').fillna(0)
+                    df_hist = df_hist[df_hist["추가발주수량"] > 0]
 
-                # 4) 최신순 정렬
+                # 3) 최신순 정렬
                 df_hist = df_hist.sort_values(by="날짜시간", ascending=False)
 
-                # --- 화면 출력 및 후처리 ---
+                # --- 결과 출력 ---
                 if not df_hist.empty:
                     df_view = df_hist.copy()
-                    
-                    # 상품명 검색어 필터링 (결과 내 검색)
                     if h_q:
-                        # '상품명' 컬럼이 있는 경우만 검색 수행
-                        name_col = next((c for c in ["상품명", "아이템명"] if c in df_view.columns), None)
-                        if name_col:
-                            df_view = df_view[df_view[name_col].astype(str).str.contains(h_q, case=False)]
+                        df_view = df_view[df_view["상품명"].astype(str).str.contains(h_q, case=False)]
 
-                    # 계산용 임시 컬럼 삭제
                     if "날짜_만" in df_view.columns:
                         df_view = df_view.drop(columns=["날짜_만"])
-
-                    st.write(f"✅ 선택한 기간 내 추가발주 기록 총 **{len(df_view)}**건이 조회되었습니다.")
                     
-                    # 테이블 출력
+                    # 미지정 열이 있다면 제거 (깔끔하게 보기 위함)
+                    df_view = df_view[[c for c in df_view.columns if "미지정" not in c]]
+
+                    st.write(f"✅ 총 **{len(df_view)}**건의 추가발주 내역이 조회되었습니다.")
                     st.dataframe(df_view, use_container_width=True, hide_index=True)
                     
-                    # 다운로드 버튼 (검색 결과만)
                     csv_data = df_view.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button(
-                        label="📥 검색 결과 CSV 다운로드",
-                        data=csv_data,
-                        file_name=f"발주히스토리_{datetime.now(KST).strftime('%m%d')}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
+                    st.download_button("📥 내역 다운로드(CSV)", csv_data, f"추가발주_히스토리.csv", use_container_width=True)
                 else:
-                    st.warning("🧐 해당 기간에 '추가발주'가 포함된 내역이 없습니다.")
+                    st.warning("🧐 해당 기간에 추가발주 기록이 없습니다.")
             else:
-                st.info("💡 아직 '발주기록' 시트에 저장된 내역이 없습니다.")
+                st.info("💡 저장된 발주 기록이 없습니다.")
                 
         except Exception as e:
-            st.error(f"📡 데이터 로딩 중 오류가 발생했습니다: {e}")
-            st.info("💡 구글 시트의 '발주기록' 시트 이름과 컬럼 제목을 확인해 주세요.")
-
-
+            st.error(f"📡 데이터 로딩 오류: {e}")
 
 
 # ==========================================================
