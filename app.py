@@ -722,10 +722,7 @@ if st.session_state.get('analyzed') and st.session_state.get('df_raw') is not No
                 file_name=f"발주서_{d5_d.strftime('%m%d')}.csv",
                 use_container_width=True
             )
-else:
-    # 데이터가 없을 때는 버튼 대신 안내 메시지 출력
-    st.info("💡 상단에서 [분석 실행] 버튼을 먼저 눌러주세요.")
-
+else:  
 
 
 
