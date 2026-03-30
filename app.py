@@ -707,7 +707,7 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 실시간 전체 리오더 현황판 (버튼 클릭 시 실행)] ---
+# --- [7단계: 실시간 전체 리오더 현황판 (중복 오류 방지)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
@@ -715,38 +715,65 @@ if st.session_state.get('analyzed'):
     
     st.info("아래 버튼을 누르면 '입고기록'과 '발주기록'을 분석하여 현재 미입고된 전체 리오더 현황을 집계합니다.")
 
-    # [1] 실행 버튼 (이 버튼을 눌러야만 아래 로직이 작동함)
+    # [1] 실행 버튼
     col_btn, _ = st.columns([1, 3])
     with col_btn:
         load_trigger = st.button("🔄 실시간 현황 불러오기", type="primary", use_container_width=True)
 
-    # [2] 버튼이 눌렸을 때만 데이터 로드 및 분석 시작
+    # [2] 버튼 클릭 시 로직 시작
     if load_trigger:
         with st.spinner("구글 시트에서 최신 데이터를 분석 중입니다..."):
             try:
-                # 1) 데이터 가져오기
                 sh = get_sheet()
-                # 발주기록 (나간 것)
-                order_df = pd.DataFrame(sh.worksheet("발주기록").get_all_records())
-                # 입고기록 (들어온 것)
-                in_df = pd.DataFrame(sh.worksheet("입고기록").get_all_records())
+                
+                # --- 데이터 로드 함수 (중복 제목 에러 방지용) ---
+                def get_safe_df(worksheet_name, expected_cols):
+                    ws = sh.worksheet(worksheet_name)
+                    all_vals = ws.get_all_values()
+                    if len(all_vals) > 1:
+                        # 첫 줄(제목)을 무시하고 데이터만 가져와서 강제로 제목 부여
+                        data = all_vals[1:]
+                        # 실제 데이터 열 개수에 맞춰 제목 리스트 조정
+                        num_actual = len(data[0])
+                        if num_actual > len(expected_cols):
+                            final_cols = expected_cols + [f"extra_{i}" for i in range(num_actual - len(expected_cols))]
+                        else:
+                            final_cols = expected_cols[:num_actual]
+                        return pd.DataFrame(data, columns=final_cols)
+                    return pd.DataFrame(columns=expected_cols)
+
+                # 1) 발주기록 & 입고기록 가져오기 (헤더 강제 지정)
+                # 발주기록 순서: 날짜시간, 상품명, 옵션, 공급쳐, 가용재고, 기존리오더, 추가발주수량, 권장발주수량
+                order_cols = ["날짜시간", "상품명", "옵션", "공급쳐", "가용재고", "기존리오더", "추가발주수량", "권장발주수량"]
+                order_df = get_safe_df("발주기록", order_cols)
+                
+                # 입고기록 순서: 날짜, 상품명, 옵션, 입고수량
+                in_cols = ["날짜", "상품명", "옵션", "입고수량"]
+                in_df = get_safe_df("입고기록", in_cols)
                 
                 if order_df.empty:
                     st.warning("발주 기록이 없어 현황을 표시할 수 없습니다.")
                 else:
-                    # 2) 데이터 전처리 (숫자 변환)
-                    order_df['발주수량'] = pd.to_numeric(order_df['발주수량'], errors='coerce').fillna(0)
+                    # 2) 데이터 전처리 (숫자 변환 및 공백 제거)
+                    order_df['상품명'] = order_df['상품명'].astype(str).str.strip()
+                    order_df['옵션'] = order_df['옵션'].astype(str).str.strip()
+                    # 발주수량은 '추가발주' + '권장발주' 합계로 계산하거나 시트의 특정 열 사용
+                    # 여기서는 사장님이 저장하신 '추가발주수량'과 '권장발주수량'을 합산합니다.
+                    order_df['추가발주수량'] = pd.to_numeric(order_df['추가발주수량'], errors='coerce').fillna(0)
+                    order_df['권장발주수량'] = pd.to_numeric(order_df['권장발주수량'], errors='coerce').fillna(0)
+                    order_df['총발주합계'] = order_df['추가발주수량'] + order_df['권장발주수량']
+                    
+                    in_df['상품명'] = in_df['상품명'].astype(str).str.strip()
+                    in_df['옵션'] = in_df['옵션'].astype(str).str.strip()
                     in_df['입고수량'] = pd.to_numeric(in_df['입고수량'], errors='coerce').fillna(0)
                     
                     # 3) 상품별/옵션별 합산
-                    # 발주 총합
-                    total_order = order_df.groupby(['상품명', '옵션'])['발주수량'].sum().reset_index()
-                    # 입고 총합
+                    total_order = order_df.groupby(['상품명', '옵션'])['총발주합계'].sum().reset_index()
                     total_in = in_df.groupby(['상품명', '옵션'])['입고수량'].sum().reset_index()
                     
                     # 4) 데이터 병합 (발주량 - 입고량 = 미입고량)
                     status_df = pd.merge(total_order, total_in, on=['상품명', '옵션'], how='left').fillna(0)
-                    status_df['미입고(잔량)'] = status_df['발주수량'] - status_df['입고수량']
+                    status_df['미입고(잔량)'] = status_df['총발주합계'] - status_df['입고수량']
                     
                     # 5) 미입고 수량이 있는 것만 필터링 (0보다 큰 것)
                     status_df = status_df[status_df['미입고(잔량)'] > 0].copy()
@@ -757,25 +784,24 @@ if st.session_state.get('analyzed'):
                     else:
                         st.write(f"📅 **집계 일시:** {datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')}")
                         
-                        # 대시보드 카드 형태 시각화
-                        m1, m2, m3 = st.columns(3)
+                        m1, m2 = st.columns(2)
                         m1.metric("총 미입고 품목수", f"{len(status_df)}건")
                         m2.metric("총 미입고 수량", f"{int(status_df['미입고(잔량)'].sum())}개")
-                        m3.metric("최다 미입고 상품", status_df.loc[status_df['미입고(잔량)'].idxmax(), '상품명'] if not status_df.empty else "-")
 
-                        # 상세 테이블 출력
+                        # 상세 테이블
                         st.dataframe(
-                            status_df[['상품명', '옵션', '발주수량', '입고수량', '미입고(잔량)']].sort_values(by='미입고(잔량)', ascending=False),
+                            status_df[['상품명', '옵션', '총발주합계', '입고수량', '미입고(잔량)']].sort_values(by='미입고(잔량)', ascending=False),
                             use_container_width=True,
                             hide_index=True,
                             column_config={
-                                "미입고(잔량)": st.column_config.NumberColumn("미입고 잔량 🚩", format="%d", help="아직 거래처에서 들어와야 할 수량입니다.")
+                                "총발주합계": "전체 발주량",
+                                "미입고(잔량)": st.column_config.NumberColumn("미입고 잔량 🚩", format="%d")
                             }
                         )
                         
-                        # 엑셀 다운로드 (현황판 전용)
                         csv = status_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                        st.download_button("📥 미입고 현황 리스트 다운로드", csv, f"pending_orders_{datetime.now(KST).strftime('%m%d')}.csv", "text/csv")
+                        st.download_button("📥 현황 리스트 다운로드", csv, f"리오더현황_{datetime.now(KST).strftime('%m%d')}.csv", "text/csv")
                         
             except Exception as e:
                 st.error(f"현황판을 불러오는 중 오류가 발생했습니다: {e}")
+                st.info("💡 시트의 열 순서가 '날짜시간, 상품명, 옵션, 공급쳐, 가용재고, 기존리오더, 추가발주수량, 권장발주수량' 인지 확인해주세요.")
