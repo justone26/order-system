@@ -88,7 +88,17 @@ def get_incoming_history():
 #     except Exception as e:
 #         st.sidebar.error(f"❌ 시트 연결 실패: {e}")
 
+# [공통 설정] - 코드 최상단 session_state 선언부에 추가되어 있어야 합니다.
+if 'common_search' not in st.session_state:
+    st.session_state.common_search = ""
+if 'add_order_dict' not in st.session_state:
+    st.session_state.add_order_dict = {}
 
+# 검색어 실시간 동기화 함수
+def sync_v4_search():
+    st.session_state.common_search = st.session_state.v4_fix_search
+def sync_v5_search():
+    st.session_state.common_search = st.session_state.v5_search_fixed
 
 # --- [세션 상태 초기화] ---
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
@@ -212,10 +222,8 @@ if st.session_state.get('df_raw') is not None:
         st.rerun()
 
 
-
-
 # ==========================================================
-# --- [4단계: 데이터 편집 및 재고 관리 (검색 통합)] ---
+# --- [4단계: 데이터 편집 및 재고 관리 (기능 풀버전)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -228,19 +236,21 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     reg_date_col = p.get('reg')
     lt, ss = p['lt'], p['ss']
 
-    # 1. 데이터 준비 및 숫자 변환
+    # 1. 데이터 준비 및 숫자 타입 변환
     df_work = st.session_state.df_raw.copy()
-    for col in [stock, avail, t3day, t7day]:
+    num_cols = [stock, avail, t3day, t7day]
+    for col in num_cols:
         if col in df_work.columns:
             df_work[col] = pd.to_numeric(df_work[col], errors='coerce').fillna(0).astype(int)
     
-    if "리오더 수량" not in df_work.columns: df_work["리오더 수량"] = 0
+    if "리오더 수량" not in df_work.columns: 
+        df_work["리오더 수량"] = 0
     df_work["리오더 수량"] = pd.to_numeric(df_work["리오더 수량"], errors='coerce').fillna(0).astype(int)
     df_work["리오더 입고수량"] = 0 
 
-    # 2. 입고 이력 합산
+    # 2. 입고 이력 합산 (기존 로직 유지)
     @st.cache_data(ttl=60)
-    def get_incoming_sum():
+    def get_incoming_sum_v4():
         try:
             sh_h = get_sheet().worksheet("입고기록")
             h_data = sh_h.get_all_records()
@@ -248,14 +258,15 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 h_df = pd.DataFrame(h_data)
                 return h_df.groupby(['상품명', '옵션'])['입고수량'].sum().reset_index()
             return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
-        except: return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
+        except: 
+            return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
 
-    in_sum_df = get_incoming_sum()
+    in_sum_df = get_incoming_sum_v4()
     df_work = pd.merge(df_work, in_sum_df.rename(columns={"입고수량":"과거리오더 입고"}), 
                        left_on=[item, option], right_on=['상품명', '옵션'], how="left").fillna(0)
 
-    # 3. 일판매량 계산 (보정 로직)
-    def calc_daily_sales_with_reg(row):
+    # 3. 신상품 보정 일판매량 계산 로직
+    def calc_daily_sales_with_reg_v4(row):
         t7, t3 = row[t7day], row[t3day]
         if reg_date_col and reg_date_col in row and pd.notnull(row[reg_date_col]):
             today = datetime.now(KST).date()
@@ -268,70 +279,89 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         elif t3 > 0: return int(round(t3 / 3))
         return 0
 
-    df_work['일판매'] = df_work.apply(calc_daily_sales_with_reg, axis=1)
+    df_work['일판매'] = df_work.apply(calc_daily_sales_with_reg_v4, axis=1)
     df_work['3일발주'] = (df_work['일판매'] * 3).astype(int)
     df_work['권장발주'] = ((df_work['일판매'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
     # 4. 상단 레이아웃 (⭐ 검색어 동기화 적용)
     f_c1, f_c2, f_c3 = st.columns([1, 2, 1])
-    with f_c1: 
-        filter_m = st.selectbox("🚦 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_fix_filter")
-    
+    with f_c1: filter_m = st.selectbox("🚦 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_fix_filter")
     with f_c2: 
-        # 공통 검색어 세션 관리
-        if 'common_search' not in st.session_state: st.session_state.common_search = ""
-        search_q = st.text_input("🔍 통합 검색 (4~5단계 동시 적용)", value=st.session_state.common_search, key="v4_common_search")
-        st.session_state.common_search = search_q # 상태 저장
-
-    with f_c3: 
-        hist_date_4 = st.date_input("🗓️ 입고 날짜", datetime.now(KST).date(), key="v4_fix_date")
+        # 검색창: 입력 시 sync_v4_search 함수 실행
+        search_q = st.text_input("🔍 통합 검색 (4~5단계 동시 적용)", 
+                                 value=st.session_state.common_search, 
+                                 placeholder="상품명 또는 옵션...", 
+                                 key="v4_fix_search", 
+                                 on_change=sync_v4_search)
+    with f_c3: hist_date_4 = st.date_input("🗓️ 입고 날짜", datetime.now(KST).date(), key="v4_fix_date")
 
     # 필터링
     is_soldout = df_work[sold_out_col].astype(str).str.contains('품절', na=False)
     df_filtered = df_work[~is_soldout] if filter_m == "정상만" else (df_work[is_soldout] if filter_m == "품절만" else df_work)
-    if st.session_state.common_search:
-        df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(st.session_state.common_search, case=False) | 
-                                 df_filtered[option].astype(str).str.contains(st.session_state.common_search, case=False)]
+    
+    # 통합 검색어 반영
+    current_q = st.session_state.common_search
+    if current_q:
+        df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(current_q, case=False) | 
+                                 df_filtered[option].astype(str).str.contains(current_q, case=False)]
 
-    # 5. 메인 에디터 출력
-    df_display = df_filtered.rename(columns={sold_out_col: "상태", vendor: "공급쳐", v_item: "공급상품명", item: "상품명", option: "옵션", stock: "정상", avail: "가용"})
+    # 5. 화면 출력 설정
+    df_display = df_filtered.rename(columns={
+        sold_out_col: "상태", vendor: "공급쳐", v_item: "공급상품명", 
+        item: "상품명", option: "옵션", stock: "정상", avail: "가용"
+    })
     final_cols = ["상태", "공급쳐", "상품명", "옵션", "공급상품명", "정상", "가용", "리오더 수량", "리오더 입고수량", "과거리오더 입고", "3일발주", "일판매", "권장발주"]
 
     with st.form("v4_fix_master_form"):
-        edited_v4 = st.data_editor(df_display[final_cols], use_container_width=True, hide_index=True, key="v4_editor_fix",
-            column_config={"상품명": st.column_config.TextColumn(width=350), "리오더 입고수량": st.column_config.NumberColumn("입고입력", min_value=0)})
+        edited_v4 = st.data_editor(
+            df_display[final_cols], 
+            use_container_width=True, 
+            hide_index=True, 
+            key="v4_editor_fix",
+            column_config={
+                "상태": st.column_config.TextColumn(width=60),
+                "공급쳐": st.column_config.TextColumn(width=80),
+                "상품명": st.column_config.TextColumn(width=350),
+                "옵션": st.column_config.TextColumn(width=100),
+                "리오더 입고수량": st.column_config.NumberColumn("입고입력", width=70, format="%d", min_value=0),
+            }
+        )
 
         if st.form_submit_button("💾 데이터 저장 및 입고 반영", use_container_width=True, type="primary"):
             user_edits = st.session_state["v4_editor_fix"].get("edited_rows", {})
             if user_edits:
                 m_sh, h_sh = get_sheet().worksheet("시트1"), get_sheet().worksheet("입고기록")
                 save_time = f"{hist_date_4.strftime('%Y-%m-%d')} {datetime.now(KST).strftime('%H:%M:%S')}"
+
                 for r_idx_str, changes in user_edits.items():
                     target_idx = df_display.index[int(r_idx_str)]
-                    if "리오더 수량" in changes: st.session_state.df_raw.at[target_idx, "리오더 수량"] = int(changes["리오더 수량"])
+                    if "리오더 수량" in changes:
+                        st.session_state.df_raw.at[target_idx, "리오더 수량"] = int(changes["리오더 수량"])
                     if "리오더 입고수량" in changes:
                         in_qty = int(changes["리오더 입고수량"])
                         if in_qty > 0:
                             old_v = int(st.session_state.df_raw.at[target_idx, "리오더 수량"])
                             st.session_state.df_raw.at[target_idx, "리오더 수량"] = max(0, old_v - in_qty)
                             h_sh.append_row([save_time, str(df_display.at[target_idx, "상품명"]), str(df_display.at[target_idx, "옵션"]), in_qty])
+
                 df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
                 m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-                st.success(f"✅ 저장 완료!"); time.sleep(0.5); st.rerun()
+                st.success(f"✅ 저장 및 차감 완료!"); time.sleep(0.5); st.rerun()
+
 
 
 
 # ==========================================================
-# --- [5단계: 최종 발주 (수량 보존 및 검색 연동)] ---
+# --- [5단계: 최종 발주 (기능 풀버전 + 수량 유지)] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📋 5단계: 최종 발주 리스트 요약")
 
-    # [1. 기본 데이터 준비]
     p = st.session_state.p
-    sold_out_col, item, option, v_item = p['so'], p['it'], p['op'], p['vi']
+    sold_out_col = p['so']
     avail, t7day, t3day = p['av'], p['t7'], p['t3']
+    item, option, v_item = p['it'], p['op'], p['vi']
     reg_date_col = p.get('reg')
     lt, ss = p['lt'], p['ss']
 
@@ -343,9 +373,9 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     if "리오더 수량" not in df_v5_base.columns: df_v5_base["리오더 수량"] = 0
     df_v5_base['리오더 수량'] = pd.to_numeric(df_v5_base['리오더 수량'], errors='coerce').fillna(0).astype(int)
 
-    # [2. 과거 입고 합산 로직]
+    # 과거 입고 데이터 불러오기 (기존 로직)
     @st.cache_data(ttl=60)
-    def get_v5_history_data():
+    def get_v5_history_data_full():
         try:
             sh_h = get_sheet().worksheet("입고기록")
             h_df = pd.DataFrame(sh_h.get_all_records())
@@ -355,107 +385,120 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
         except: return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
 
-    df_h_data = get_v5_history_data().rename(columns={"입고수량": "과거입고_참고"})
+    df_h_data = get_v5_history_data_full().rename(columns={"입고수량": "과거입고_참고"})
 
-    # [3. 데이터 병합 및 계산]
-    df_display = pd.merge(df_v5_base, df_h_data, left_on=[item, option], right_on=['상품명', '옵션'], how="left").fillna({"과거입고_참고": 0})
-    df_display.index = df_v5_base.index
+    # 화면 표시용 데이터 구성
+    df_display_v5 = pd.merge(df_v5_base, df_h_data, left_on=[item, option], right_on=['상품명', '옵션'], how="left").fillna({"과거입고_참고": 0})
+    df_display_v5.index = df_v5_base.index
 
-    # UI 필터 설정 (⭐ 검색창은 4단계와 공유)
+    # 기준 날짜 및 필터 UI (⭐ 검색어 동기화 적용)
     f1, f2, f3 = st.columns([1.5, 2, 1])
-    m5_f = f1.selectbox("🚦 상태 필터", ["🚨 고위험/주의", "✅ 전체정상"], key="v5_status_filter")
-    
-    # 4단계 검색어 연동 (수정 가능하게 구성)
-    common_q = st.session_state.get('common_search', "")
-    s5_q = f2.text_input("🔍 통합 검색 (4단계와 연동됨)", value=common_q, key="v5_search_sync")
-    st.session_state.common_search = s5_q # 5단계에서 바꿔도 4단계 반영됨
-    
+    m5_f = f1.selectbox("🚦 상태 필터", ["🚨 고위험/주의", "✅ 전체정상"], key="v5_filter_fixed")
+    with f2:
+        s5_q = st.text_input("🔍 상품명 검색 (4단계와 연동)", 
+                             value=st.session_state.common_search, 
+                             key="v5_search_fixed", 
+                             on_change=sync_v5_search)
     d5_d = f3.date_input("🗓️ 기준 날짜", datetime.now(KST).date(), key="v5_date_fixed")
 
-    # 계산 로직
-    def calc_v5_sales(row, target_date):
+    # 계산 로직 (신상품 보정 적용)
+    def calculate_v5_daily_sales_full(row, target_date):
         t7, t3 = row[t7day], row[t3day]
         if reg_date_col and reg_date_col in row and pd.notnull(row[reg_date_col]):
             reg_dt = row[reg_date_col].date() if hasattr(row[reg_date_col], 'date') else pd.to_datetime(row[reg_date_col]).date()
             days_diff = (target_date - reg_dt).days
-            if 0 <= days_diff < 3: return round(t3 / (days_diff + 1)) if t3 > 0 else 0
+            if 0 <= days_diff < 3:
+                return round(t3 / (days_diff + 1)) if t3 > 0 else 0
         if t7 > 0: return round(t7 / 7)
         elif t3 > 0: return round(t3 / 3)
         return 0
 
-    df_display['일판매량'] = df_display.apply(lambda x: calc_v5_sales(x, d5_d), axis=1).astype(int)
-    df_display['권장 발주수량'] = ((df_display['일판매량'] * (lt + ss)) - (df_display[avail] + df_display['리오더 수량'])).clip(lower=0).astype(int)
-
-    # [4. ⭐ 추가발주수량 실시간 보존 핵심 로직]
-    if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
+    df_display_v5['일판매량'] = df_display_v5.apply(lambda x: calculate_v5_daily_sales_full(x, d5_d), axis=1).astype(int)
+    df_display_v5['권장 발주수량'] = ((df_display_v5['일판매량'] * (lt + ss)) - (df_display_v5[avail] + df_display_v5['리오더 수량'])).clip(lower=0).astype(int)
     
-    # 필터링 적용
-    df_ns = df_display[~df_display[sold_out_col].astype(str).str.contains('품절', na=False)].copy()
+    # [수량 유지] 메모리에 저장된 추가발주수량 매핑
+    df_display_v5['추가발주수량'] = df_display_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
+
+    # 상태 분류
+    def get_stat_v5(r):
+        if r['권장 발주수량'] >= 10: return "🚨 고위험"
+        elif r['권장 발주수량'] > 0: return "⚠️ 주의"
+        return "✅ 정상"
+    df_display_v5['상태분류'] = df_display_v5.apply(get_stat_v5, axis=1)
+
+    # 필터링 및 정렬
+    df_ns = df_display_v5[~df_display_v5[sold_out_col].astype(str).str.contains('품절', na=False)].copy()
     if m5_f == "🚨 고위험/주의":
         danger_names = df_ns[df_ns['권장 발주수량'] > 0][item].unique()
         df_final_view = df_ns[df_ns[item].isin(danger_names)].copy()
     else:
         danger_names = df_ns[df_ns['권장 발주수량'] > 0][item].unique()
         df_final_view = df_ns[~df_ns[item].isin(danger_names)].copy()
-
-    if st.session_state.common_search:
-        df_final_view = df_final_view[df_final_view[item].astype(str).str.contains(st.session_state.common_search, case=False) | 
-                                     df_final_view[option].astype(str).str.contains(st.session_state.common_search, case=False)]
-
-    # 현재 메모리에 있는 수량을 표시용 데이터프레임에 매핑
-    df_final_view['추가발주수량'] = df_final_view.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
-
-    # [5. 데이터 에디터 및 수량 업데이트]
-    display_map = {"상태분류": "상태", item: "상품명", option: "옵션", v_item: "공급쳐상품명", avail: "가용재고", "리오더 수량": "리오더수량", "추가발주수량": "추가발주수량", "권장 발주수량": "권장 발주수량", "과거입고_참고": "과거입고"}
     
-    with st.form("v5_form_fixed"):
-        valid_cols = [c for c in display_map.keys() if c in df_final_view.columns]
-        df_edit_input = df_final_view[valid_cols].rename(columns=display_map)
-        
-        # 에디터 출력
-        v5_edits = st.data_editor(df_edit_input, use_container_width=True, hide_index=True, key="v5_editor_fixed",
-                                  column_config={"추가발주수량": st.column_config.NumberColumn(format="%d", min_value=0)})
+    df_final_view = df_final_view.sort_values(by=[item, option], ascending=[True, True])
 
-        # 폼 내부 버튼 (확정)
+    # 통합 검색어 필터링
+    current_q_v5 = st.session_state.common_search
+    if current_q_v5:
+        df_final_view = df_final_view[df_final_view[item].astype(str).str.contains(current_q_v5, case=False) | 
+                                     df_final_view[option].astype(str).str.contains(current_q_v5, case=False)]
+
+    # 데이터 에디터 출력
+    display_map = {
+        "상태분류": "상태", item: "상품명", option: "옵션", v_item: "공급쳐상품명", 
+        avail: "가용재고", "리오더 수량": "리오더수량", "추가발주수량": "추가발주수량", 
+        "권장 발주수량": "권장 발주수량", "과거입고_참고": "과거입고" 
+    }
+    
+    with st.form("v5_form_master"):
+        valid_cols = [c for c in display_map.keys() if c in df_final_view.columns]
+        df_edit_v5 = df_final_view[valid_cols].rename(columns=display_map)
+        
+        st.data_editor(
+            df_edit_v5, use_container_width=True, hide_index=True, key="v5_editor_fixed",
+            column_config={
+                "상품명": st.column_config.TextColumn(width=280),
+                "추가발주수량": st.column_config.NumberColumn(format="%d", min_value=0),
+            }
+        )
+        
         if st.form_submit_button("✅ 수량 확정 및 리오더 합산", use_container_width=True, type="primary"):
-            # 1. 현재 에디터에서 수정한 수량을 세션 딕셔너리에 먼저 업데이트
-            session_edits = st.session_state["v5_editor_fixed"].get("edited_rows", {})
-            for r_idx_str, val in session_edits.items():
-                orig_idx = df_final_view.index[int(r_idx_str)]
+            # 1. 현재 에디터 입력값을 메모리(dict)에 업데이트
+            edits = st.session_state["v5_editor_fixed"].get("edited_rows", {})
+            for r_idx, val in edits.items():
+                orig_idx = df_final_view.index[int(r_idx)]
                 if "추가발주수량" in val:
                     st.session_state.add_order_dict[orig_idx] = int(val["추가발주수량"])
 
-            # 2. 세션 딕셔너리에 담긴 모든 수량을 시트에 반영
+            # 2. 메모리에 담긴 모든 수량을 시트에 합산 반영
             if st.session_state.add_order_dict:
-                m_sh = get_sheet().worksheet("시트1")
+                m_sh = get_sheet().worksheet("시트1") 
                 for idx, qty in st.session_state.add_order_dict.items():
                     if qty > 0:
                         st.session_state.df_raw.at[idx, "리오더 수량"] += qty
                 
                 df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
                 m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-                st.session_state.add_order_dict = {} # 저장 후 비우기
-                st.success("✅ 모든 검색 조건의 수량이 합산되어 저장되었습니다!"); time.sleep(1); st.rerun()
+                st.session_state.add_order_dict = {} # 저장 완료 후 메모리 비우기
+                st.success("✅ 모든 검색 결과의 추가 발주가 합산되었습니다!"); time.sleep(1); st.rerun()
 
-    # [6. 변동 이력 저장 및 다운로드 로직 (기존과 동일)]
+    # [하단 버튼 - 기록 저장 및 CSV]
     st.write("---")
-    c_b1, c_b2 = st.columns(2)
-    with c_b1:
+    col_b1, col_b2 = st.columns(2)
+    with col_b1:
         if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-            ready = df_display[(df_display['리오더 수량'] != 0) | (df_display['추가발주수량'] > 0) | (df_display['권장 발주수량'] > 0)].copy()
+            ready = df_display_v5[(df_display_v5['리오더 수량'] != 0) | (df_display_v5['추가발주수량'] > 0) | (df_display_v5['권장 발주수량'] > 0)].copy()
             if not ready.empty:
                 now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
                 log_rows = [[now_s, str(r[item]), str(r[option]), str(r[v_item]), int(r[avail]), int(r['리오더 수량']), int(r['추가발주수량']), int(r['권장 발주수량'])] for _, r in ready.iterrows()]
                 get_sheet().worksheet("발주기록").append_rows(log_rows)
                 st.success(f"✅ {len(log_rows)}건 저장 완료!"); time.sleep(1); st.rerun()
-    with c_b2:
-        df_display['합계'] = df_display['권장 발주수량'] + df_display['추가발주수량']
-        csv_target = df_display[df_display['합계'] > 0]
+
+    with col_b2:
+        df_display_v5['합계'] = df_display_v5['권장 발주수량'] + df_display_v5['추가발주수량']
+        csv_target = df_display_v5[df_display_v5['합계'] > 0]
         if not csv_target.empty:
             st.download_button("📥 최종 발주서 CSV 다운로드", csv_target[[item, option, v_item, avail, '리오더 수량', '추가발주수량', '권장 발주수량']].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'), f"발주서_{d5_d.strftime('%m%d')}.csv", use_container_width=True)
-
-
-
 
 
 # ==========================================================
