@@ -598,7 +598,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         if s5_q: 
             df_final_view = df_final_view[df_final_view[item].astype(str).str.contains(s5_q, case=False)]
 
-    # [6. 데이터 에디터 출력]
+   # [6. 데이터 에디터 출력]
     display_map = {
         "상태분류": "상태", item: "상품명", option: "옵션", v_item: "공급쳐상품명", 
         avail: "가용재고", "리오더 수량": "리오더수량", "추가발주수량": "추가발주수량", 
@@ -609,6 +609,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         valid_cols = [c for c in display_map.keys() if c in df_final_view.columns]
         df_edit = df_final_view[valid_cols].rename(columns=display_map)
         
+        # ⭐ 중요: 에디터 출력 (key값 확인)
         st.data_editor(
             df_edit, use_container_width=True, hide_index=True, key="v5_editor_fixed",
             column_config={
@@ -619,18 +620,39 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         )
         
         if st.form_submit_button("✅ 수량 확정 및 리오더 합산", use_container_width=True, type="primary"):
+            # 1. 세션에서 수정된 데이터 가져오기
             edits = st.session_state["v5_editor_fixed"].get("edited_rows", {})
+            
             if edits:
-                m_sh = get_sheet().worksheet("시트1") 
-                for r_idx, val in edits.items():
-                    if "추가발주수량" in val:
-                        orig_idx = df_final_view.index[int(r_idx)]
-                        st.session_state.df_raw.at[orig_idx, "리오더 수량"] += int(val["추가발주수량"])
-                        st.session_state.add_order_dict[orig_idx] = int(val["추가발주수량"])
-                
-                df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
-                m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
-                st.success("✅ 시트1 반영 완료!"); time.sleep(1); st.rerun()
+                try:
+                    with st.spinner("🔄 시트에 반영 중..."):
+                        m_sh = get_sheet().worksheet("시트1")
+                        
+                        # 2. 수정된 내역을 하나씩 순회
+                        for r_idx_str, val in edits.items():
+                            if "추가발주수량" in val:
+                                r_idx = int(r_idx_str)
+                                # ⭐ 핵심: 현재 화면(df_final_view)의 줄 번호로 원본 인덱스 추출
+                                orig_idx = df_final_view.index[r_idx]
+                                
+                                input_val = int(val["추가발주수량"])
+                                
+                                # 원본 데이터(df_raw)에 즉시 합산
+                                st.session_state.df_raw.at[orig_idx, "리오더 수량"] += input_val
+                                # 세션 딕셔너리에도 기록 (히스토리용)
+                                st.session_state.add_order_dict[orig_idx] = input_val
+                        
+                        # 3. 전체 데이터 시트 업데이트
+                        df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
+                        m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
+                        
+                        st.success("✅ 리오더 수량이 성공적으로 합산되었습니다!")
+                        time.sleep(1)
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 저장 중 오류 발생: {e}")
+            else:
+                st.warning("⚠️ 입력된 수량이 없습니다. 숫자를 넣고 '엔터'를 친 후 버튼을 눌러주세요.")
 
   # ==========================================================
 # --- [7. 하단 버튼 - 실질적 변동(입력)이 있는 상품만 기록 저장] ---
