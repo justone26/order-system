@@ -811,88 +811,75 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 실시간 전체 리오더 현황 (불러오기 버튼 추가)] ---
+# --- [7단계: 실시간 전체 리오더 현황판 (버튼 클릭 시 실행)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
-    st.subheader("📦 7단계: 실시간 전체 리오더 현황판")
-
-    # [1. 불러오기/새로고침 버튼 UI]
-    c_btn1, c_btn2 = st.columns([1, 3])
-    with c_btn1:
-        # 시트에서 직접 다시 불러오기 위한 버튼
-        load_trigger = st.button("🔄 현황 불러오기", use_container_width=True, type="primary", key="v7_load_btn")
+    st.subheader("🚀 7단계: 실시간 전체 리오더 현황판")
     
+    st.info("아래 버튼을 누르면 '입고기록'과 '발주기록'을 분석하여 현재 미입고된 전체 리오더 현황을 집계합니다.")
+
+    # [1] 실행 버튼 (이 버튼을 눌러야만 아래 로직이 작동함)
+    col_btn, _ = st.columns([1, 3])
+    with col_btn:
+        load_trigger = st.button("🔄 실시간 현황 불러오기", type="primary", use_container_width=True)
+
+    # [2] 버튼이 눌렸을 때만 데이터 로드 및 분석 시작
     if load_trigger:
-        with st.spinner("📡 최신 리오더 데이터를 불러오는 중..."):
-            # 구글 시트에서 최신 df_raw 다시 로드
-            sh_main = get_sheet().worksheet("시트1")
-            new_data = sh_main.get_all_records()
-            if new_data:
-                st.session_state.df_raw = pd.DataFrame(new_data)
-                st.success("✅ 최신 데이터를 불러왔습니다.")
-                time.sleep(0.5)
-                st.rerun()
+        with st.spinner("구글 시트에서 최신 데이터를 분석 중입니다..."):
+            try:
+                # 1) 데이터 가져오기
+                sh = get_sheet()
+                # 발주기록 (나간 것)
+                order_df = pd.DataFrame(sh.worksheet("발주기록").get_all_records())
+                # 입고기록 (들어온 것)
+                in_df = pd.DataFrame(sh.worksheet("입고기록").get_all_records())
+                
+                if order_df.empty:
+                    st.warning("발주 기록이 없어 현황을 표시할 수 없습니다.")
+                else:
+                    # 2) 데이터 전처리 (숫자 변환)
+                    order_df['발주수량'] = pd.to_numeric(order_df['발주수량'], errors='coerce').fillna(0)
+                    in_df['입고수량'] = pd.to_numeric(in_df['입고수량'], errors='coerce').fillna(0)
+                    
+                    # 3) 상품별/옵션별 합산
+                    # 발주 총합
+                    total_order = order_df.groupby(['상품명', '옵션'])['발주수량'].sum().reset_index()
+                    # 입고 총합
+                    total_in = in_df.groupby(['상품명', '옵션'])['입고수량'].sum().reset_index()
+                    
+                    # 4) 데이터 병합 (발주량 - 입고량 = 미입고량)
+                    status_df = pd.merge(total_order, total_in, on=['상품명', '옵션'], how='left').fillna(0)
+                    status_df['미입고(잔량)'] = status_df['발주수량'] - status_df['입고수량']
+                    
+                    # 5) 미입고 수량이 있는 것만 필터링 (0보다 큰 것)
+                    status_df = status_df[status_df['미입고(잔량)'] > 0].copy()
+                    
+                    # 6) 결과 출력
+                    if status_df.empty:
+                        st.success("✨ 현재 모든 리오더가 입고 완료되었습니다! (미입고 잔량 없음)")
+                    else:
+                        st.write(f"📅 **집계 일시:** {datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')}")
+                        
+                        # 대시보드 카드 형태 시각화
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("총 미입고 품목수", f"{len(status_df)}건")
+                        m2.metric("총 미입고 수량", f"{int(status_df['미입고(잔량)'].sum())}개")
+                        m3.metric("최다 미입고 상품", status_df.loc[status_df['미입고(잔량)'].idxmax(), '상품명'] if not status_df.empty else "-")
 
-    st.info("💡 현재 메인 시트(시트1)에서 '리오더 수량'이 남아있는 상품들을 보여줍니다.")
-
-    # [2. 데이터 로드 및 정제]
-    df_total = st.session_state.df_raw.copy()
-    p = st.session_state.p
-    it_col, op_col, vn_col, vi_col = p['it'], p['op'], p['vn'], p['vi']
-    
-    # 리오더 수량 숫자형 변환 (에러 방지)
-    if "리오더 수량" in df_total.columns:
-        df_total["리오더 수량"] = pd.to_numeric(df_total["리오더 수량"], errors='coerce').fillna(0).astype(int)
-        
-        # [3. 리오더 수량이 0보다 큰 상품만 필터링]
-        df_reorder_active = df_total[df_total["리오더 수량"] > 0].copy()
-        
-        if not df_reorder_active.empty:
-            # [4. 상단 요약 정보]
-            t_items = len(df_reorder_active)
-            t_qty = df_reorder_active["리오더 수량"].sum()
-            
-            m1, m2 = st.columns(2)
-            m1.metric("총 리오더 품목 수", f"{t_items}건")
-            m2.metric("전체 리오더 총합계", f"{t_qty:,}개")
-            
-            # [5. 검색 UI]
-            s_re = st.text_input("🔎 공급처 또는 상품명으로 검색", placeholder="검색어를 입력하세요...", key="v7_search_input")
-            
-            if s_re:
-                df_reorder_active = df_reorder_active[
-                    df_reorder_active[it_col].astype(str).str.contains(s_re, case=False) |
-                    df_reorder_active[vn_col].astype(str).str.contains(s_re, case=False) |
-                    df_reorder_active[vi_col].astype(str).str.contains(s_re, case=False)
-                ]
-
-            # [6. 컬럼 배치 및 이름 변경]
-            d_map = {vn_col: "공급처", it_col: "상품명", op_col: "옵션", vi_col: "공급처상품명", "리오더 수량": "현재 리오더 수량"}
-            f_cols = [vn_col, it_col, op_col, vi_col, "리오더 수량"]
-            df_re_disp = df_reorder_active[f_cols].rename(columns=d_map)
-            
-            # [7. 데이터 에디터 출력]
-            st.data_editor(
-                df_re_disp.sort_values(by=["공급처", "상품명"]),
-                use_container_width=True,
-                hide_index=True,
-                disabled=True,
-                column_config={
-                    "공급처": st.column_config.TextColumn(width="small"),
-                    "상품명": st.column_config.TextColumn(width="medium"),
-                    "현재 리오더 수량": st.column_config.NumberColumn(format="%d개")
-                }
-            )
-            
-            # [8. 다운로드 버튼]
-            st.download_button(
-                label="📥 현재 리오더 현황 명단 다운로드 (CSV)",
-                data=df_re_disp.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'),
-                file_name=f"전체리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.csv",
-                use_container_width=True
-            )
-        else:
-            st.success("✅ 현재 리오더 중인 상품이 없습니다.")
-    else:
-        st.error("'리오더 수량' 컬럼을 찾을 수 없습니다.")
+                        # 상세 테이블 출력
+                        st.dataframe(
+                            status_df[['상품명', '옵션', '발주수량', '입고수량', '미입고(잔량)']].sort_values(by='미입고(잔량)', ascending=False),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "미입고(잔량)": st.column_config.NumberColumn("미입고 잔량 🚩", format="%d", help="아직 거래처에서 들어와야 할 수량입니다.")
+                            }
+                        )
+                        
+                        # 엑셀 다운로드 (현황판 전용)
+                        csv = status_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                        st.download_button("📥 미입고 현황 리스트 다운로드", csv, f"pending_orders_{datetime.now(KST).strftime('%m%d')}.csv", "text/csv")
+                        
+            except Exception as e:
+                st.error(f"현황판을 불러오는 중 오류가 발생했습니다: {e}")
