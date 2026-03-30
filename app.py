@@ -450,9 +450,9 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     # [중요] 실시간 검색어 필터링 적용
     curr_q = st.session_state.get('common_search', "")
     if curr_q:
+        # 모든 변수 이름을 df_final_v5로 통일했습니다.
         df_final_v5 = df_final_v5[df_final_v5[item].astype(str).str.contains(curr_q, case=False) | 
-                                 df_final_view[option].astype(str).str.contains(curr_q, case=False)]
-
+                                 df_final_v5[option].astype(str).str.contains(curr_q, case=False)]
     # 6. 데이터 에디터 및 저장 폼
     display_map = {
         "상태분류": "상태", item: "상품명", option: "옵션", v_item: "공급쳐상품명", 
