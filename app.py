@@ -654,24 +654,33 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             else:
                 st.warning("⚠️ 입력된 수량이 없습니다. 숫자를 넣고 '엔터'를 친 후 버튼을 눌러주세요.")
 
-  # ==========================================================
+# ==========================================================
 # --- [7. 하단 버튼 - 실질적 변동(입력)이 있는 상품만 기록 저장] ---
 # ==========================================================
 st.write("---")
 col_b1, col_b2 = st.columns(2)
 
+# 에러 방지를 위해 위에서 계산된 데이터를 안전하게 가져옵니다.
+# 5단계에서 사용한 최종 데이터 프레임 변수명을 사용해야 합니다.
+if 'df_v5_base' in locals() or 'df_v5_base' in globals():
+    target_df = df_v5_base.copy()
+else:
+    # 혹시라도 변수명이 다를 경우를 대비해 세션에서 원본을 가져옵니다.
+    target_df = st.session_state.df_raw.copy()
+    # 필요한 컬럼이 없을 경우를 대비해 0으로 채워줍니다.
+    if '추가발주수량' not in target_df.columns: target_df['추가발주수량'] = 0
+    if '권장 발주수량' not in target_df.columns: target_df['권장 발주수량'] = 0
+
 with col_b1:
-    # [수정 포인트]: 사장님이 직접 수치를 기입하거나 수정한 항목만 필터링합니다.
     if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-        # 1. 추가발주수량을 입력했거나 2. 리오더 수량이 0이 아닌(수정된) 상품만 추출
-        ready = df_display[
-            (df_display['추가발주수량'] > 0) |   # 사장님이 직접 숫자를 넣은 발주 건
-            (df_display['리오더 수량'] != 0)     # 리오더 수량에 변동이 있는 건
+        # [수정] 사장님이 숫자를 넣었거나(추가발주), 리오더에 변동이 있는 것만!
+        ready = target_df[
+            (target_df['추가발주수량'] > 0) | 
+            (target_df['리오더 수량'] != 0)
         ].copy()
 
         if not ready.empty:
             now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
-            # 저장할 데이터 리스트 구성
             log_rows = [
                 [
                     now_s, 
@@ -686,29 +695,29 @@ with col_b1:
             ]
             
             try:
-                # '발주기록' 시트에 데이터 추가
                 get_sheet().worksheet("발주기록").append_rows(log_rows)
-                st.success(f"✅ 추가 발주 및 변동 내역 {len(log_rows)}건 저장 완료!")
+                st.success(f"✅ 변동 내역 {len(log_rows)}건 저장 완료!")
                 time.sleep(1)
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ 저장 실패: {e}")
         else:
-            # 권장 수량만 있고 사장님이 아무것도 입력 안 했을 때 뜨는 메시지
-            st.warning("⚠️ 기록할 '추가발주' 수량이나 '리오더' 변동 내역이 없습니다.")
+            st.warning("⚠️ 저장할 '추가발주' 수량이나 '리오더' 변동 내역이 없습니다.")
 
 with col_b2:
-    # 다운로드는 실제 발주를 해야 하므로 (권장 + 추가) 합계가 있는 것들을 모두 포함합니다.
-    df_display['합계'] = df_display['권장 발주수량'] + df_display['추가발주수량']
-    csv_target = df_display[df_display['합계'] > 0]
+    # 합계 계산 (권장 + 추가)
+    target_df['합계'] = target_df['권장 발주수량'] + target_df['추가발주수량']
+    csv_target = target_df[target_df['합계'] > 0]
     
     if not csv_target.empty:
         st.download_button(
             label="📥 최종 발주서 CSV 다운로드",
-            data=csv_target[[item, option, v_item, avail, '리오더 수량', '추가발주수량', '권장 발주수량']].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'),
+            data=csv_target[[item, option, v_item, avail, '리오더 수량', '추가발주수량', '권장 발주수량', '합계']].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'),
             file_name=f"발주서_{d5_d.strftime('%m%d')}.csv",
             use_container_width=True
         )
+
+
 
 
 # ==========================================================
