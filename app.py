@@ -100,6 +100,27 @@ def sync_v4_search():
 def sync_v5_search():
     st.session_state.common_search = st.session_state.v5_search_fixed
 
+
+# [5단계 전용: 실시간 수량 보존 함수]
+def sync_all_and_save_mem():
+    # 현재 화면에 떠 있는 추가발주수량을 메모리에 보관
+    if "v5_editor_fixed" in st.session_state:
+        edits = st.session_state["v5_editor_fixed"].get("edited_rows", {})
+        if "current_v5_index" in st.session_state:
+            v_idx = st.session_state.current_v5_index
+            for r_idx_str, val in edits.items():
+                if "추가발주수량" in val:
+                    actual_idx = v_idx[int(r_idx_str)]
+                    st.session_state.add_order_dict[actual_idx] = int(val["추가발주수량"])
+    
+    # 검색어 동기화
+    if "v4_fix_search" in st.session_state:
+        st.session_state.common_search = st.session_state.v4_fix_search
+    if "v5_search_fixed" in st.session_state:
+        st.session_state.common_search = st.session_state.v5_search_fixed
+        
+
+
 # --- [세션 상태 초기화] ---
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'analyzed' not in st.session_state: st.session_state.analyzed = False
@@ -349,31 +370,6 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
                 m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
                 st.success(f"✅ 저장 및 차감 완료!"); time.sleep(0.5); st.rerun()
-
-
-
-
-# [5단계 전용: 실시간 수량 보존 함수]
-def sync_all_and_save_mem():
-    # 현재 화면에 떠 있는 추가발주수량을 메모리에 보관
-    if "v5_editor_fixed" in st.session_state:
-        edits = st.session_state["v5_editor_fixed"].get("edited_rows", {})
-        if "current_v5_index" in st.session_state:
-            v_idx = st.session_state.current_v5_index
-            for r_idx_str, val in edits.items():
-                if "추가발주수량" in val:
-                    actual_idx = v_idx[int(r_idx_str)]
-                    st.session_state.add_order_dict[actual_idx] = int(val["추가발주수량"])
-    
-    # 검색어 동기화
-    if "v4_fix_search" in st.session_state:
-        st.session_state.common_search = st.session_state.v4_fix_search
-    if "v5_search_fixed" in st.session_state:
-        st.session_state.common_search = st.session_state.v5_search_fixed
-
-
-
-
 
 
 # ==========================================================
