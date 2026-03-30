@@ -727,86 +727,75 @@ else:
 
 
 # ==========================================================
-# --- [6단계: 전체 히스토리 관리 (날짜 -> 검색 -> 상품명 -> 회차)] ---
+# --- [6단계: 추가발주 히스토리 관리 (수동 입력분 전용)] ---
 # ==========================================================
-if st.session_state.get('analyzed'):
+if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
-    st.subheader("📜 6단계: 전체 히스토리 관리")
+    st.subheader("📂 6단계: 추가발주 히스토리 관리")
 
-    # 사장님 요청 순서: 날짜 -> 검색버튼 -> 상품명 -> 회차
-    f1, f2, f3, f4 = st.columns([1, 0.5, 1.2, 1.2])
+    p = st.session_state.p
+    item, option = p['it'], p['op']
     
-    with f1:
-        today = datetime.now(KST).date()
-        d_range = st.date_input("🗓️ 날짜 범위", value=(today, today), key="v6_date_final")
-    
-    with f2:
-        st.write("") # 높이 맞춤용
-        st.write("") 
-        # 날짜 바로 옆에 배치된 검색 버튼 (데이터를 불러오는 트리거)
-        search_trigger = st.button("🔍 검색", use_container_width=True, type="primary", key="v6_search_btn")
-
-    with f3:
-        h_q = st.text_input("🔍 상품명 검색", placeholder="결과 내 검색...", key="v6_search_final")
+    # 1. 현재 세션에 담긴 '추가발주' 데이터 정리
+    if 'add_order_dict' in st.session_state and st.session_state.add_order_dict:
+        # 추가발주가 1개라도 있는 인덱스만 추출
+        valid_add_indices = [idx for idx, qty in st.session_state.add_order_dict.items() if qty > 0]
         
-    with f4:
-        # 회차 선택박스
-        selected_batch = st.selectbox("📥 저장 회차 선택", ["전체보기"], key="v6_batch_select")
-
-    # 검색 버튼 클릭 시 로직
-    if search_trigger:
-        try:
-            with st.spinner("📡 기록을 불러오는 중..."):
-                sheet = get_sheet()
-                worksheet = sheet.worksheet("발주기록")
-                all_values = worksheet.get_all_values()
+        if valid_add_indices:
+            # 전체 데이터 중 추가발주가 있는 행만 필터링
+            df_history = st.session_state.df_raw.loc[valid_add_indices].copy()
+            df_history['이번추가분'] = df_history.index.map(st.session_state.add_order_dict)
             
-            if len(all_values) > 1:
-                df_hist = pd.DataFrame(all_values[1:])
-                target_cols = ["날짜시간", "상품명", "옵션", "공급쳐상품명", "가용재고", "리오더수량", "추가발주수량", "권장 발주수량"]
-                
-                if len(df_hist.columns) >= 8:
-                    df_hist.columns = target_cols + list(df_hist.columns[8:])
-                    df_hist = df_hist[target_cols]
+            st.write(f"📢 **현재 저장 대기 중인 추가발주:** {len(df_history)}건")
+            
+            # 화면 표시용 테이블
+            view_cols = [item, option, '이번추가분']
+            st.dataframe(df_history[view_cols].rename(columns={item:"상품명", option:"옵션"}), use_container_width=True, hide_index=True)
 
-                # --- 데이터 필터링 시작 ---
-                df_hist["날짜_만"] = df_hist["날짜시간"].astype(str).str.slice(0, 10)
-                
-                # 1. 날짜 필터 (가장 우선 적용)
-                if len(d_range) == 2:
-                    s_s, e_s = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
-                    df_hist = df_hist[(df_hist["날짜_만"] >= s_s) & (df_hist["날짜_만"] <= e_s)]
+            col_save, col_csv = st.columns(2)
+            
+            with col_save:
+                if st.button("📝 추가발주분만 시트 기록", type="primary", use_container_width=True):
+                    try:
+                        log_sh = get_sheet().worksheet("발주기록")
+                        save_time = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+                        
+                        # [중요] 전체가 아닌 '추가발주가 있는 행'만 리스트로 변환
+                        history_rows = []
+                        for idx, row in df_history.iterrows():
+                            history_rows.append([
+                                save_time, 
+                                str(row[item]), 
+                                str(row[option]), 
+                                int(row['이번추가분']),
+                                "수동추가발주" # 구분값 추가
+                            ])
+                        
+                        # 구글 시트에 추가 (append_rows는 리스트의 리스트를 한 번에 넣음)
+                        log_sh.append_rows(history_rows)
+                        
+                        st.success(f"✅ 추가발주 {len(history_rows)}건이 '발주기록' 시트에 저장되었습니다.")
+                        # 기록 후 해당 세션만 비우기 (선택 사항)
+                        # st.session_state.add_order_dict = {}
+                        # time.sleep(1); st.rerun()
+                    except Exception as e:
+                        st.error(f"시트 저장 중 오류: {e}")
 
-                # 2. 결과 정렬 (최신순)
-                df_hist = df_hist.sort_values(by="날짜시간", ascending=False)
-
-                # --- 결과 출력 ---
-                if not df_hist.empty:
-                    # 회차 선택박스 업데이트를 위한 세션 저장 (필요시)
-                    st.session_state.v6_data = df_hist
-                    
-                    # 상품명 검색어 필터링 (결과 내 검색)
-                    df_view = df_hist.copy()
-                    if h_q:
-                        df_view = df_view[df_view["상품명"].astype(str).str.contains(h_q, case=False)]
-
-                    # ⭐ [추가된 부분] 화면 표시 직전에 불필요한 계산용 셀 삭제
-                    if "날짜_만" in df_view.columns:
-                        df_view = df_view.drop(columns=["날짜_만"])
-
-                    st.write(f"✅ 총 **{len(df_view)}**건의 내역이 조회되었습니다.")
-                    st.dataframe(df_view, use_container_width=True, hide_index=True)
-                    
-                    csv_data = df_view.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button("📥 내역 다운로드(CSV)", csv_data, "발주기록_검색결과.csv", use_container_width=True)
-                else:
-                    st.warning("🧐 해당 날짜 범위에 기록이 없습니다.")
-            else:
-                st.info("💡 아직 저장된 발주 기록이 없습니다.")
-        except Exception as e:
-            st.error(f"📡 데이터 로딩 오류: {e}")
-
-
+            with col_csv:
+                # [중요] 엑셀 다운로드도 추가발주분만!
+                csv_df = df_history[[item, option, '이번추가분']].rename(columns={item:"상품명", option:"옵션", "이번추가분":"발주수량"})
+                csv_data = csv_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                st.download_button(
+                    label="📥 추가발주서(CSV) 다운로드",
+                    data=csv_data,
+                    file_name=f"추가발주_{datetime.now(KST).strftime('%m%d_%H%M')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+        else:
+            st.info("💡 5단계에서 입력한 '추가발주수량'이 없습니다.")
+    else:
+        st.info("💡 추가발주 데이터가 비어있습니다. 5단계에서 수량을 입력해주세요.")
 
 
 
