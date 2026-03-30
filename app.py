@@ -397,23 +397,16 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work = pd.merge(df_work, in_sum_df.rename(columns={"입고수량":"과거리오더 입고"}), 
                        left_on=[item, option], right_on=['상품명', '옵션'], how="left").fillna(0)
 
-    # 3. ⭐ [핵심 수정] 신상품 보정 일판매량 계산 로직
+    # 3. 신상품 보정 일판매량 계산 로직
     def calc_daily_sales_with_reg(row):
         t7, t3 = row[t7day], row[t3day]
-        
-        # 등록일 기준 보정 계산
         if reg_date_col and reg_date_col in row and pd.notnull(row[reg_date_col]):
-            # 기준 날짜(오늘)와 등록일의 차이 계산
             today = datetime.now(KST).date()
             reg_dt = row[reg_date_col].date() if hasattr(row[reg_date_col], 'date') else pd.to_datetime(row[reg_date_col]).date()
             days_diff = (today - reg_dt).days
-            
-            # 등록 3일 이내 신상품인 경우
             if 0 <= days_diff < 3:
-                actual_days = days_diff + 1  # 당일은 1일차
+                actual_days = days_diff + 1
                 return int(round(t3 / actual_days)) if t3 > 0 else 0
-        
-        # 일반 상품 (기존 로직)
         if t7 > 0: return int(round(t7 / 7))
         elif t3 > 0: return int(round(t3 / 3))
         return 0
@@ -422,20 +415,36 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work['3일발주'] = (df_work['일판매'] * 3).astype(int)
     df_work['권장발주'] = ((df_work['일판매'] * (lt + ss)) - (df_work[avail] + df_work['리오더 수량'])).clip(lower=0).astype(int)
 
-    # 4. 상단 레이아웃
+    # 4. 상단 레이아웃 ⭐ [동기화 로직 적용]
     f_c1, f_c2, f_c3 = st.columns([1, 2, 1])
-    with f_c1: filter_m = st.selectbox("🚦 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_fix_filter")
-    with f_c2: search_q = st.text_input("🔍 검색", placeholder="상품명 또는 옵션...", key="v4_fix_search")
-    with f_c3: hist_date_4 = st.date_input("🗓️ 입고 날짜", datetime.now(KST).date(), key="v4_fix_date")
+    
+    with f_c1: 
+        filter_m = st.selectbox("🚦 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_fix_filter")
+    
+    with f_c2: 
+        # ⭐ 4단계 검색창: key를 고정하고, 5단계에서 입력값이 오면 세션에서 불러옵니다.
+        search_q = st.text_input("🔍 상품명 검색 (4/5단계 동기화)", key="v4_fix_search")
+        
+        # ⭐ 만약 5단계 검색어가 세션에 있다면, 4단계 검색창에도 동기화 시킵니다.
+        if st.session_state.get('v5_search_fixed') and st.session_state.v5_search_fixed != search_q:
+            st.session_state.v4_fix_search = st.session_state.v5_search_fixed
+            st.rerun() # 실시간 반영을 위해 재실행
+
+    with f_c3: 
+        hist_date_4 = st.date_input("🗓️ 입고 날짜", datetime.now(KST).date(), key="v4_fix_date")
 
     # 필터링
     is_soldout = df_work[sold_out_col].astype(str).str.contains('품절', na=False)
     df_filtered = df_work[~is_soldout] if filter_m == "정상만" else (df_work[is_soldout] if filter_m == "품절만" else df_work)
+    
+    # 검색어가 있을 경우 필터링 (4단계와 5단계 통합 검색값 사용)
     if search_q:
         df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_q, case=False) | 
                                  df_filtered[option].astype(str).str.contains(search_q, case=False)]
+        # ⭐ 추가: 4단계에서 검색한 값을 5단계 세션에도 즉시 공유
+        st.session_state.v5_search_fixed = search_q
 
-    # 5. 화면 출력 설정
+    # 5. 화면 출력 설정 (이후 코드는 동일)
     df_display = df_filtered.rename(columns={
         sold_out_col: "상태", vendor: "공급쳐", v_item: "공급상품명", 
         item: "상품명", option: "옵션", stock: "정상", avail: "가용"
@@ -484,7 +493,6 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 df_to_save = st.session_state.df_raw.copy().fillna("").astype(str)
                 m_sh.update([df_to_save.columns.values.tolist()] + df_to_save.values.tolist())
                 st.success(f"✅ 저장 및 차감 완료!"); time.sleep(0.5); st.rerun()
-                
 
 
 
