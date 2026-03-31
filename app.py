@@ -484,26 +484,17 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📋 5단계: 최종 발주 리스트 요약")
 
-    # 4단계에서 계산된 최신 데이터 활용 (품절 제외)
     df_v5 = df_work[~df_work[sold_out_col].astype(str).str.contains('품절', na=False)].copy()
     
-    # 5단계 전용 검색 및 필터 레이아웃
     f1, f2, f3 = st.columns([1.5, 2, 1])
     m5_f = f1.selectbox("🚦 상태 필터", ["🚨 고위험/주의", "✅ 전체정상"], key="v5_main_filter")
-    s5_q = f2.text_input("🔍 상품명 검색", key="v5_main_search", placeholder="상품명을 입력하세요...")
+    s5_q = f2.text_input("🔍 상품명 검색", key="v5_main_search")
     d5_d = f3.date_input("🗓️ 기준 날짜", datetime.now(KST).date(), key="v5_main_date")
 
-    # 추가발주수량 세션 관리
-    if 'add_order_dict' not in st.session_state: 
-        st.session_state.add_order_dict = {}
-    
-    # 데이터프레임에 현재 세션의 추가발주수량 매핑
+    if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
     df_v5['추가발주수량'] = df_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
-
-    # [상태 계산] 권장발주가 있으면 긴급, 없으면 정상
     df_v5['상태'] = df_v5['권장발주'].apply(lambda x: "🚨 긴급" if x > 0 else "✅ 정상")
 
-    # 필터링 로직 (고위험/주의 선택 시 권장발주가 있는 상품군만 노출)
     danger_names = df_v5[df_v5['권장발주'] > 0][item].unique()
     if m5_f == "🚨 고위험/주의":
         df_v5_view = df_v5[df_v5[item].isin(danger_names)].copy()
@@ -515,114 +506,75 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     
     df_v5_view = df_v5_view.sort_values(by=[item, option])
 
-    # [에디터 설정] 화면에는 공급처를 숨기고 메모 칸을 넓게 배치
+    # 화면 표시용 매핑 (공급처 제외)
     map_v5 = {
-        "상태": "상태", 
-        item: "상품명", 
-        option: "옵션", 
-        v_item: "공급처상품명", 
-        avail: "가용", 
-        "리오더 수량": "기존", 
-        "추가발주수량": "추가", 
-        "권장발주": "권장", 
-        "비고": "📝 이슈/입고메모"
+        "상태": "상태", item: "상품명", option: "옵션", v_item: "공급처상품명", 
+        avail: "가용", "리오더 수량": "기존", "추가발주수량": "추가", "권장발주": "권장", "비고": "📝 이슈/입고메모"
     }
     
     with st.form("v5_master_form"):
-        # 화면 출력용 데이터 (공급처 제외)
         df_ed_v5 = df_v5_view[list(map_v5.keys())].rename(columns=map_v5)
-        
         st.data_editor(
             df_ed_v5, 
             use_container_width=True, 
             hide_index=True, 
             key="v5_editor",
-                                column_config={
-                        "상태": st.column_config.TextColumn("상태", width=70),
-                        "상품명": st.column_config.TextColumn("상품명", width=280),
-                        "옵션": st.column_config.TextColumn("옵션", width=150),
-                        "공급처상품명": st.column_config.TextColumn("공급처상품명", width=180),
-    
-                            # 💡 숫자 셀: 40~50에서 80으로 키워 가독성 확보
-                        "가용": st.column_config.NumberColumn("가용", width=80),
-                        "기존": st.column_config.NumberColumn("기존", width=80),
-                        "추가": st.column_config.NumberColumn("추가", width=80, min_value=0),
-                        "권장": st.column_config.NumberColumn("권장", width=80),
-    
-                    # 메모 칸은 여전히 넉넉하게 유지 (400~500)
-                        "📝 이슈/입고메모": st.column_config.TextColumn(width=450), 
-                        "이슈/메모": st.column_config.TextColumn(width=450) # 6단계용
-                        }
+            column_config={
+                "상태": st.column_config.TextColumn("상태", width=70),
+                "상품명": st.column_config.TextColumn("상품명", width=250),
+                "옵션": st.column_config.TextColumn("옵션", width=150),
+                "공급처상품명": st.column_config.TextColumn("공급처상품명", width=180),
+                "가용": st.column_config.NumberColumn("가용", width=80),
+                "기존": st.column_config.NumberColumn("기존", width=80),
+                "추가": st.column_config.NumberColumn("추가", width=80, min_value=0),
+                "권장": st.column_config.NumberColumn("권장", width=80),
+                "📝 이슈/입고메모": st.column_config.TextColumn(width=450)
+            },
             disabled=["상태", "상품명", "옵션", "공급처상품명", "가용", "기존", "권장"]
         )
         
-        if st.form_submit_button("✅ 추가발주 및 메모 확정 (메인 시트 반영)", use_container_width=True, type="primary"):
+        if st.form_submit_button("✅ 추가발주 및 메모 확정 (메인 반영)", use_container_width=True, type="primary"):
             edits_v5 = st.session_state["v5_editor"].get("edited_rows", {})
             if edits_v5:
                 for r_idx, val in edits_v5.items():
                     idx = df_v5_view.index[int(r_idx)]
                     if "추가" in val:
-                        # 메인 데이터에 누적 업데이트
                         st.session_state.df_raw.at[idx, "리오더 수량"] += int(val["추가"])
                         st.session_state.add_order_dict[idx] = int(val["추가"])
                     if "📝 이슈/입고메모" in val:
                         st.session_state.df_raw.at[idx, "비고"] = str(val["📝 이슈/입고메모"])
                 
-                # 메인 시트1(원본 데이터) 업데이트
                 m_sh = get_sheet().worksheet("시트1")
                 df_s = st.session_state.df_raw.copy().fillna("").astype(str)
                 m_sh.update([df_s.columns.values.tolist()] + df_s.values.tolist())
-                st.success("✅ 메인 시트 데이터가 최신화되었습니다!"); time.sleep(0.5); st.rerun()
+                st.success("✅ 메인 시트 저장 완료!"); time.sleep(0.5); st.rerun()
 
-    # [저장 및 다운로드 버튼부]
     st.divider()
     c_save, c_down = st.columns(2)
-    
     with c_save:
         if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
-            # 확정된(추가발주가 있는) 항목만 추출
             ready = df_v5_view[df_v5_view.index.isin(st.session_state.add_order_dict.keys())].copy()
             if not ready.empty:
                 now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
-                
-                # 🚨 시트 저장 시에는 공급처(vendor)를 포함하여 10열 정위치 저장
                 log_rows = [[
-                    now_s,                          # 0: 날짜시간
-                    str(r[item]),                   # 1: 상품명
-                    str(r[option]),                 # 2: 옵션
-                    str(r[vendor]),                 # 3: 업체명 (정상 매핑)
-                    int(r[avail]),                  # 4: 가용
-                    int(st.session_state.df_raw.at[i, '리오더 수량']), # 5: 기존리오더
-                    int(st.session_state.add_order_dict[i]),       # 6: 추가발주
-                    int(r['권장발주']),              # 7: 권장발주
-                    str(st.session_state.df_raw.at[i, '비고']),     # 8: 이슈/메모
-                    str(r[v_item])                  # 9: 공급처상품명
+                    now_s, str(r[item]), str(r[option]), str(r[vendor]), int(r[avail]),
+                    int(st.session_state.df_raw.at[i, '리오더 수량']), int(st.session_state.add_order_dict[i]),
+                    int(r['권장발주']), str(st.session_state.df_raw.at[i, '비고']), str(r[v_item])
                 ] for i, r in ready.iterrows()]
-                
                 try:
                     get_sheet().worksheet("발주기록").append_rows(log_rows)
                     st.session_state.add_order_dict = {} 
-                    st.success("✅ 발주기록 시트에 정확한 순서로 저장되었습니다!"); time.sleep(0.5); st.rerun()
+                    st.success("✅ 발주기록 저장 완료!"); time.sleep(0.5); st.rerun()
                 except Exception as e: st.error(f"❌ 저장 실패: {e}")
 
-    with c_down:
-        df_v5['최종합계'] = df_v5['권장발주'] + df_v5['추가발주수량']
-        csv_target = df_v5[df_v5['최종합계'] > 0].copy()
-        if not csv_target.empty:
-            # 다운로드 파일에는 정보 확인을 위해 공급처 포함 가능
-            csv_res = csv_target[[item, option, vendor, v_item, '최종합계']].rename(columns={
-                item: "상품명", option: "옵션", vendor: "공급처", v_item: "공급처상품명"
-            })
-            csv_data = csv_res.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 최종 발주서 CSV 다운로드", csv_data, f"발주서_{d5_d.strftime('%m%d')}.csv", use_container_width=True)
 
 
 
 
 
-# ==========================================================
-# --- [6단계: 데이터 반전 오류 해결 최종본] ---
-# ==========================================================
+# ------------------------------------------------------------------
+# [6단계: 전체 히스토리 관리]
+# ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📜 6단계: 전체 히스토리 관리")
@@ -635,39 +587,28 @@ if st.session_state.get('analyzed'):
         st.write(""); st.write("") 
         search_trigger = st.button("🔍 내역 조회", use_container_width=True, type="primary", key="v6_search_btn")
     with f3:
-        h_q = st.text_input("🔍 결과 내 상품명 검색", placeholder="상품명을 입력하세요...", key="v6_search_q")
+        h_q = st.text_input("🔍 결과 내 상품명 검색", key="v6_search_q")
 
     if search_trigger or h_q:
         try:
-            with st.spinner("📡 데이터를 불러오는 중..."):
-                sheet = get_sheet()
-                worksheet = sheet.worksheet("발주기록")
-                all_values = worksheet.get_all_values()
+            worksheet = get_sheet().worksheet("발주기록")
+            all_values = worksheet.get_all_values()
             
             if len(all_values) > 1:
                 temp_df = pd.DataFrame(all_values[1:])
-                
-                # 🚨 [사장님 피드백 반영: 위치 맞교환]
-                # 기존에 3번이 업체명이었는데 상품명이 나온다고 하셨으니, 
-                # 9번(공급처상품명)과 3번(업체명)의 할당 인덱스를 서로 바꿉니다.
-                
                 df_hist = pd.DataFrame()
                 df_hist["발주시간"] = temp_df[0]
                 df_hist["상품명"] = temp_df[1]
                 df_hist["옵션"] = temp_df[2]
-                
-                # --- 여기가 핵심 교정 포인트입니다 ---
-                df_hist["업체명"] = temp_df[9]      # 시트의 10번째 칸에서 업체명을 가져옴
-                df_hist["공급처상품명"] = temp_df[3] # 시트의 4번째 칸에서 공급처상품명을 가져옴
-                # ----------------------------------
-                
+                # 🚨 위치 정정: 업체명은 9번 인덱스, 공급처상품명은 3번 인덱스
+                df_hist["업체명"] = temp_df[9]      
+                df_hist["공급처상품명"] = temp_df[3] 
                 df_hist["가용"] = temp_df[4]
                 df_hist["기존"] = temp_df[5]
                 df_hist["추가"] = temp_df[6]
                 df_hist["권장"] = temp_df[7]
                 df_hist["이슈/메모"] = temp_df[8]
 
-                # 날짜 필터링
                 df_hist["날짜_만"] = df_hist["발주시간"].astype(str).str.slice(0, 10)
                 if isinstance(d_range, tuple) and len(d_range) == 2:
                     s_date, e_date = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
@@ -675,47 +616,31 @@ if st.session_state.get('analyzed'):
 
                 df_hist["추가"] = pd.to_numeric(df_hist["추가"], errors='coerce').fillna(0)
                 df_hist = df_hist[df_hist["추가"] > 0].sort_values(by="발주시간", ascending=False)
-
                 if h_q:
                     df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False)]
 
                 if not df_hist.empty:
-                    # 표에 보여줄 순서 (업체명 -> 상품명 -> 옵션 -> 공급처상품명)
-                    display_order = [
-                        "발주시간", "업체명", "상품명", "옵션", "공급처상품명", 
-                        "가용", "기존", "추가", "권장", "이슈/메모"
-                    ]
-                    df_view = df_hist[display_order].copy()
-                    df_view["이슈/메모"] = df_view["이슈/메모"].astype(str).replace('', '-')
-
-                    st.success(f"✅ 총 **{len(df_view)}**건의 내역이 조회되었습니다.")
+                    display_order = ["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모"]
                     st.dataframe(
-                        df_view, 
+                        df_hist[display_order], 
                         use_container_width=True, 
                         hide_index=True,
-                       # --- [수정된 셀 너비 설정] ---
-                    column_config={
-                        "상태": st.column_config.TextColumn("상태", width=70),
-                        "상품명": st.column_config.TextColumn("상품명", width=280),
-                        "옵션": st.column_config.TextColumn("옵션", width=150),
-                        "공급처상품명": st.column_config.TextColumn("공급처상품명", width=180),
-    
-                            # 💡 숫자 셀: 40~50에서 80으로 키워 가독성 확보
-                        "가용": st.column_config.NumberColumn("가용", width=80),
-                        "기존": st.column_config.NumberColumn("기존", width=80),
-                        "추가": st.column_config.NumberColumn("추가", width=80, min_value=0),
-                        "권장": st.column_config.NumberColumn("권장", width=80),
-    
-                    # 메모 칸은 여전히 넉넉하게 유지 (400~500)
-                        "📝 이슈/입고메모": st.column_config.TextColumn(width=450), 
-                        "이슈/메모": st.column_config.TextColumn(width=450) # 6단계용
+                        column_config={
+                            "발주시간": st.column_config.TextColumn("📅 발주시간", width=160),
+                            "업체명": st.column_config.TextColumn("🏭 업체명", width=120),
+                            "상품명": st.column_config.TextColumn("📦 상품명", width=250),
+                            "공급처상품명": st.column_config.TextColumn("🆔 공급처 상품명", width=180),
+                            "가용": st.column_config.TextColumn("가용", width=80),
+                            "기존": st.column_config.TextColumn("기존", width=80),
+                            "추가": st.column_config.TextColumn("추가", width=80),
+                            "권장": st.column_config.TextColumn("권장", width=80),
+                            "이슈/메모": st.column_config.TextColumn("📝 이슈/메모", width=450)
                         }
                     )
                 else:
                     st.warning("🧐 기록이 없습니다.")
         except Exception as e:
             st.error(f"📡 오류: {e}")
-
 
 
 
