@@ -125,7 +125,38 @@ def get_incoming_history():
         return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
 
 
-
+# [추가 함수] 구글 시트1에서 기존 '리오더 수량' 컬럼만 가져오기
+def sync_reorder_from_sheet(df_uploaded):
+    try:
+        # 1. 시트1 열기
+        sh = get_sheet()
+        ws = sh.worksheet("시트1")
+        all_data = ws.get_all_records()
+        
+        if all_data:
+            df_sheet = pd.DataFrame(all_data)
+            
+            # 2. 필수 컬럼 확인 (상품명, 옵션, 리오더 수량)
+            if "상품명" in df_sheet.columns and "옵션" in df_sheet.columns and "리오더 수량" in df_sheet.columns:
+                # 시트에서 필요한 것만 추출하여 정리
+                df_ref = df_sheet[['상품명', '옵션', '리오더 수량']].copy()
+                df_ref['상품명'] = df_ref['상품명'].astype(str).str.strip()
+                df_ref['옵션'] = df_ref['옵션'].astype(str).str.strip()
+                df_ref['리오더 수량'] = pd.to_numeric(df_ref['리오더 수량'], errors='coerce').fillna(0).astype(int)
+                
+                # 3. 현재 업로드된 데이터(df_uploaded)와 병합
+                # 엑셀의 기존 '리오더 수량'은 무시하고 시트의 최신값을 가져옵니다.
+                if "리오더 수량" in df_uploaded.columns:
+                    df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
+                
+                df_final = pd.merge(df_uploaded, df_ref, on=['상품명', '옵션'], how='left')
+                df_final['리오더 수량'] = df_final['리오더 수량'].fillna(0).astype(int)
+                
+                return df_final
+        return df_uploaded
+    except Exception as e:
+        st.error(f"⚠️ 시트에서 리오더 수량을 동기화하는 중 오류: {e}")
+        return df_uploaded
 
 
 # --- 시트 연결 테스트 모드 (필요할 때만 아래 줄들의 #을 지워서 사용하세요) ---
