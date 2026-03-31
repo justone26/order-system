@@ -589,13 +589,13 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ------------------------------------------------------------------
-# [6단계: 전체 히스토리 관리] - 첫 번째 셀 '발주시간' 복구 완료
+# [6단계: 전체 히스토리 관리] - 회차별 선택 + '일자별 전체 합계' 추가
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📜 6단계: 전체 히스토리 관리")
 
-    # [1] 상단 컨트롤러 레이아웃 (항상 노출)
+    # [1] 상단 컨트롤러 (항상 노출)
     f1, f2, f3, f4 = st.columns([1.2, 0.8, 1.5, 1.5])
     
     with f1:
@@ -617,7 +617,7 @@ if st.session_state.get('analyzed'):
                 all_h = worksheet.get_all_values()
                 if len(all_h) > 1:
                     df_all = pd.DataFrame(all_h[1:])
-                    # 🚨 매핑 고정: 9번 업체명, 3번 공급처상품명
+                    # 매핑 고정: 9번 업체명, 3번 공급처상품명
                     df_all.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모", "업체명"]
                     
                     df_all["날짜_만"] = df_all["발주시간"].astype(str).str.slice(0, 10)
@@ -639,24 +639,43 @@ if st.session_state.get('analyzed'):
     
     with f4:
         if st.session_state.v6_sessions:
-            session_options = [f"{len(st.session_state.v6_sessions)-i}회차 ({t[11:16]} 저장)" for i, t in enumerate(st.session_state.v6_sessions)]
+            # 🚨 "일자별 전체 합계" 옵션을 가장 위에 추가
+            session_options = ["📊 선택 범위 전체 합계"] + [f"{len(st.session_state.v6_sessions)-i}회차 ({t[11:16]} 저장)" for i, t in enumerate(st.session_state.v6_sessions)]
             sel_session_label = st.selectbox("📦 4. 회차 선택", session_options, key="v6_session_select")
-            target_time = st.session_state.v6_sessions[session_options.index(sel_session_label)]
         else:
             st.selectbox("📦 4. 회차 선택", ["조회 결과 없음"], disabled=True, key="v6_session_select_empty")
-            target_time = None
+            sel_session_label = None
 
-    # [2] 결과 출력 (첫 번째 셀 '발주시간' 포함)
-    if st.session_state.v6_data is not None and target_time:
-        df_display = st.session_state.v6_data[st.session_state.v6_data["발주시간"] == target_time].copy()
+    # [2] 결과 출력 영역
+    if st.session_state.v6_data is not None and sel_session_label:
+        df_raw_hist = st.session_state.v6_data.copy()
         
+        # 필터링 로직
+        if sel_session_label == "📊 선택 범위 전체 합계":
+            # 날짜 범위 내 모든 데이터 합산 (상품명, 옵션, 업체명 기준)
+            df_display = df_raw_hist.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
+                "발주시간": "max",
+                "가용": "last",
+                "기존": "last",
+                "추가": lambda x: pd.to_numeric(x, errors='coerce').sum(),
+                "권장": "last",
+                "이슈/메모": lambda x: " / ".join(set(filter(None, x)))
+            })
+            display_title = f"🗓️ {d_range[0]} ~ {d_range[1]} 전체 발주 합계"
+        else:
+            # 특정 회차만 필터링
+            target_time = st.session_state.v6_sessions[session_options.index(sel_session_label)-1]
+            df_display = df_raw_hist[df_raw_hist["발주시간"] == target_time].copy()
+            display_title = f"✅ {sel_session_label} 상세 내역"
+
+        # 상품명 검색 필터 적용
         if h_q:
             df_display = df_display[df_display["상품명"].astype(str).str.contains(h_q, case=False)]
 
         if not df_display.empty:
-            st.write(f"#### ✅ {sel_session_label} 상세 내역")
+            st.write(f"#### {display_title}")
             
-            # 🚨 표시 순서 복구: 발주시간을 가장 앞으로!
+            # 표시 순서 고정
             display_order = ["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모"]
             
             st.dataframe(
@@ -664,7 +683,7 @@ if st.session_state.get('analyzed'):
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "발주시간": st.column_config.TextColumn("📅 발주시간", width=160), # 시간 컬럼 복구
+                    "발주시간": st.column_config.TextColumn("📅 마지막저장", width=160),
                     "업체명": st.column_config.TextColumn("🏭 업체명", width=120),
                     "상품명": st.column_config.TextColumn("📦 상품명", width=250),
                     "옵션": st.column_config.TextColumn("옵션", width=150),
@@ -677,8 +696,9 @@ if st.session_state.get('analyzed'):
                 }
             )
             
+            # 다운로드 버튼
             csv_data = df_display[display_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button(f"📥 {sel_session_label} CSV 다운로드", csv_data, f"발주_{target_time[:10]}_{sel_session_label}.csv", use_container_width=True)
+            st.download_button(f"📥 {sel_session_label} CSV 다운로드", csv_data, f"발주합계_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
 
 
 
