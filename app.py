@@ -705,89 +705,101 @@ if st.session_state.get('analyzed'):
 
 
 # ------------------------------------------------------------------
-# [7단계: 최종 집계 및 요약] - 순서: 날짜 > 업체명 > 상품명 > 옵션 > 거래처상품명
+# [7단계: 실시간 리오더 누적 상황판 및 최종 집계]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
-    st.subheader("📊 7단계: 일자별/업체별 최종 집계")
+    st.subheader("🚀 7단계: 실시간 리오더 누적 및 상황판")
 
-    # [1] 상단 컨트롤러 (날짜 범위 및 조회)
-    f1, f2, f3 = st.columns([1.5, 1, 2])
-    with f1:
-        today = datetime.now(KST).date()
-        d_range_v7 = st.date_input("🗓️ 집계 날짜 범위", value=(today, today), key="v7_date_range")
-    with f2:
-        st.write(""); st.write("") 
-        btn_v7 = st.button("📈 집계 데이터 불러오기", use_container_width=True, type="primary")
-    with f3:
-        q_v7 = st.text_input("🔍 결과 내 검색 (업체/상품)", placeholder="업체명 또는 상품명 입력...", key="v7_search_q")
-
-    # [2] 데이터 처리 로직
-    if btn_v7 or q_v7:
-        try:
-            worksheet = get_sheet().worksheet("발주기록")
-            all_h = worksheet.get_all_values()
+    # [1] 실시간 데이터 로드 (발주기록 시트 전체)
+    try:
+        ws_v7 = get_sheet().worksheet("발주기록")
+        all_v7 = ws_v7.get_all_values()
+        
+        if len(all_v7) > 1:
+            df_raw_v7 = pd.DataFrame(all_v7[1:])
+            # 🚨 위치 고정: 0:시간, 1:상품명, 2:옵션, 3:거래처상품명, 6:추가수량, 9:업체명
+            df_raw_v7.columns = ["발주시간", "상품명", "옵션", "거래처상품명", "가용", "기존", "추가", "권장", "이슈/메모", "업체명"]
             
-            if len(all_h) > 1:
-                df_raw = pd.DataFrame(all_h[1:])
-                # 🚨 데이터 위치 고정 (0:날짜, 1:상품명, 2:옵션, 3:거래처상품명, 9:업체명 등)
-                df_raw.columns = ["발주시간", "상품명", "옵션", "거래처상품명", "가용", "기존", "추가", "권장", "이슈/메모", "업체명"]
-                
-                # 날짜 필터링
-                df_raw["날짜"] = df_raw["발주시간"].astype(str).str.slice(0, 10)
-                if isinstance(d_range_v7, tuple) and len(d_range_v7) == 2:
-                    s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
-                    df_raw = df_raw[(df_raw["날짜"] >= s_d) & (df_raw["날짜"] <= e_d)]
-                
-                # 검색 필터 (업체명 또는 상품명)
-                if q_v7:
-                    df_raw = df_raw[
-                        df_raw["업체명"].astype(str).str.contains(q_v7, case=False) | 
-                        df_raw["상품명"].astype(str).str.contains(q_v7, case=False)
-                    ]
+            # 숫자 변환 및 날짜 추출
+            df_raw_v7["추가"] = pd.to_numeric(df_raw_v7["추가"], errors='coerce').fillna(0)
+            df_raw_v7["날짜"] = df_raw_v7["발주시간"].astype(str).str.slice(0, 10)
+            
+            # 오늘 날짜 기준 데이터 필터링 (상황판용)
+            today_str = datetime.now(KST).strftime('%Y-%m-%d')
+            df_today = df_raw_v7[df_raw_v7["날짜"] == today_str]
 
-                if not df_raw.empty:
-                    # [핵심] 사장님 요청 순서대로 그룹화 및 합산
-                    # 날짜 -> 업체명 -> 상품명 -> 옵션 -> 거래처상품명 순
-                    df_v7 = df_raw.groupby(["날짜", "업체명", "상품명", "옵션", "거래처상품명"], as_index=False).agg({
-                        "추가": lambda x: pd.to_numeric(x, errors='coerce').sum(), # 수량 합산
-                        "이슈/메모": lambda x: " / ".join(set(filter(None, x)))      # 메모 통합
-                    })
-                    
-                    # 수량이 0보다 큰 것만 노출 및 최신순 정렬
-                    df_v7 = df_v7[df_v7["추가"] > 0].sort_values(by=["날짜", "업체명"], ascending=[False, True])
+            # ------------------------------------------------------
+            # [상단 상황판 보드] - 오늘 기준 실시간 요약
+            # ------------------------------------------------------
+            total_qty = int(df_today["추가"].sum())
+            total_items = df_today["상품명"].nunique()
+            total_vendors = df_today["업체명"].nunique()
 
-                    st.write(f"### 📋 총 {len(df_v7)}건의 집계 결과")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("📅 기준 날짜", today_str)
+            c2.metric("📦 총 발주 상품수", f"{total_items}종")
+            c3.metric("🏭 발주 업체수", f"{total_vendors}곳")
+            c4.metric("🔢 총 리오더 누적수량", f"{total_qty}개", delta=f"+{total_qty}" if total_qty > 0 else None)
+            st.divider()
 
-                    # [3] 출력 테이블 (컬럼 순서 및 너비 최적화)
-                    display_order = ["날짜", "업체명", "상품명", "옵션", "거래처상품명", "추가", "이슈/메모"]
-                    
-                    st.dataframe(
-                        df_v7[display_order],
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "날짜": st.column_config.TextColumn("📅 날짜", width=110),
-                            "업체명": st.column_config.TextColumn("🏭 업체명", width=130),
-                            "상품명": st.column_config.TextColumn("📦 상품명", width=250),
-                            "옵션": st.column_config.TextColumn("옵션", width=150),
-                            "거래처상품명": st.column_config.TextColumn("🆔 거래처상품명", width=180),
-                            "추가": st.column_config.NumberColumn("🔢 총수량", width=80),
-                            "이슈/메모": st.column_config.TextColumn("📝 통합메모", width=400)
-                        }
-                    )
-                    
-                    # 엑셀 다운로드
-                    csv_data = df_v7[display_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button(
-                        label="📥 집계 결과 CSV 다운로드", 
-                        data=csv_data, 
-                        file_name=f"최종집계_{datetime.now().strftime('%m%d')}.csv",
-                        use_container_width=True
-                    )
-                else:
-                    st.warning("🧐 해당 조건에 맞는 데이터가 없습니다.")
+            # [2] 검색 및 필터 레이아웃
+            f1, f2, f3 = st.columns([1.5, 1, 2])
+            with f1:
+                d_range_v7 = st.date_input("🗓️ 집계 기간 선택", value=(today, today), key="v7_range")
+            with f2:
+                st.write(""); st.write("")
+                btn_v7 = st.button("📈 실시간 데이터 갱신", use_container_width=True, type="primary")
+            with f3:
+                q_v7 = st.text_input("🔍 업체명 또는 상품명 검색", placeholder="검색어 입력...", key="v6_final_q")
+
+            # [3] 데이터 집계 로직 (날짜/업체/상품/옵션/거래처상품명 순)
+            # 날짜 필터 적용
+            if isinstance(d_range_v7, tuple) and len(d_range_v7) == 2:
+                s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
+                df_filtered = df_raw_v7[(df_raw_v7["날짜"] >= s_d) & (df_raw_v7["날짜"] <= e_d)]
             else:
-                st.info("💡 저장된 발주 기록이 없습니다.")
-        except Exception as e:
-            st.error(f"📡 집계 중 오류 발생: {e}")
+                df_filtered = df_today
+
+            if q_v7:
+                df_filtered = df_filtered[
+                    df_filtered["업체명"].astype(str).str.contains(q_v7, case=False) |
+                    df_filtered["상품명"].astype(str).str.contains(q_v7, case=False)
+                ]
+
+            # 그룹화 합산 (수량 누적)
+            df_final = df_filtered.groupby(["날짜", "업체명", "상품명", "옵션", "거래처상품명"], as_index=False).agg({
+                "추가": "sum",
+                "이슈/메모": lambda x: " / ".join(set(filter(None, x)))
+            })
+
+            # 수량이 있는 것만 노출
+            df_final = df_final[df_final["추가"] > 0].sort_values(by=["날짜", "업체명"], ascending=[False, True])
+
+            # [4] 최종 테이블 출력 (사장님 요청 순서)
+            display_order = ["날짜", "업체명", "상품명", "옵션", "거래처상품명", "추가", "이슈/메모"]
+            
+            st.dataframe(
+                df_final[display_order],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "날짜": st.column_config.TextColumn("📅 날짜", width=110),
+                    "업체명": st.column_config.TextColumn("🏭 업체명", width=120),
+                    "상품명": st.column_config.TextColumn("📦 상품명", width=250),
+                    "옵션": st.column_config.TextColumn("옵션", width=150),
+                    "거래처상품명": st.column_config.TextColumn("🆔 거래처상품명", width=180),
+                    "추가": st.column_config.NumberColumn("🔢 누적수량", width=80),
+                    "이슈/메모": st.column_config.TextColumn("📝 통합메모", width=400)
+                }
+            )
+
+            # 다운로드 버튼
+            csv_v7 = df_final[display_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 실시간 누적 집계표(CSV) 다운로드", csv_v7, f"최종집계_{today_str}.csv", use_container_width=True)
+
+        else:
+            st.info("💡 아직 저장된 발주 데이터가 없어 상황판을 구성할 수 없습니다.")
+            
+    except Exception as e:
+        st.error(f"📡 실시간 데이터를 가져오는 중 오류 발생: {e}")
