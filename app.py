@@ -769,7 +769,7 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 실시간 리오더 현황판 (사장님 요청 순서 적용)] ---
+# --- [7단계: 실시간 리오더 현황판 (데이터 매핑 수정 완료)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
@@ -812,7 +812,7 @@ if st.session_state.get('analyzed'):
                     except:
                         return pd.DataFrame(columns=expected_cols)
 
-                # 구글 시트 저장 순서 기준
+                # 시트 저장 순서: 날짜시간(0), 상품명(1), 옵션(2), 공급쳐(3), 가용재고(4), 기존리오더(5), 추가발주(6), 권장발주(7), 비고(8)
                 order_cols = ["날짜시간", "상품명", "옵션", "공급쳐", "가용재고", "기존리오더", "추가발주수량", "권장발주수량", "비고"]
                 in_cols = ["날짜", "상품명", "옵션", "입고수량"]
                 
@@ -836,7 +836,7 @@ if st.session_state.get('analyzed'):
                     # [4] 그룹화 및 병합
                     total_ord = df_ord.groupby(['공급쳐', '상품명', '옵션']).agg({
                         '전체발주량': 'sum',
-                        '비고': 'last' # 이슈메모용
+                        '비고': 'last' 
                     }).reset_index()
                     
                     total_in = df_in.groupby(['상품명', '옵션'])['입고수량'].sum().reset_index()
@@ -844,20 +844,22 @@ if st.session_state.get('analyzed'):
                     final_df['미입고 잔량'] = final_df['전체발주량'] - final_df['입고수량']
                     final_df = final_df[final_df['미입고 잔량'] > 0].copy()
 
-                    # 검색 필터
+                    # 검색 필터 (공급쳐 또는 상품명)
                     if h7_search:
                         mask = (final_df['공급쳐'].str.contains(h7_search, case=False) | 
                                 final_df['상품명'].str.contains(h7_search, case=False))
                         final_df = final_df[mask]
 
-                    # [5] 화면 출력 (사장님 요청 순서로 재배치)
+                    # [5] 화면 출력 (요청하신 데이터 위치 및 순서 재배치)
                     if not final_df.empty:
-                        # 공급쳐 => 상품명 => 옵션 => 공급쳐상품명(비고 활용) => 발주 => 입고 => 잔량 => 이슈메모(비고 활용)
-                        # 여기서는 비고 데이터를 '공급쳐상품명'과 '이슈메모' 양쪽에 동일하게 배치했습니다.
                         view_df = final_df.copy()
-                        view_df['공급쳐상품명'] = view_df['비고'] # 비고 내용을 공급쳐상품명으로도 사용
                         
-                        # 요청하신 컬럼 순서 정렬
+                        # ⭐ 핵심 수정: '공급쳐'에 있던 데이터를 '공급쳐상품명'으로 옮기고, 
+                        # '비고'에 적힌 메모는 그대로 '비고'에 둡니다.
+                        view_df['공급쳐상품명'] = view_df['공급쳐'] 
+                        view_df['비고'] = view_df['비고'].astype(str).replace('', '-')
+                        
+                        # 사장님 요청 순서: 공급쳐 => 상품명 => 옵션 => 공급쳐상품명 => 발주 => 입고 => 잔량 => 이슈메모
                         view_df = view_df[['공급쳐', '상품명', '옵션', '공급쳐상품명', '전체발주량', '입고수량', '미입고 잔량', '비고']]
 
                         m1, m2, m3 = st.columns(3)
