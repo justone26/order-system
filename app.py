@@ -8,10 +8,13 @@ import time
 
 import io
 
-import pytz  # 시간대 설정을 위한 라이브러리
+from datetime import datetime, timedelta, timezone
 
 import streamlit.components.v1 as components # <-- 1. 이 라이브러리가 꼭 필요합니다!
 
+# 한국 시간(KST)을 pytz 없이 설정하는 법
+KST = timezone(timedelta(hours=9)) 
+current_today = datetime.now(KST).date()
 
 # --- [세션 상태 초기화] ---
 
