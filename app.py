@@ -61,13 +61,6 @@ components.html(
 
 
 
-# 1. [환경 설정 - 한국 시간대 및 페이지 설정]
-
-KST = pytz.timezone('Asia/Seoul') # 한국 시간대 정의
-
-now = datetime.now(KST)          # 현재 한국 시간 가져오기
-
-
 
 st.set_page_config(layout="wide", page_title="저스트원 재고관리 v4.0")
 
