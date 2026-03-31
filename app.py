@@ -618,7 +618,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ==========================================================
-# --- [6단계: 전체 히스토리 관리 (5단계 저장 규격 완벽 대응)] ---
+# --- [6단계: 전체 히스토리 관리 (데이터 매핑 완전 교정본)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
@@ -629,7 +629,6 @@ if st.session_state.get('analyzed'):
     
     with f1:
         today = datetime.now(KST).date()
-        # 기본 조회 범위를 오늘로 설정
         d_range = st.date_input("🗓️ 조회 날짜 범위", value=(today, today), key="v6_date_range")
     
     with f2:
@@ -647,40 +646,36 @@ if st.session_state.get('analyzed'):
                 all_values = worksheet.get_all_values()
             
             if len(all_values) > 1:
-                # 🚨 [데이터 매핑] 5단계 저장 순서와 1:1 강제 매칭
-                # 0:날짜시간, 1:상품명, 2:옵션, 3:업체명, 4:가용, 5:기존, 6:추가, 7:권장, 8:비고, 9:공급처상품명
+                # 🚨 [매핑 교정] 시트의 열 번호(0부터 시작)를 기준으로 정확히 할당
                 temp_df = pd.DataFrame(all_values[1:])
                 
                 df_hist = pd.DataFrame()
                 df_hist["발주시간"] = temp_df[0]
                 df_hist["상품명"] = temp_df[1]
                 df_hist["옵션"] = temp_df[2]
-                df_hist["업체명"] = temp_df[3]      # 시트 4번째 열 = 업체명 (아거스어패럴 등)
+                df_hist["업체명"] = temp_df[3]      # 시트 4번째 열 = 업체명 (예: 0.아거스어패럴)
                 df_hist["가용"] = temp_df[4]
                 df_hist["기존"] = temp_df[5]
                 df_hist["추가"] = temp_df[6]
                 df_hist["권장"] = temp_df[7]
                 df_hist["이슈/메모"] = temp_df[8]
-                df_hist["공급처상품명"] = temp_df[9] # 시트 10번째 열 = 공급처상품명 (t-레이스... 등)
+                df_hist["공급처상품명"] = temp_df[9] # 시트 10번째 열 = 공급처상품명 (예: t-레이스...)
 
                 # --- [데이터 필터링] ---
-                # 날짜 필터 (날짜시간 문자열에서 앞 10자리 추출하여 비교)
                 df_hist["날짜_만"] = df_hist["발주시간"].astype(str).str.slice(0, 10)
                 if isinstance(d_range, tuple) and len(d_range) == 2:
                     s_date, e_date = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
                     df_hist = df_hist[(df_hist["날짜_만"] >= s_date) & (df_hist["날짜_만"] <= e_date)]
 
-                # 추가발주수량(추가)이 있는 것만 표시 및 최신순 정렬
+                # 추가발주가 있는 것만 + 최신순 정렬
                 df_hist["추가"] = pd.to_numeric(df_hist["추가"], errors='coerce').fillna(0)
                 df_hist = df_hist[df_hist["추가"] > 0].sort_values(by="발주시간", ascending=False)
 
-                # 상품명 검색어 필터
                 if h_q:
                     df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False)]
 
                 if not df_hist.empty:
-                    # 🚨 [사장님 요청 표시 순서]
-                    # 발주시간 => 업체명 => 상품명 => 옵션 => 공급처 상품명 => 가용 => 기존 => 추가 => 권장 => 이슈/메모
+                    # 🚨 [사장님 요청 순서] 발주시간 => 업체명 => 상품명 => 옵션 => 공급처 상품명 ...
                     display_order = [
                         "발주시간", "업체명", "상품명", "옵션", "공급처상품명", 
                         "가용", "기존", "추가", "권장", "이슈/메모"
@@ -688,40 +683,35 @@ if st.session_state.get('analyzed'):
                     df_view = df_hist[display_order].copy()
                     df_view["이슈/메모"] = df_view["이슈/메모"].astype(str).replace('', '-')
 
-                    st.success(f"✅ 총 **{len(df_view)}**건의 발주 히스토리가 조회되었습니다.")
+                    st.success(f"✅ 총 **{len(df_view)}**건의 내역이 조회되었습니다.")
                     
-                    # [출력] 5단계와 동일하게 숫자 셀은 줄이고 메모는 넓게!
+                    # [UI 출력] 숫자 셀은 줄이고 메모 칸은 넓게!
                     st.dataframe(
                         df_view, 
                         use_container_width=True, 
                         hide_index=True,
                         column_config={
                             "발주시간": st.column_config.TextColumn("📅 발주시간", width=160),
-                            "업체명": st.column_config.TextColumn("🏭 업체명", width=100),
+                            "업체명": st.column_config.TextColumn("🏭 업체명", width=120),
                             "상품명": st.column_config.TextColumn("📦 상품명", width=220),
-                            "공급처상품명": st.column_config.TextColumn("🆔 공급처 상품명", width=150),
-                            # 숫자 셀 다이어트
+                            "공급처상품명": st.column_config.TextColumn("🆔 공급처 상품명", width=180),
                             "가용": st.column_config.TextColumn("가용", width=40),
                             "기존": st.column_config.TextColumn("기존", width=40),
                             "추가": st.column_config.TextColumn("추가", width=40),
                             "권장": st.column_config.TextColumn("권장", width=40),
-                            # 메모 공간 최대 확보
-                            "이슈/메모": st.column_config.TextColumn("📝 이슈/메모", width=400),
+                            "이슈/메모": st.column_config.TextColumn("📝 이슈/메모", width=450), # 메모 공간 확보
                         }
                     )
                     
-                    # CSV 다운로드 기능
                     csv_data = df_view.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button("📥 조회 결과 CSV 다운로드", csv_data, f"발주히스토리_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+                    st.download_button("📥 조회 결과 CSV 다운로드", csv_data, f"발주히스토리.csv", use_container_width=True)
                 else:
-                    st.warning("🧐 선택하신 조건에 맞는 발주 기록이 없습니다.")
+                    st.warning("🧐 해당 조건의 발주 기록이 없습니다.")
             else:
-                st.info("💡 아직 저장된 발주 내역이 없습니다. 5단계에서 먼저 저장을 진행해주세요.")
+                st.info("💡 저장된 발주 내역이 없습니다.")
                 
         except Exception as e:
-            st.error(f"📡 데이터 로딩 오류 (시트 연결 확인 필요): {e}")
-
-
+            st.error(f"📡 데이터 로딩 오류: {e}")
 
 
 # ==========================================================
