@@ -570,7 +570,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             
 
 # ==========================================================
-# --- [6단계: 전체 히스토리 관리 (열 순서 및 매핑 완전 수정)] ---
+# --- [6단계: 전체 히스토리 관리 (데이터 매핑 및 순서 완전 교정)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
@@ -591,7 +591,6 @@ if st.session_state.get('analyzed'):
         h_q = st.text_input("🔍 결과 내 상품명 검색", placeholder="상품명을 입력하세요...", key="v6_search_final")
         
     with f4:
-        # 회차 선택은 향후 확장성을 위해 유지 (현재는 전체보기 위주)
         selected_batch = st.selectbox("📥 저장 회차 선택", ["전체보기"], key="v6_batch_select")
 
     if search_trigger or h_q:
@@ -602,21 +601,25 @@ if st.session_state.get('analyzed'):
                 all_values = worksheet.get_all_values()
             
             if len(all_values) > 1:
-                # 🚨 [수정] 사장님이 요청하신 10개 열 순서 정의 (시트 저장 순서와 동일해야 함)
-                # 시트 저장 순서: 0:날짜, 1:상품명, 2:옵션, 3:공급처(업체명), 4:가용, 5:기존리오더, 6:추가발주, 7:권장발주, 8:비고, 9:공급처상품명
-                raw_cols = ["날짜시간", "상품명", "옵션", "업체명", "가용재고", "기존리오더", "추가발주수량", "권장발주수량", "이슈/메모", "공급처상품명"]
+                # 🚨 [교정 핵심] 시트에 저장된 실제 10개 열 순서 (5단계 저장 로직 기준)
+                # 0:날짜, 1:상품명, 2:옵션, 3:업체명, 4:가용, 5:기존리오더, 6:추가발주, 7:권장발주, 8:비고, 9:공급처상품명
+                actual_sheet_cols = [
+                    "날짜시간", "상품명", "옵션", "업체명", "가용재고", 
+                    "기존리오더", "추가발주수량", "권장발주수량", "이슈/메모", "공급처상품명"
+                ]
                 
-                df_hist = pd.DataFrame(all_values[1:], columns=raw_cols)
+                # 데이터 로드 (헤더 제외하고 실제 시트 순서대로 컬럼명 부여)
+                df_hist = pd.DataFrame(all_values[1:], columns=actual_sheet_cols)
 
-                # --- [데이터 필터링 및 가공] ---
+                # --- [데이터 필터링] ---
                 df_hist["날짜_만"] = df_hist["날짜시간"].astype(str).str.slice(0, 10)
                 if len(d_range) == 2:
                     s_date, e_date = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
                     df_hist = df_hist[(df_hist["날짜_만"] >= s_date) & (df_hist["날짜_만"] <= e_date)]
 
-                # 추가발주수량 숫자 변환 (필터링용)
+                # 추가발주수량 숫자 변환 및 필터링
                 df_hist["추가발주수량"] = pd.to_numeric(df_hist["추가발주수량"], errors='coerce').fillna(0)
-                df_hist = df_hist[df_hist["추가발주수량"] > 0] # 발주 기록이 있는 것만 표시
+                df_hist = df_hist[df_hist["추가발주수량"] > 0] 
 
                 # 최신순 정렬
                 df_hist = df_hist.sort_values(by="날짜시간", ascending=False)
@@ -625,7 +628,7 @@ if st.session_state.get('analyzed'):
                     df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False)]
 
                 if not df_hist.empty:
-                    # 🚨 [핵심] 사장님이 요청하신 출력 순서로 재배치
+                    # 🚨 [사장님 요청 순서] 화면에 보여줄 열 순서 재배치
                     # 발주시간 => 업체명 => 상품명 => 옵션 => 공급처 상품명 => 가용재고 => 기존 리오더 => 추가발주수량 => 권장발주수량 => 이슈/메모
                     display_order = [
                         "날짜시간", "업체명", "상품명", "옵션", "공급처상품명", 
@@ -661,8 +664,6 @@ if st.session_state.get('analyzed'):
                 
         except Exception as e:
             st.error(f"📡 데이터 로딩 오류: {e}")
-
-
 
 
 # ==========================================================
