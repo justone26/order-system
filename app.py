@@ -671,76 +671,71 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 발주 현황 조회 (데이터 매핑 및 빈칸 수정본)] ---
+# --- [7단계: 발주 현황 조회 (A~J열 최적화 버전)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📊 7단계: 전체 누적 발주 현황")
 
     try:
-        # 1. 발주기록 시트 가져오기
         sh_log = get_sheet().worksheet("발주기록")
-        log_data = sh_log.get_all_records()
+        # 제목 중복 에러 방지를 위해 값을 리스트로 가져옵니다.
+        raw_data = sh_log.get_all_values()
         
-        if log_data:
-            df_log = pd.DataFrame(log_data)
+        if len(raw_data) > 1:
+            # 첫 번째 줄(제목) 제외하고 데이터프레임 생성
+            df_log = pd.DataFrame(raw_data[1:], columns=None)
             
-            # [2. 데이터 컬럼명 확인 및 강제 매핑]
-            # 사장님 시트 열 순서에 맞춰 이름을 다시 잡아줍니다.
-            # (시트의 열 제목이 다르더라도 순서대로 매칭)
-            actual_cols = df_log.columns.tolist()
-            
-            # 캡처 화면 기준으로 데이터 재구성
-            # 시트의 10번째 열이 '공급처상품명'이라고 가정할 때의 처리입니다.
+            # [사장님이 수정한 시트 순서에 맞춰서 매핑]
+            # A:0(날짜), B:1(상품명), C:2(옵션), D:3(공급처상품명), E:4(가용재고)
+            # F:5(기존리오더), G:6(추가발주), H:7(권장발주), I:8(메모), J:9(업체명)
             display_df = pd.DataFrame({
-                "날짜": df_log.iloc[:, 0],          # 1열
-                "상품명": df_log.iloc[:, 1],        # 2열
-                "옵션": df_log.iloc[:, 2],          # 3열
-                "공급쳐(업체명)": df_log.iloc[:, 3],  # 4열 (여기에 업체명이 나와야 함)
-                "가용": df_log.iloc[:, 4],          # 5열
-                "기존리오더": df_log.iloc[:, 5],    # 6열
-                "추가발주": df_log.iloc[:, 6],      # 7열
-                "권장발주": df_log.iloc[:, 7],      # 8열
-                "이슈메모": df_log.iloc[:, 8],      # 9열
-                "공급처상품명(긴이름)": df_log.iloc[:, 9] # 10열 (비어있던 칸 채우기)
+                "날짜": df_log.iloc[:, 0],
+                "상품명": df_log.iloc[:, 1],
+                "옵션": df_log.iloc[:, 2],
+                "공급처상품명": df_log.iloc[:, 3],
+                "가용재고": df_log.iloc[:, 4],
+                "기존리오더": df_log.iloc[:, 5],
+                "추가발주": df_log.iloc[:, 6],
+                "권장발주": df_log.iloc[:, 7],
+                "메모": df_log.iloc[:, 8],
+                "업체명": df_log.iloc[:, 9] if df_log.shape[1] > 9 else ""
             })
 
-            # [3. 검색 및 필터]
-            search_7 = st.text_input("🔍 상품명 또는 공급처 검색", key="v7_search")
+            # [UI 구성]
+            search_7 = st.text_input("🔍 상품명 또는 업체명 검색", key="v7_final_search")
             if search_7:
-                display_df = display_df[
-                    display_df['상품명'].astype(str).str.contains(search_7, case=False) | 
-                    display_df['공급쳐(업체명)'].astype(str).str.contains(search_7, case=False) |
-                    display_df['공급처상품명(긴이름)'].astype(str).str.contains(search_7, case=False)
-                ]
+                # 전체 열에서 검색어가 포함된 행만 필터링
+                mask = display_df.apply(lambda row: row.astype(str).str.contains(search_7, case=False).any(), axis=1)
+                display_df = display_df[mask]
 
-            # [4. 화면 출력]
-            st.info(f"💡 총 {len(display_df)}건의 발주 내역이 조회되었습니다.")
-            
+            # [데이터 에디터 출력]
             st.data_editor(
                 display_df,
                 use_container_width=True,
                 hide_index=True,
-                key="v7_editor_view",
+                key="v7_final_editor",
                 column_config={
-                    "공급처상품명(긴이름)": st.column_config.TextColumn(width=250),
-                    "공급쳐(업체명)": st.column_config.TextColumn(width=150),
+                    "날짜": st.column_config.TextColumn(width=150),
                     "상품명": st.column_config.TextColumn(width=200),
-                    "추가발주": st.column_config.NumberColumn(format="%d"),
+                    "공급처상품명": st.column_config.TextColumn("🆔 공급처상품명", width=250),
+                    "업체명": st.column_config.TextColumn("🏠 업체명", width=120),
+                    "추가발주": st.column_config.NumberColumn(format="%d")
                 }
             )
 
-            # [5. 다운로드 버튼]
-            csv_7 = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            # [CSV 다운로드 버튼]
+            csv_data = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button(
-                label="📥 현황 리스트 다운로드 (CSV)",
-                data=csv_7,
+                label="📥 발주 현황 리스트 다운로드 (CSV)",
+                data=csv_data,
                 file_name=f"발주현황_{datetime.now(KST).strftime('%m%d')}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
+            
         else:
-            st.warning("기록된 발주 내역이 없습니다.")
+            st.warning("아직 기록된 발주 내역이 없습니다.")
             
     except Exception as e:
         st.error(f"7단계 데이터를 불러오는 중 오류가 발생했습니다: {e}")
