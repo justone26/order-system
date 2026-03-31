@@ -283,28 +283,29 @@ with tab1:
 
 
 
-    # 데이터 로드 로직
-
+  # 데이터 로드 로직 (이 블록 전체를 교체하세요)
     if up_file:
-
         if st.session_state.get('df_raw') is None:
-
             try:
-
+                # 1. 먼저 업로드한 파일을 읽습니다.
                 df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
-
                 df.columns = df.columns.str.strip()
-
-                if "리오더 수량" not in df.columns: df["리오더 수량"] = 0
-
+                
+                # 2. ⭐ [중요] 여기서 시트의 '리오더 수량'을 가져와 합칩니다!
+                # 아까 정의한 함수를 여기서 호출(사용)해야 데이터가 0이 안 됩니다.
+                with st.spinner("🔄 구글 시트에서 기존 리오더 수량을 동기화 중..."):
+                    df = sync_reorder_from_sheet(df)
+                
+                # 3. '리오더 수량' 컬럼이 없는 경우를 대비한 기본 처리
+                if "리오더 수량" not in df.columns: 
+                    df["리오더 수량"] = 0
+                
                 df = df.fillna("") 
-
                 st.session_state.df_raw = df
-
+                st.success("✅ 파일 업로드 및 시트 데이터 동기화 완료!")
+                
             except Exception as e:
-
                 st.error(f"파일 로드 오류: {e}")
-
 
 
    # --- 2~3단계: 매핑 및 분석 설정 ---
