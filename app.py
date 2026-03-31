@@ -589,13 +589,13 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ------------------------------------------------------------------
-# [6단계: 전체 히스토리 관리] - 검색/회차 상시 노출 및 데이터 매핑 고정
+# [6단계: 전체 히스토리 관리] - 첫 번째 셀 '발주시간' 복구 완료
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📜 6단계: 전체 히스토리 관리")
 
-    # [1] 상단 컨트롤러 레이아웃 (항상 보이는 4개 컬럼)
+    # [1] 상단 컨트롤러 레이아웃 (항상 노출)
     f1, f2, f3, f4 = st.columns([1.2, 0.8, 1.5, 1.5])
     
     with f1:
@@ -606,13 +606,10 @@ if st.session_state.get('analyzed'):
         st.write(""); st.write("") 
         search_trigger = st.button("🔍 2. 내역 조회", use_container_width=True, type="primary")
 
-    # 세션 상태 초기화 (데이터 보관용)
-    if 'v6_data' not in st.session_state:
-        st.session_state.v6_data = None
-    if 'v6_sessions' not in st.session_state:
-        st.session_state.v6_sessions = []
+    if 'v6_data' not in st.session_state: st.session_state.v6_data = None
+    if 'v6_sessions' not in st.session_state: st.session_state.v6_sessions = []
 
-    # [데이터 로드 로직] - 조회 버튼 클릭 시 실행
+    # [데이터 로드]
     if search_trigger:
         try:
             with st.spinner("📡 데이터를 불러오는 중..."):
@@ -620,31 +617,27 @@ if st.session_state.get('analyzed'):
                 all_h = worksheet.get_all_values()
                 if len(all_h) > 1:
                     df_all = pd.DataFrame(all_h[1:])
-                    # 🚨 사장님 시트 규격 강제 매핑: 9번 업체명, 3번 공급처상품명
+                    # 🚨 매핑 고정: 9번 업체명, 3번 공급처상품명
                     df_all.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모", "업체명"]
                     
-                    # 날짜 필터링
                     df_all["날짜_만"] = df_all["발주시간"].astype(str).str.slice(0, 10)
                     if isinstance(d_range, tuple) and len(d_range) == 2:
                         s_d, e_d = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
                         df_all = df_all[(df_all["날짜_만"] >= s_d) & (df_all["날짜_만"] <= e_d)]
                     
                     st.session_state.v6_data = df_all
-                    # 회차 리스트 업데이트 (최신순)
                     st.session_state.v6_sessions = sorted(df_all["발주시간"].unique(), reverse=True)
                 else:
                     st.session_state.v6_data = None
                     st.session_state.v6_sessions = []
-                    st.info("💡 저장된 발주 내역이 없습니다.")
+                    st.info("💡 저장된 내역이 없습니다.")
         except Exception as e:
-            st.error(f"📡 로딩 오류: {e}")
+            st.error(f"📡 오류: {e}")
 
-    # [상시 노출 필터: 검색 및 회차 선택]
     with f3:
         h_q = st.text_input("🔍 3. 상품명 검색", placeholder="상품명 입력...", key="v6_search_q")
     
     with f4:
-        # 데이터가 있으면 회차를 보여주고, 없으면 '내역 없음' 표시
         if st.session_state.v6_sessions:
             session_options = [f"{len(st.session_state.v6_sessions)-i}회차 ({t[11:16]} 저장)" for i, t in enumerate(st.session_state.v6_sessions)]
             sel_session_label = st.selectbox("📦 4. 회차 선택", session_options, key="v6_session_select")
@@ -653,44 +646,43 @@ if st.session_state.get('analyzed'):
             st.selectbox("📦 4. 회차 선택", ["조회 결과 없음"], disabled=True, key="v6_session_select_empty")
             target_time = None
 
-    # [2] 최종 결과 출력 영역
+    # [2] 결과 출력 (첫 번째 셀 '발주시간' 포함)
     if st.session_state.v6_data is not None and target_time:
         df_display = st.session_state.v6_data[st.session_state.v6_data["발주시간"] == target_time].copy()
         
-        # 상품명 검색 필터 적용
         if h_q:
             df_display = df_display[df_display["상품명"].astype(str).str.contains(h_q, case=False)]
 
         if not df_display.empty:
-            st.write(f"#### ✅ {sel_session_label} 상세 내역 (총 {len(df_display)}건)")
+            st.write(f"#### ✅ {sel_session_label} 상세 내역")
             
-            # 업체명 -> 상품명 -> 옵션 순서
-            display_order = ["업체명", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모"]
+            # 🚨 표시 순서 복구: 발주시간을 가장 앞으로!
+            display_order = ["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모"]
             
             st.dataframe(
                 df_display[display_order],
                 use_container_width=True,
                 hide_index=True,
                 column_config={
+                    "발주시간": st.column_config.TextColumn("📅 발주시간", width=160), # 시간 컬럼 복구
                     "업체명": st.column_config.TextColumn("🏭 업체명", width=120),
                     "상품명": st.column_config.TextColumn("📦 상품명", width=250),
                     "옵션": st.column_config.TextColumn("옵션", width=150),
                     "공급처상품명": st.column_config.TextColumn("🆔 공급처 상품명", width=180),
-                    # 숫자 셀 너비 80
                     "가용": st.column_config.TextColumn("가용", width=80),
                     "기존": st.column_config.TextColumn("기존", width=80),
                     "추가": st.column_config.TextColumn("추가", width=80),
                     "권장": st.column_config.TextColumn("권장", width=80),
-                    # 메모 칸 450
                     "이슈/메모": st.column_config.TextColumn("📝 이슈/메모", width=450)
                 }
             )
             
             csv_data = df_display[display_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button(f"📥 {sel_session_label} CSV 다운로드", csv_data, f"발주_{target_time[:10]}_{sel_session_label}.csv", use_container_width=True)
-        else:
-            if h_q:
-                st.warning("🧐 해당 회차에 검색어와 일치하는 상품이 없습니다.")
+
+
+
+
 
 # ==========================================================
 # --- [7단계: 미입고 현황 및 메모 실시간 저장 기능] ---
