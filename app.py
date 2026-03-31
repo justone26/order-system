@@ -704,81 +704,90 @@ if st.session_state.get('analyzed'):
 
 
 
-# ==========================================================
-# --- [7단계: 미입고 현황 및 메모 실시간 저장 기능] ---
-# ==========================================================
+# ------------------------------------------------------------------
+# [7단계: 최종 집계 및 요약] - 순서: 날짜 > 업체명 > 상품명 > 옵션 > 거래처상품명
+# ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
-    st.subheader("📊 7단계: 공장 미입고 총 수량 현황")
+    st.subheader("📊 7단계: 일자별/업체별 최종 집계")
 
-    try:
-        sh_log = get_sheet().worksheet("발주기록")
-        raw_data = sh_log.get_all_values()
-        
-        if len(raw_data) > 1:
-            # 전체 데이터를 가져옵니다 (수정을 위해 index를 포함한 원본 형태 유지)
-            df_log_all = pd.DataFrame(raw_data[1:], columns=raw_data[0])
+    # [1] 상단 컨트롤러 (날짜 범위 및 조회)
+    f1, f2, f3 = st.columns([1.5, 1, 2])
+    with f1:
+        today = datetime.now(KST).date()
+        d_range_v7 = st.date_input("🗓️ 집계 날짜 범위", value=(today, today), key="v7_date_range")
+    with f2:
+        st.write(""); st.write("") 
+        btn_v7 = st.button("📈 집계 데이터 불러오기", use_container_width=True, type="primary")
+    with f3:
+        q_v7 = st.text_input("🔍 결과 내 검색 (업체/상품)", placeholder="업체명 또는 상품명 입력...", key="v7_search_q")
+
+    # [2] 데이터 처리 로직
+    if btn_v7 or q_v7:
+        try:
+            worksheet = get_sheet().worksheet("발주기록")
+            all_h = worksheet.get_all_values()
             
-            # [화면 표시용 가공]
-            # F(기존), G(추가) 수량을 합산하여 '미입고 총수량' 생성
-            v_exist = pd.to_numeric(df_log_all.iloc[:, 5], errors='coerce').fillna(0).astype(int)
-            v_added = pd.to_numeric(df_log_all.iloc[:, 6], errors='coerce').fillna(0).astype(int)
-            df_log_all["미입고 총수량"] = v_exist + v_added
+            if len(all_h) > 1:
+                df_raw = pd.DataFrame(all_h[1:])
+                # 🚨 데이터 위치 고정 (0:날짜, 1:상품명, 2:옵션, 3:거래처상품명, 9:업체명 등)
+                df_raw.columns = ["발주시간", "상품명", "옵션", "거래처상품명", "가용", "기존", "추가", "권장", "이슈/메모", "업체명"]
+                
+                # 날짜 필터링
+                df_raw["날짜"] = df_raw["발주시간"].astype(str).str.slice(0, 10)
+                if isinstance(d_range_v7, tuple) and len(d_range_v7) == 2:
+                    s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
+                    df_raw = df_raw[(df_raw["날짜"] >= s_d) & (df_raw["날짜"] <= e_d)]
+                
+                # 검색 필터 (업체명 또는 상품명)
+                if q_v7:
+                    df_raw = df_raw[
+                        df_raw["업체명"].astype(str).str.contains(q_v7, case=False) | 
+                        df_raw["상품명"].astype(str).str.contains(q_v7, case=False)
+                    ]
 
-            # 필터/검색용 레이아웃
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                v_list = ["전체"] + sorted([v for v in df_log_all.iloc[:, 9].unique() if v])
-                selected_v = st.selectbox("🏠 업체별 필터", v_list, key="v7_save_v")
-            with col2:
-                search_v = st.text_input("🔍 상품명 검색", key="v7_save_s")
+                if not df_raw.empty:
+                    # [핵심] 사장님 요청 순서대로 그룹화 및 합산
+                    # 날짜 -> 업체명 -> 상품명 -> 옵션 -> 거래처상품명 순
+                    df_v7 = df_raw.groupby(["날짜", "업체명", "상품명", "옵션", "거래처상품명"], as_index=False).agg({
+                        "추가": lambda x: pd.to_numeric(x, errors='coerce').sum(), # 수량 합산
+                        "이슈/메모": lambda x: " / ".join(set(filter(None, x)))      # 메모 통합
+                    })
+                    
+                    # 수량이 0보다 큰 것만 노출 및 최신순 정렬
+                    df_v7 = df_v7[df_v7["추가"] > 0].sort_values(by=["날짜", "업체명"], ascending=[False, True])
 
-            # 필터링 적용
-            filtered_df = df_log_all.copy()
-            if selected_v != "전체":
-                filtered_df = filtered_df[filtered_df.iloc[:, 9] == selected_v]
-            if search_v:
-                mask = filtered_df.apply(lambda row: row.astype(str).str.contains(search_v, case=False).any(), axis=1)
-                filtered_df = filtered_df[mask]
+                    st.write(f"### 📋 총 {len(df_v7)}건의 집계 결과")
 
-            # [핵심: 데이터 에디터]
-            # 여기서 수정하면 edited_rows에 변경 내용이 담깁니다.
-            edited_df = st.data_editor(
-                filtered_df,
-                use_container_width=True,
-                hide_index=False, # 수정을 위해 인덱스 잠시 표시
-                key="v7_editor_with_save",
-                column_order=("날짜", "업체명", "상품명", "옵션", "미입고 총수량", "메모"),
-                column_config={
-                    "미입고 총수량": st.column_config.NumberColumn("🔢 미입고 총수량", disabled=True), # 수량은 수정 불가
-                    "메모": st.column_config.TextColumn("📝 입고/이슈 메모 (수정 후 저장 버튼 클릭)", width=500),
-                }
-            )
-
-            # [저장 버튼 로직]
-            if st.button("💾 변경된 메모 시트에 저장하기", use_container_width=True, type="primary"):
-                with st.spinner("구글 시트에 메모를 기록 중입니다..."):
-                    # 변경된 셀 정보 확인
-                    if st.session_state["v7_editor_with_save"]["edited_rows"]:
-                        updates = st.session_state["v7_editor_with_save"]["edited_rows"]
-                        
-                        for row_idx, changes in updates.items():
-                            if "메모" in changes:
-                                # 실제 시트의 행 번호 계산 (헤더 1줄 + 인덱스는 0부터 시작하므로 +2)
-                                # 주의: 필터링된 상태이므로 원본 df의 인덱스를 찾아야 함
-                                actual_row_in_sheet = int(filtered_df.index[int(row_idx)]) + 2
-                                new_memo = changes["메모"]
-                                
-                                # I열(9번째 열)이 메모 칸입니다.
-                                sh_log.update_cell(actual_row_in_sheet, 9, new_memo)
-                        
-                        st.success("✅ 메모가 구글 시트에 안전하게 저장되었습니다!")
-                        st.rerun() # 저장 후 새로고침해서 반영
-                    else:
-                        st.info("수정된 메모 내용이 없습니다.")
-
-        else:
-            st.warning("기록된 데이터가 없습니다.")
-            
-    except Exception as e:
-        st.error(f"메모 저장 중 오류 발생: {e}")
+                    # [3] 출력 테이블 (컬럼 순서 및 너비 최적화)
+                    display_order = ["날짜", "업체명", "상품명", "옵션", "거래처상품명", "추가", "이슈/메모"]
+                    
+                    st.dataframe(
+                        df_v7[display_order],
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "날짜": st.column_config.TextColumn("📅 날짜", width=110),
+                            "업체명": st.column_config.TextColumn("🏭 업체명", width=130),
+                            "상품명": st.column_config.TextColumn("📦 상품명", width=250),
+                            "옵션": st.column_config.TextColumn("옵션", width=150),
+                            "거래처상품명": st.column_config.TextColumn("🆔 거래처상품명", width=180),
+                            "추가": st.column_config.NumberColumn("🔢 총수량", width=80),
+                            "이슈/메모": st.column_config.TextColumn("📝 통합메모", width=400)
+                        }
+                    )
+                    
+                    # 엑셀 다운로드
+                    csv_data = df_v7[display_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                    st.download_button(
+                        label="📥 집계 결과 CSV 다운로드", 
+                        data=csv_data, 
+                        file_name=f"최종집계_{datetime.now().strftime('%m%d')}.csv",
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("🧐 해당 조건에 맞는 데이터가 없습니다.")
+            else:
+                st.info("💡 저장된 발주 기록이 없습니다.")
+        except Exception as e:
+            st.error(f"📡 집계 중 오류 발생: {e}")
