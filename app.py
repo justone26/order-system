@@ -473,209 +473,336 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 
+
 # ------------------------------------------------------------------
-# [5단계: 최종 발주 요약 및 구글 시트 저장]
+# [5단계: 최종 발주 요약 및 엑셀 다운로드]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
-    
-    # 🚨 [에러 방지] current_today가 정의되지 않았을 경우를 대비한 강제 선언
-    import pytz
-    from datetime import datetime
-    if 'KST' not in globals():
-        KST = pytz.timezone('Asia/Seoul')
-    if 'current_today' not in globals():
-        current_today = datetime.now(KST).date()
-
     st.divider()
     st.subheader("📋 5단계: 최종 발주 리스트 요약")
 
-    # 데이터 복사 및 품절 제외 (sold_out_col 변수 체크)
-    df_v5 = st.session_state.df_raw.copy()
-    if 'sold_out_col' in globals() and sold_out_col in df_v5.columns:
-        df_v5 = df_v5[~df_v5[sold_out_col].astype(str).str.contains('품절', na=False)]
+    # 4단계 계산 데이터 활용 (품절 제외)
+    df_v5 = df_work[~df_work[sold_out_col].astype(str).str.contains('품절', na=False)].copy()
     
     # 상단 필터 레이아웃
     f1, f2, f3 = st.columns([1.5, 2, 1])
     m5_f = f1.selectbox("🚦 상태 필터", ["🚨 고위험/주의", "✅ 전체정상"], key="v5_main_filter")
     s5_q = f2.text_input("🔍 상품명 검색", key="v5_main_search", placeholder="상품명 입력...")
-    d5_d = f3.date_input("🗓️ 기준 날짜", current_today, key="v5_main_date")
+    d5_d = f3.date_input("🗓️ 기준 날짜", datetime.now(KST).date(), key="v5_main_date")
 
     if 'add_order_dict' not in st.session_state: 
         st.session_state.add_order_dict = {}
     
-    # 추가발주수량 매핑 및 권장발주 체크
+    # 데이터 매핑 및 상태 계산
     df_v5['추가발주수량'] = df_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
-    if '권장발주' not in df_v5.columns: df_v5['권장발주'] = 0
     df_v5['상태'] = df_v5['권장발주'].apply(lambda x: "🚨 긴급" if x > 0 else "✅ 정상")
 
-    # 필터링 로직 (item 변수 체크)
-    danger_names = df_v5[df_v5['권장발주'] > 0][item].unique() if item in df_v5.columns else []
+    # 위험 상품군 필터링
+    danger_names = df_v5[df_v5['권장발주'] > 0][item].unique()
     if m5_f == "🚨 고위험/주의":
-        df_v5_view = df_v5[df_v5[item].isin(danger_names)].copy() if item in df_v5.columns else df_v5.copy()
+        df_v5_view = df_v5[df_v5[item].isin(danger_names)].copy()
     else:
-        df_v5_view = df_v5[~df_v5[item].isin(danger_names)].copy() if item in df_v5.columns else df_v5.copy()
+        df_v5_view = df_v5[~df_v5[item].isin(danger_names)].copy()
     
-    if s5_q and item in df_v5_view.columns:
+    if s5_q:
         df_v5_view = df_v5_view[df_v5_view[item].astype(str).str.contains(s5_q, case=False)]
     
-    # 🚨 [KeyError 방지] 실제 존재하는 컬럼만 매핑 (순서: 상태, 상품명, 옵션, 거래처상품명, 가용, 기존, 추가, 권장, 메모)
-    full_map = {
+    df_v5_view = df_v5_view.sort_values(by=[item, option])
+
+    # 에디터 컬럼 설정 (공급처 제외, 메모장 확대)
+    map_v5 = {
         "상태": "상태", item: "상품명", option: "옵션", v_item: "공급처상품명", 
         avail: "가용", "리오더 수량": "기존", "추가발주수량": "추가", "권장발주": "권장", "비고": "📝 이슈/입고메모"
     }
-    available_map = {k: v for k, v in full_map.items() if k in df_v5_view.columns}
     
     with st.form("v5_master_form"):
-        df_ed_v5 = df_v5_view[list(available_map.keys())].rename(columns=available_map)
+        df_ed_v5 = df_v5_view[list(map_v5.keys())].rename(columns=map_v5)
         st.data_editor(
-            df_ed_v5, use_container_width=True, hide_index=True, key="v5_editor",
+            df_ed_v5, 
+            use_container_width=True, 
+            hide_index=True, 
+            key="v5_editor",
             column_config={
-                "상품명": st.column_config.TextColumn(width=250),
-                "옵션": st.column_config.TextColumn(width=150),
-                "추가": st.column_config.NumberColumn(width=80, min_value=0),
+                "상태": st.column_config.TextColumn("상태", width=70),
+                "상품명": st.column_config.TextColumn("상품명", width=250),
+                "옵션": st.column_config.TextColumn("옵션", width=150),
+                "공급처상품명": st.column_config.TextColumn("공급처상품명", width=180),
+                "가용": st.column_config.NumberColumn("가용", width=80),
+                "기존": st.column_config.NumberColumn("기존", width=80),
+                "추가": st.column_config.NumberColumn("추가", width=80, min_value=0),
+                "권장": st.column_config.NumberColumn("권장", width=80),
                 "📝 이슈/입고메모": st.column_config.TextColumn(width=450)
             },
-            disabled=[col for col in df_ed_v5.columns if col not in ["추가", "📝 이슈/입고메모"]]
+            disabled=["상태", "상품명", "옵션", "공급처상품명", "가용", "기존", "권장"]
         )
         
-        if st.form_submit_button("✅ 1. 추가발주 및 메모 확정 (메인 반영)", use_container_width=True, type="primary"):
-            edits = st.session_state["v5_editor"].get("edited_rows", {})
-            if edits:
-                for r_idx, val in edits.items():
+        if st.form_submit_button("✅ 추가발주 및 메모 확정 (메인 반영)", use_container_width=True, type="primary"):
+            edits_v5 = st.session_state["v5_editor"].get("edited_rows", {})
+            if edits_v5:
+                for r_idx, val in edits_v5.items():
                     idx = df_v5_view.index[int(r_idx)]
                     if "추가" in val:
-                        st.session_state.df_raw.at[idx, "리오더 수량"] = int(st.session_state.df_raw.at[idx, "리오더 수량"]) + int(val["추가"])
+                        st.session_state.df_raw.at[idx, "리오더 수량"] += int(val["추가"])
                         st.session_state.add_order_dict[idx] = int(val["추가"])
                     if "📝 이슈/입고메모" in val:
                         st.session_state.df_raw.at[idx, "비고"] = str(val["📝 이슈/입고메모"])
                 
-                # 메인 시트1 업데이트
                 m_sh = get_sheet().worksheet("시트1")
                 df_s = st.session_state.df_raw.copy().fillna("").astype(str)
                 m_sh.update([df_s.columns.values.tolist()] + df_s.values.tolist())
-                st.success("✅ 메인 시트 반영 완료!"); time.sleep(0.5); st.rerun()
+                st.success("✅ 메인 시트 저장 완료!"); time.sleep(0.5); st.rerun()
 
-    # 하단 저장 및 다운로드 섹션
     st.divider()
     c_save, c_down = st.columns(2)
     with c_save:
-        if st.button("💾 2. 구글 시트에 최종 발주 기록 저장", use_container_width=True, type="primary"):
-            # 확정된 내역 확인 (수량이 0보다 큰 것만)
-            valid_dict = {k: v for k, v in st.session_state.add_order_dict.items() if v > 0}
-            if not valid_dict:
-                st.warning("⚠️ 저장할 추가 수량이 없습니다. 표에서 '추가' 입력 후 [확정]을 먼저 눌러주세요.")
-            else:
+        if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
+            ready = df_v5_view[df_v5_view.index.isin(st.session_state.add_order_dict.keys())].copy()
+            if not ready.empty:
+                now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+                log_rows = [[
+                    now_s, str(r[item]), str(r[option]), str(r[vendor]), int(r[avail]),
+                    int(st.session_state.df_raw.at[i, '리오더 수량']), int(st.session_state.add_order_dict[i]),
+                    int(r['권장발주']), str(st.session_state.df_raw.at[i, '비고']), str(r[v_item])
+                ] for i, r in ready.iterrows()]
                 try:
-                    with st.spinner("🚀 '발주기록' 시트로 전송 중..."):
-                        ws_log = get_sheet().worksheet("발주기록")
-                        now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
-                        log_rows = []
-                        for i, qty in valid_dict.items():
-                            row = st.session_state.df_raw.loc[i]
-                            # 사장님 시트 순서: 시간, 상품명, 옵션, 거래처상품명, 가용, 기존, 추가, 권장, 메모, 업체명
-                            log_rows.append([
-                                now_s, str(row[item]), str(row[option]), str(row[v_item]), 
-                                int(row[avail]), int(row['리오더 수량'] - qty), int(qty), 
-                                int(row['권장발주']), str(row['비고']), str(row[vendor])
-                            ])
-                        ws_log.append_rows(log_rows)
-                        st.session_state.add_order_dict = {} # 저장 후 비우기
-                        st.success("✅ 발주기록 저장 완료!"); time.sleep(1); st.rerun()
+                    get_sheet().worksheet("발주기록").append_rows(log_rows)
+                    st.session_state.add_order_dict = {} 
+                    st.success("✅ 발주기록 시트 저장 완료!"); time.sleep(0.5); st.rerun()
                 except Exception as e: st.error(f"❌ 저장 실패: {e}")
 
     with c_down:
-        # CSV 다운로드
         df_v5['최종합계'] = df_v5['권장발주'] + df_v5['추가발주수량']
         csv_target = df_v5[df_v5['최종합계'] > 0].copy()
         if not csv_target.empty:
             csv_res = csv_target[[vendor, item, option, v_item, '최종합계']].rename(columns={
                 vendor: "공급처", item: "상품명", option: "옵션", v_item: "공급처상품명", "최종합계": "발주수량"
             })
-            st.download_button("📥 최종 발주서 CSV 다운로드", csv_res.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'), 
-                               f"발주서_{d5_d.strftime('%m%d')}.csv", use_container_width=True)
+            csv_data = csv_res.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 최종 발주서 CSV 다운로드", csv_data, f"발주서_{d5_d.strftime('%m%d')}.csv", use_container_width=True)
+        else:
+            st.button("📥 최종 발주서 CSV 다운로드 (내역 없음)", disabled=True, use_container_width=True)
+
+
 
 
 # ------------------------------------------------------------------
-# [6단계: 전체 히스토리 관리]
+# [6단계: 전체 히스토리 관리] - 회차별 선택 + '일자별 전체 합계' 추가
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📜 6단계: 전체 히스토리 관리")
 
+    # [1] 상단 컨트롤러 (항상 노출)
     f1, f2, f3, f4 = st.columns([1.2, 0.8, 1.5, 1.5])
-    with f1: d_range_v6 = st.date_input("🗓️ 1. 조회 범위", value=(current_today, current_today), key="v6_range")
-    with f2: 
-        st.write(""); st.write(""); btn_v6 = st.button("🔍 2. 내역 조회", use_container_width=True, type="primary")
+    
+    with f1:
+        today = datetime.now(KST).date()
+        d_range = st.date_input("🗓️ 1. 조회 범위", value=(today, today), key="v6_date_range")
+    
+    with f2:
+        st.write(""); st.write("") 
+        search_trigger = st.button("🔍 2. 내역 조회", use_container_width=True, type="primary")
 
-    if btn_v6:
-        all_h = get_sheet().worksheet("발주기록").get_all_values()
-        if len(all_h) > 1:
-            df_v6_raw = pd.DataFrame(all_h[1:])
-            df_v6_raw.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모", "업체명"]
-            df_v6_raw["날짜"] = df_v6_raw["발주시간"].str.slice(0, 10)
-            s_d, e_d = d_range_v6[0].strftime('%Y-%m-%d'), d_range_v6[1].strftime('%Y-%m-%d')
-            st.session_state.v6_data = df_v6_raw[(df_v6_raw["날짜"] >= s_d) & (df_v6_raw["날짜"] <= e_d)]
-            st.session_state.v6_times = sorted(st.session_state.v6_data["발주시간"].unique(), reverse=True)
+    if 'v6_data' not in st.session_state: st.session_state.v6_data = None
+    if 'v6_sessions' not in st.session_state: st.session_state.v6_sessions = []
 
-    with f3: v6_q = st.text_input("🔍 3. 상품명 검색", key="v6_q")
+    # [데이터 로드]
+    if search_trigger:
+        try:
+            with st.spinner("📡 데이터를 불러오는 중..."):
+                worksheet = get_sheet().worksheet("발주기록")
+                all_h = worksheet.get_all_values()
+                if len(all_h) > 1:
+                    df_all = pd.DataFrame(all_h[1:])
+                    # 매핑 고정: 9번 업체명, 3번 공급처상품명
+                    df_all.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모", "업체명"]
+                    
+                    df_all["날짜_만"] = df_all["발주시간"].astype(str).str.slice(0, 10)
+                    if isinstance(d_range, tuple) and len(d_range) == 2:
+                        s_d, e_d = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
+                        df_all = df_all[(df_all["날짜_만"] >= s_d) & (df_all["날짜_만"] <= e_d)]
+                    
+                    st.session_state.v6_data = df_all
+                    st.session_state.v6_sessions = sorted(df_all["발주시간"].unique(), reverse=True)
+                else:
+                    st.session_state.v6_data = None
+                    st.session_state.v6_sessions = []
+                    st.info("💡 저장된 내역이 없습니다.")
+        except Exception as e:
+            st.error(f"📡 오류: {e}")
+
+    with f3:
+        h_q = st.text_input("🔍 3. 상품명 검색", placeholder="상품명 입력...", key="v6_search_q")
+    
     with f4:
-        v6_times = st.session_state.get('v6_times', [])
-        opts = ["📊 일자별 전체 합계"] + [f"{len(v6_times)-i}회차 ({t[11:16]})" for i, t in enumerate(v6_times)] if v6_times else ["내역 없음"]
-        sel_v6 = st.selectbox("📦 4. 회차 선택", opts, key="v6_sel")
+        if st.session_state.v6_sessions:
+            # 🚨 "일자별 전체 합계" 옵션을 가장 위에 추가
+            session_options = ["📊 선택 범위 전체 합계"] + [f"{len(st.session_state.v6_sessions)-i}회차 ({t[11:16]} 저장)" for i, t in enumerate(st.session_state.v6_sessions)]
+            sel_session_label = st.selectbox("📦 4. 회차 선택", session_options, key="v6_session_select")
+        else:
+            st.selectbox("📦 4. 회차 선택", ["조회 결과 없음"], disabled=True, key="v6_session_select_empty")
+            sel_session_label = None
 
-    if st.session_state.get('v6_data') is not None:
-        df_v6 = st.session_state.v6_data.copy()
-        if sel_v6 == "📊 일자별 전체 합계":
-            df_v6_disp = df_v6.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({"발주시간":"max","추가":lambda x: pd.to_numeric(x).sum(),"이슈/메모":" / ".join, "가용":"last","기존":"last","권장":"last"})
-        elif sel_v6 != "내역 없음":
-            t_idx = opts.index(sel_v6) - 1
-            df_v6_disp = df_v6[df_v6["발주시간"] == v6_times[t_idx]]
-        else: df_v6_disp = pd.DataFrame()
+    # [2] 결과 출력 영역
+    if st.session_state.v6_data is not None and sel_session_label:
+        df_raw_hist = st.session_state.v6_data.copy()
         
-        if not df_v6_disp.empty:
-            if v6_q: df_v6_disp = df_v6_disp[df_v6_disp["상품명"].str.contains(v6_q, case=False)]
-            st.dataframe(df_v6_disp[["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모"]], 
-                         use_container_width=True, hide_index=True,
-                         column_config={"발주시간": st.column_config.TextColumn(width=160), "추가": st.column_config.NumberColumn(width=80), "이슈/메모": st.column_config.TextColumn(width=450)})
+        # 필터링 로직
+        if sel_session_label == "📊 선택 범위 전체 합계":
+            # 날짜 범위 내 모든 데이터 합산 (상품명, 옵션, 업체명 기준)
+            df_display = df_raw_hist.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
+                "발주시간": "max",
+                "가용": "last",
+                "기존": "last",
+                "추가": lambda x: pd.to_numeric(x, errors='coerce').sum(),
+                "권장": "last",
+                "이슈/메모": lambda x: " / ".join(set(filter(None, x)))
+            })
+            display_title = f"🗓️ {d_range[0]} ~ {d_range[1]} 전체 발주 합계"
+        else:
+            # 특정 회차만 필터링
+            target_time = st.session_state.v6_sessions[session_options.index(sel_session_label)-1]
+            df_display = df_raw_hist[df_raw_hist["발주시간"] == target_time].copy()
+            display_title = f"✅ {sel_session_label} 상세 내역"
+
+        # 상품명 검색 필터 적용
+        if h_q:
+            df_display = df_display[df_display["상품명"].astype(str).str.contains(h_q, case=False)]
+
+        if not df_display.empty:
+            st.write(f"#### {display_title}")
+            
+            # 표시 순서 고정
+            display_order = ["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모"]
+            
+            st.dataframe(
+                df_display[display_order],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "발주시간": st.column_config.TextColumn("📅 마지막저장", width=160),
+                    "업체명": st.column_config.TextColumn("🏭 업체명", width=120),
+                    "상품명": st.column_config.TextColumn("📦 상품명", width=250),
+                    "옵션": st.column_config.TextColumn("옵션", width=150),
+                    "공급처상품명": st.column_config.TextColumn("🆔 공급처 상품명", width=180),
+                    "가용": st.column_config.TextColumn("가용", width=80),
+                    "기존": st.column_config.TextColumn("기존", width=80),
+                    "추가": st.column_config.TextColumn("추가", width=80),
+                    "권장": st.column_config.TextColumn("권장", width=80),
+                    "이슈/메모": st.column_config.TextColumn("📝 이슈/메모", width=450)
+                }
+            )
+            
+            # 다운로드 버튼
+            csv_data = df_display[display_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button(f"📥 {sel_session_label} CSV 다운로드", csv_data, f"발주합계_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+
+
+
+
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 누적 상황판]
+# [7단계: 실시간 리오더 누적 상황판] - 순서: 기간 > 갱신 > 검색 > 업체선택
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("🚀 7단계: 실시간 리오더 누적 및 상황판")
 
     try:
+        # [데이터 실시간 로드]
         ws_v7 = get_sheet().worksheet("발주기록")
-        df_v7_raw = pd.DataFrame(ws_v7.get_all_values()[1:])
-        df_v7_raw.columns = ["발주시간", "상품명", "옵션", "거래처상품명", "가용", "기존", "추가", "권장", "이슈/메모", "업체명"]
-        df_v7_raw["날짜"] = df_v7_raw["발주시간"].str.slice(0, 10)
-        df_v7_raw["추가"] = pd.to_numeric(df_v7_raw["추가"], errors='coerce').fillna(0)
-
-        df_today = df_v7_raw[df_v7_raw["날짜"] == current_today.strftime('%Y-%m-%d')]
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("📅 기준 날짜", current_today.strftime('%Y-%m-%d'))
-        c2.metric("📦 상품수", f"{df_today['상품명'].nunique()}종")
-        c3.metric("🏭 업체수", f"{df_today['업체명'].nunique()}곳")
-        c4.metric("🔢 누적수량", f"{int(df_today['추가'].sum())}개")
-        st.divider()
-
-        # 🚨 순서: 기간 -> 갱신 -> 검색 -> 업체선택
-        f1, f2, f3, f4 = st.columns([1.2, 0.8, 1.5, 1.5])
-        d_range_v7 = f1.date_input("🗓️ 1. 기간 선택", value=(current_today, current_today), key="v7_range")
-        f2.write(""); f2.write(""); btn_v7 = f2.button("📈 2. 데이터 갱신", use_container_width=True, type="primary")
-        q_v7 = f3.text_input("🔍 3. 상품명 검색", key="v7_q")
-        v_list = sorted(df_v7_raw["업체명"].unique().tolist())
-        v_choice = f4.selectbox("🏭 4. 업체 선택", ["전체 업체"] + v_list, key="v7_v_sel")
-
-        s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
-        df_f = df_v7_raw[(df_v7_raw["날짜"] >= s_d) & (df_v7_raw["날짜"] <= e_d)]
-        if q_v7: df_f = df_f[df_f["상품명"].str.contains(q_v7, case=False)]
-        if v_choice != "전체 업체": df_f = df_f[df_f["업체명"] == v_choice]
-
-        df_res = df_f.groupby(["날짜", "업체명", "상품명", "옵션", "거래처상품명"], as_index=False).agg({"추가":"sum", "이슈/메모":" / ".join})
+        all_v7 = ws_v7.get_all_values()
         
-        st.dataframe(df_res[["날짜", "업체명", "상품명", "옵션", "거래처상품명", "추가", "이슈/메모"]], 
-                     use_container_width=True, hide_index=True,
-                     column_config={"추가": st.column_config.NumberColumn("🔢 누적수량", width=80), "이슈/메모": st.column_config.TextColumn(width=400)})
-    except Exception as e: st.error(f"📡 오류: {e}")
+        if len(all_v7) > 1:
+            df_raw_v7 = pd.DataFrame(all_v7[1:])
+            # 🚨 위치 고정: 0:시간, 1:상품명, 2:옵션, 3:거래처상품명, 6:추가수량, 9:업체명
+            df_raw_v7.columns = ["발주시간", "상품명", "옵션", "거래처상품명", "가용", "기존", "추가", "권장", "이슈/메모", "업체명"]
+            
+            # 숫자 변환 및 날짜 추출
+            df_raw_v7["추가"] = pd.to_numeric(df_raw_v7["추가"], errors='coerce').fillna(0)
+            df_raw_v7["날짜"] = df_raw_v7["발주시간"].astype(str).str.slice(0, 10)
+            
+            # [상단 상황판 보드] - 오늘(Today) 기준 실시간 요약
+            today_str = datetime.now(KST).strftime('%Y-%m-%d')
+            df_today = df_raw_v7[df_raw_v7["날짜"] == today_str]
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("📅 기준 날짜", today_str)
+            c2.metric("📦 총 발주 상품수", f"{df_today['상품명'].nunique()}종")
+            c3.metric("🏭 발주 업체수", f"{df_today['업체명'].nunique()}곳")
+            c4.metric("🔢 총 누적수량", f"{int(df_today['추가'].sum())}개")
+            st.divider()
+
+            # [필터 레이아웃] 사장님 요청 순서: 기간 -> 갱신 -> 검색 -> 업체선택
+            f1, f2, f3, f4 = st.columns([1.2, 0.8, 1.5, 1.5])
+            
+            with f1:
+                # 1. 기간 선택
+                d_range_v7 = st.date_input("🗓️ 1. 기간 선택", value=(today, today), key="v7_range")
+            
+            with f2:
+                st.write(""); st.write("") # 높이 맞춤
+                # 2. 데이터 갱신 버튼
+                btn_v7 = st.button("📈 2. 데이터 갱신", use_container_width=True, type="primary")
+
+            with f3:
+                # 3. 상품명 검색
+                q_v7 = st.text_input("🔍 3. 상품명 검색", placeholder="상품명 입력...", key="v7_search_q")
+
+            with f4:
+                # 4. 업체 선택 셀렉트박스
+                v_list = sorted(df_raw_v7["업체명"].unique().tolist())
+                v_choice = st.selectbox("🏭 4. 업체 선택", ["전체 업체"] + v_list, key="v7_vendor_sel")
+
+            # [필터링 로직 적용]
+            # 날짜 범위 필터
+            if isinstance(d_range_v7, tuple) and len(d_range_v7) == 2:
+                s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
+                df_filtered = df_raw_v7[(df_raw_v7["날짜"] >= s_d) & (df_raw_v7["날짜"] <= e_d)]
+            else:
+                df_filtered = df_today
+
+            # 상품명 검색 필터
+            if q_v7:
+                df_filtered = df_filtered[df_filtered["상품명"].astype(str).str.contains(q_v7, case=False)]
+
+            # 업체 선택 필터
+            if v_choice != "전체 업체":
+                df_filtered = df_filtered[df_filtered["업체명"] == v_choice]
+
+            # [데이터 그룹화 집계]
+            df_final = df_filtered.groupby(["날짜", "업체명", "상품명", "옵션", "거래처상품명"], as_index=False).agg({
+                "추가": "sum", # 리오더 수량 누적 합산
+                "이슈/메모": lambda x: " / ".join(set(filter(None, x))) # 메모 통합
+            })
+
+            if not df_final.empty:
+                # 🚨 출력 순서 고정: 날짜 > 업체명 > 상품명 > 옵션 > 거래처상품명
+                display_order = ["날짜", "업체명", "상품명", "옵션", "거래처상품명", "추가", "이슈/메모"]
+                
+                st.dataframe(
+                    df_final[display_order],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "날짜": st.column_config.TextColumn("📅 날짜", width=110),
+                        "업체명": st.column_config.TextColumn("🏭 업체명", width=120),
+                        "상품명": st.column_config.TextColumn("📦 상품명", width=250),
+                        "옵션": st.column_config.TextColumn("옵션", width=150),
+                        "거래처상품명": st.column_config.TextColumn("🆔 거래처상품명", width=180),
+                        "추가": st.column_config.NumberColumn("🔢 누적수량", width=80),
+                        "이슈/메모": st.column_config.TextColumn("📝 통합메모", width=400)
+                    }
+                )
+                
+                # CSV 다운로드
+                csv_v7 = df_final[display_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                st.download_button("📥 실시간 누적 집계표(CSV) 다운로드", csv_v7, f"최종집계_{today_str}.csv", use_container_width=True)
+            else:
+                st.warning("🧐 해당 조건에 맞는 데이터가 없습니다.")
+
+        else:
+            st.info("💡 저장된 발주 데이터가 없습니다.")
+            
+    except Exception as e:
+        st.error(f"📡 데이터 로딩 오류: {e}")
