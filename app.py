@@ -671,7 +671,7 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 발주 현황 조회 (셀 간격 및 메모 창 최적화)] ---
+# --- [7단계: 발주 현황 조회 (요약 정보 + 리오더 중심)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
@@ -684,27 +684,35 @@ if st.session_state.get('analyzed'):
         if len(raw_data) > 1:
             df_log = pd.DataFrame(raw_data[1:], columns=None)
             
-            # [1. 데이터 구성]
+            # [1. 데이터 구성] - 가용/권장은 제외하고 리오더 중심으로
             display_df = pd.DataFrame({
                 "날짜": df_log.iloc[:, 0],
                 "업체명": df_log.iloc[:, 9] if df_log.shape[1] > 9 else "",
                 "상품명": df_log.iloc[:, 1],
                 "옵션": df_log.iloc[:, 2],
                 "공급처상품명": df_log.iloc[:, 3],
-                "가용": df_log.iloc[:, 4],
-                "기존": df_log.iloc[:, 5],
-                "추가": df_log.iloc[:, 6],
-                "권장": df_log.iloc[:, 7],
-                "메모": df_log.iloc[:, 8]  # 오늘 추가한 메모 부분
+                "기존": pd.to_numeric(df_log.iloc[:, 5], errors='coerce').fillna(0).astype(int),
+                "추가": pd.to_numeric(df_log.iloc[:, 6], errors='coerce').fillna(0).astype(int),
+                "메모": df_log.iloc[:, 8]
             })
 
-            # [2. 필터 및 검색 레이아웃]
+            # [2. 상단 요약 정보 (Metric) - 사장님이 찾으시던 부분!]
+            # 현재 필터링 전 전체 리오더 수치를 보여줍니다.
+            t_items = len(display_df)
+            t_qty = display_df["기존"].sum() + display_df["추가"].sum()
+            
+            m1, m2 = st.columns(2)
+            m1.metric("📦 총 발주 품목 수", f"{t_items}건")
+            m2.metric("🔢 전체 발주 총합계", f"{t_qty:,}개")
+            st.write("") # 간격 조절
+
+            # [3. 필터 및 검색 레이아웃]
             col1, col2 = st.columns([1, 1])
             with col1:
                 vendor_list = ["전체"] + sorted([v for v in display_df["업체명"].unique() if v])
-                selected_vendor = st.selectbox("🏠 업체별 필터", vendor_list, key="v7_opt_vendor")
+                selected_vendor = st.selectbox("🏠 업체별 필터", vendor_list, key="v7_re_vendor")
             with col2:
-                search_7 = st.text_input("🔍 상품명 검색", placeholder="검색어 입력...", key="v7_opt_search")
+                search_7 = st.text_input("🔍 상품명 검색", key="v7_re_search")
 
             # 필터링 적용
             if selected_vendor != "전체":
@@ -713,36 +721,29 @@ if st.session_state.get('analyzed'):
                 mask = display_df.apply(lambda row: row.astype(str).str.contains(search_7, case=False).any(), axis=1)
                 display_df = display_df[mask]
 
-            # [3. 데이터 에디터 출력 - 셀 너비 최적화]
+            # [4. 데이터 에디터 출력 - 불필요한 열 제거 및 메모 최적화]
             st.data_editor(
                 display_df,
                 use_container_width=True,
                 hide_index=True,
-                key="v7_opt_editor",
+                key="v7_re_editor",
                 column_config={
                     "날짜": st.column_config.TextColumn(width=110),
                     "업체명": st.column_config.TextColumn(width=100),
                     "상품명": st.column_config.TextColumn(width=180),
                     "옵션": st.column_config.TextColumn(width=120),
                     "공급처상품명": st.column_config.TextColumn(width=180),
-                    # 숫자 부분은 너비를 최소화 (70~80)
-                    "가용": st.column_config.NumberColumn(width=60, format="%d"),
-                    "기존": st.column_config.NumberColumn(width=60, format="%d"),
-                    "추가": st.column_config.NumberColumn(width=60, format="%d"),
-                    "권장": st.column_config.NumberColumn(width=60, format="%d"),
-                    # ⭐ 메모 칸을 충분히 길게 설정 (400 이상)
-                    "메모": st.column_config.TextColumn("📝 이슈 및 입고메모", width=450),
+                    # 숫자 열은 아주 작게
+                    "기존": st.column_config.NumberColumn("기존", width=60, format="%d"),
+                    "추가": st.column_config.NumberColumn("추가", width=60, format="%d"),
+                    # 메모 칸을 최대로!
+                    "메모": st.column_config.TextColumn("📝 이슈 및 입고메모", width=500),
                 }
             )
 
-            # [4. 다운로드 버튼]
+            # [5. 다운로드 버튼]
             csv_data = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button(
-                label="📥 필터링된 결과 다운로드 (CSV)",
-                data=csv_data,
-                file_name=f"발주현황_{datetime.now(KST).strftime('%m%d')}.csv",
-                use_container_width=True
-            )
+            st.download_button("📥 리스트 다운로드 (CSV)", csv_data, "발주현황.csv", use_container_width=True)
             
         else:
             st.warning("발주 내역이 없습니다.")
