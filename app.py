@@ -671,7 +671,7 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 발주 현황 조회 (업체 필터 + 업체명 전진 배치)] ---
+# --- [7단계: 발주 현황 조회 (셀 간격 및 메모 창 최적화)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
@@ -691,65 +691,61 @@ if st.session_state.get('analyzed'):
                 "상품명": df_log.iloc[:, 1],
                 "옵션": df_log.iloc[:, 2],
                 "공급처상품명": df_log.iloc[:, 3],
-                "가용재고": df_log.iloc[:, 4],
-                "기존리오더": df_log.iloc[:, 5],
-                "추가발주": df_log.iloc[:, 6],
-                "권장발주": df_log.iloc[:, 7],
-                "메모": df_log.iloc[:, 8]
+                "가용": df_log.iloc[:, 4],
+                "기존": df_log.iloc[:, 5],
+                "추가": df_log.iloc[:, 6],
+                "권장": df_log.iloc[:, 7],
+                "메모": df_log.iloc[:, 8]  # 오늘 추가한 메모 부분
             })
 
-            # [2. 검색 및 업체 필터 레이아웃]
+            # [2. 필터 및 검색 레이아웃]
             col1, col2 = st.columns([1, 1])
-            
             with col1:
-                # 업체명 리스트 추출 (중복 제거 및 정렬)
                 vendor_list = ["전체"] + sorted([v for v in display_df["업체명"].unique() if v])
-                selected_vendor = st.selectbox("🏠 업체별 필터", vendor_list, key="v7_vendor_filter")
-            
+                selected_vendor = st.selectbox("🏠 업체별 필터", vendor_list, key="v7_opt_vendor")
             with col2:
-                search_7 = st.text_input("🔍 상품명 직접 검색", placeholder="검색어를 입력하세요...", key="v7_text_search")
+                search_7 = st.text_input("🔍 상품명 검색", placeholder="검색어 입력...", key="v7_opt_search")
 
-            # [3. 필터링 로직 적용]
-            # 업체 필터 적용
+            # 필터링 적용
             if selected_vendor != "전체":
                 display_df = display_df[display_df["업체명"] == selected_vendor]
-            
-            # 검색어 필터 적용
             if search_7:
                 mask = display_df.apply(lambda row: row.astype(str).str.contains(search_7, case=False).any(), axis=1)
                 display_df = display_df[mask]
 
-            # [4. 데이터 에디터 출력]
-            st.info(f"✅ 현재 조건에 맞는 데이터가 {len(display_df)}건 조회되었습니다.")
-            
+            # [3. 데이터 에디터 출력 - 셀 너비 최적화]
             st.data_editor(
                 display_df,
                 use_container_width=True,
                 hide_index=True,
-                key="v7_final_editor",
+                key="v7_opt_editor",
                 column_config={
-                    "날짜": st.column_config.TextColumn(width=130),
-                    "업체명": st.column_config.TextColumn("🏠 업체명", width=120),
-                    "상품명": st.column_config.TextColumn(width=200),
-                    "옵션": st.column_config.TextColumn(width=150),
-                    "공급처상품명": st.column_config.TextColumn("🆔 공급처상품명", width=250),
-                    "추가발주": st.column_config.NumberColumn(format="%d"),
-                    "권장발주": st.column_config.NumberColumn(format="%d"),
+                    "날짜": st.column_config.TextColumn(width=110),
+                    "업체명": st.column_config.TextColumn(width=100),
+                    "상품명": st.column_config.TextColumn(width=180),
+                    "옵션": st.column_config.TextColumn(width=120),
+                    "공급처상품명": st.column_config.TextColumn(width=180),
+                    # 숫자 부분은 너비를 최소화 (70~80)
+                    "가용": st.column_config.NumberColumn(width=60, format="%d"),
+                    "기존": st.column_config.NumberColumn(width=60, format="%d"),
+                    "추가": st.column_config.NumberColumn(width=60, format="%d"),
+                    "권장": st.column_config.NumberColumn(width=60, format="%d"),
+                    # ⭐ 메모 칸을 충분히 길게 설정 (400 이상)
+                    "메모": st.column_config.TextColumn("📝 이슈 및 입고메모", width=450),
                 }
             )
 
-            # [5. CSV 다운로드 버튼]
+            # [4. 다운로드 버튼]
             csv_data = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button(
-                label="📥 현재 필터링된 리스트 다운로드 (CSV)",
+                label="📥 필터링된 결과 다운로드 (CSV)",
                 data=csv_data,
-                file_name=f"발주현황_{selected_vendor}_{datetime.now(KST).strftime('%m%d')}.csv",
-                mime="text/csv",
+                file_name=f"발주현황_{datetime.now(KST).strftime('%m%d')}.csv",
                 use_container_width=True
             )
             
         else:
-            st.warning("아직 기록된 발주 내역이 없습니다.")
+            st.warning("발주 내역이 없습니다.")
             
     except Exception as e:
-        st.error(f"7단계 데이터를 불러오는 중 오류가 발생했습니다: {e}")
+        st.error(f"7단계 에러: {e}")
