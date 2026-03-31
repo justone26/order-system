@@ -671,11 +671,11 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 최종 리오더 현황 (수량 합산 및 간소화)] ---
+# --- [7단계: 공장 미입고 총 수량 현황 (문구 최적화)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
-    st.subheader("📊 7단계: 업체별 최종 리오더 현황")
+    st.subheader("📊 7단계: 공장 미입고 총 수량 현황")
 
     try:
         # 1. 데이터의 원천인 '발주기록' 시트에서 전체 데이터를 읽어옵니다.
@@ -685,8 +685,8 @@ if st.session_state.get('analyzed'):
         if len(raw_data) > 1:
             df_log_all = pd.DataFrame(raw_data[1:], columns=None)
             
-            # [데이터 가공: 기존+추가를 더해서 '최종수량' 하나로 합칩니다]
-            # A:0(날짜), B:1(상품명), C:2(옵션), D:3(공급처상품명), F:5(기존), G:6(추가), I:8(메모), J:9(업체명)
+            # [수량 합산: 기존 주문분 + 오늘 추가분 = 전체 미입고 수량]
+            # F열(5): 기존, G열(6): 추가
             v_exist = pd.to_numeric(df_log_all.iloc[:, 5], errors='coerce').fillna(0).astype(int)
             v_added = pd.to_numeric(df_log_all.iloc[:, 6], errors='coerce').fillna(0).astype(int)
             
@@ -696,23 +696,24 @@ if st.session_state.get('analyzed'):
                 "상품명": df_log_all.iloc[:, 1],
                 "옵션": df_log_all.iloc[:, 2],
                 "공급처상품명": df_log_all.iloc[:, 3],
-                "최종 리오더 수량": v_exist + v_added, # 👈 두 숫자를 합쳐서 하나로!
+                "미입고 총수량": v_exist + v_added, # 👈 인지하기 쉬운 문구로 변경
                 "메모": df_log_all.iloc[:, 8]
             })
 
-            # [2. 상단 요약 Metric]
-            t_qty = display_df["최종 리오더 수량"].sum()
+            # [2. 상단 요약 Metric - 문구 직관화]
+            t_qty = display_df["미입고 총수량"].sum()
             m1, m2 = st.columns(2)
-            m1.metric("📦 전체 발주 품목", f"{len(display_df)}건")
-            m2.metric("🔢 총 미입고 수량", f"{t_qty:,}개")
+            m1.metric("📦 발주 진행 품목", f"{len(display_df)}건")
+            m2.metric("🔢 공장 미입고 총합계", f"{t_qty:,}개") # 👈 '총합계' 강조
+            st.write("")
 
-            # [3. 필터 레이아웃]
+            # [3. 필터 및 검색]
             col1, col2 = st.columns([1, 1])
             with col1:
                 v_list = ["전체"] + sorted([v for v in display_df["업체명"].unique() if v])
-                selected_v = st.selectbox("🏠 업체 필터", v_list, key="v7_fin_vendor")
+                selected_v = st.selectbox("🏠 업체별 필터", v_list, key="v7_final_v")
             with col2:
-                search_v = st.text_input("🔍 상품명 검색", key="v7_fin_search")
+                search_v = st.text_input("🔍 상품명 검색 (러블리마켓/아거스 등)", key="v7_final_s")
 
             # 필터링
             if selected_v != "전체":
@@ -721,27 +722,30 @@ if st.session_state.get('analyzed'):
                 mask = display_df.apply(lambda row: row.astype(str).str.contains(search_v, case=False).any(), axis=1)
                 display_df = display_df[mask]
 
-            # [4. 표 출력 - 메모 칸 여유 있게]
+            # [4. 표 출력 - 셀 구성 최적화]
             st.data_editor(
                 display_df,
                 use_container_width=True,
                 hide_index=True,
-                key="v7_fin_editor",
+                key="v7_final_editor",
                 column_config={
                     "날짜": st.column_config.TextColumn(width=110),
-                    "업체명": st.column_config.TextColumn(width=100),
-                    "상품명": st.column_config.TextColumn(width=200),
-                    "최종 리오더 수량": st.column_config.NumberColumn("🔢 수량", width=80, format="%d"),
-                    "메모": st.column_config.TextColumn("📝 입고관련 메모", width=500), # 메모창 최대화
+                    "업체명": st.column_config.TextColumn("업체명", width=100),
+                    "상품명": st.column_config.TextColumn(width=180),
+                    "옵션": st.column_config.TextColumn(width=130),
+                    "공급처상품명": st.column_config.TextColumn(width=180),
+                    # '미입고 총수량'을 굵게 강조하는 느낌으로 배치
+                    "미입고 총수량": st.column_config.NumberColumn("🔢 미입고 총수량", width=100, format="%d"),
+                    "메모": st.column_config.TextColumn("📝 입고/이슈 메모", width=500), 
                 }
             )
 
             # [5. 다운로드]
             csv_data = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 현재 현황 다운로드", csv_data, "최종_발주현황.csv", use_container_width=True)
+            st.download_button("📥 현재 현황 다운로드 (엑셀용 CSV)", csv_data, "미입고_현황.csv", use_container_width=True)
             
         else:
-            st.warning("발주 기록이 없습니다.")
+            st.warning("아직 기록된 미입고 데이터가 없습니다.")
             
     except Exception as e:
-        st.error(f"데이터 로드 실패: {e}")
+        st.error(f"현황 로드 실패: {e}")
