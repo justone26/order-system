@@ -525,12 +525,14 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     p = st.session_state.p
     sold_out_col = p['so']
     avail, t7day, t3day = p['av'], p['t7'], p['t3']
-    item, option, v_item = p['it'], p['op'], p['vi']
+    item, option, v_item = p['it'], p['op'], p['vi'] # vi는 '공급처상품명' 열
+    vendor = p['vn'] # '공급쳐' 이름 열
     reg_date_col = p.get('reg') 
     lt, ss = p['lt'], p['ss']
 
     df_v5_base = st.session_state.df_raw.copy()
-    for c in [avail, t7day, t3day]:
+    num_cols = [avail, t7day, t3day]
+    for c in num_cols:
         if c in df_v5_base.columns:
             df_v5_base[c] = pd.to_numeric(df_v5_base[c], errors='coerce').fillna(0).astype(int)
     
@@ -544,8 +546,9 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     def get_v5_in_history():
         try:
             sh_h = get_sheet().worksheet("입고기록")
-            h_df = pd.DataFrame(sh_h.get_all_records())
-            if not h_df.empty:
+            h_data = sh_h.get_all_records()
+            if h_data:
+                h_df = pd.DataFrame(h_data)
                 h_df['입고수량'] = pd.to_numeric(h_df['입고수량'], errors='coerce').fillna(0)
                 return h_df.groupby(['상품명', '옵션'])['입고수량'].sum().reset_index()
             return pd.DataFrame(columns=['상품명', '옵션', '입고수량'])
@@ -590,14 +593,27 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     if s5_q: df_final_view = df_final_view[df_final_view[item].astype(str).str.contains(s5_q, case=False)]
     df_final_view = df_final_view.sort_values(by=[item, option])
 
-    # [5. 데이터 에디터 (비고/이슈 추가)]
-    display_map = {"상태분류": "상태", item: "상품명", option: "옵션", v_item: "공급쳐", avail: "가용", "리오더 수량": "기존리오더", "추가발주수량": "추가발주수량", "권장 발주수량": "권장발주", "비고": "이슈/입고메모"}
+    # [5. 데이터 에디터 (에러 방지를 위해 alignment 제거)]
+    # 매핑 정보를 사장님의 실제 컬럼에 맞춤
+    display_map = {
+        "상태분류": "상태", 
+        item: "상품명", 
+        option: "옵션", 
+        vendor: "공급쳐", 
+        v_item: "공급처상품명",
+        avail: "가용", 
+        "리오더 수량": "기존리오더", 
+        "추가발주수량": "추가발주수량", 
+        "권장 발주수량": "권장발주", 
+        "비고": "이슈/입고메모"
+    }
     
     with st.form("v5_editor_form"):
         df_edit = df_final_view[list(display_map.keys())].rename(columns=display_map)
         st.data_editor(df_edit, use_container_width=True, hide_index=True, key="v5_editor_final",
                         column_config={
                             "상품명": st.column_config.TextColumn(width=280), 
+                            "공급처상품명": st.column_config.TextColumn("🆔 공급처상품명", width=150),
                             "추가발주수량": st.column_config.NumberColumn(format="%d", min_value=0),
                             "이슈/입고메모": st.column_config.TextColumn("이슈/입고메모 (메모 후 확정)", width=250)
                         })
@@ -609,6 +625,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     orig_idx = df_final_view.index[int(r_idx_str)]
                     if "추가발주수량" in val:
                         input_qty = int(val["추가발주수량"])
+                        # 메인 데이터의 리오더 수량에 더해줌
                         st.session_state.df_raw.at[orig_idx, "리오더 수량"] += input_qty
                         st.session_state.add_order_dict[orig_idx] = input_qty
                     if "이슈/입고메모" in val:
@@ -625,24 +642,27 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
     with col_save:
         if st.button("💾 구글 시트에 최종 발주 기록 저장", use_container_width=True):
+            # 추가발주가 있거나 권장발주가 있는 항목 대상 (사장님 필요에 따라 조절 가능)
             ready = df_display[df_display['추가발주수량'] > 0].copy()
             if not ready.empty:
                 now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
-                # ⭐ 수정: 10번째 열(공급처상품명)까지 포함하여 저장
-                log_rows = [
-                    [
-                        now_s, 
-                        str(r[item]), 
-                        str(r[option]), 
-                        str(r[v_item]), 
-                        int(r[avail]), 
-                        int(r['리오더 수량']), 
-                        int(r['추가발주수량']), 
-                        int(r['권장 발주수량']), 
-                        str(r.get('비고', '')),
-                        str(r.get('공급처상품명', '')) # 10번째 열 추가
-                    ] for _, r in ready.iterrows()
-                ]
+                
+                # ⭐ 10번째 열(공급처상품명)까지 순서대로 정렬하여 저장
+                log_rows = []
+                for _, r in ready.iterrows():
+                    log_rows.append([
+                        now_s,                      # 1. 날짜
+                        str(r[item]),               # 2. 상품명
+                        str(r[option]),             # 3. 옵션
+                        str(r[vendor]),             # 4. 공급쳐 (p['vn'])
+                        int(r[avail]),              # 5. 가용재고
+                        int(r['리오더 수량']),      # 6. 기존리오더
+                        int(r['추가발주수량']),    # 7. 추가발주수량
+                        int(r['권장 발주수량']),    # 8. 권장발주수량
+                        str(r.get('비고', '')),     # 9. 비고(이슈메모)
+                        str(r[v_item])              # 10. 공급처상품명 (p['vi'])
+                    ])
+                
                 try:
                     get_sheet().worksheet("발주기록").append_rows(log_rows)
                     st.session_state.add_order_dict = {} 
@@ -653,9 +673,10 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         df_display['최종합계'] = df_display['권장 발주수량'] + df_display['추가발주수량']
         csv_target = df_display[df_display['최종합계'] > 0]
         if not csv_target.empty:
-            csv_data = csv_target[[item, option, v_item, '최종합계']].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            # 다운로드용 CSV에도 공급처상품명 포함
+            csv_data = csv_target[[item, option, vendor, v_item, '최종합계']].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button("📥 최종 발주서 CSV 다운로드", csv_data, f"발주서_{d5_d.strftime('%m%d')}.csv", use_container_width=True)
-
+            
 
 
 # ==========================================================
