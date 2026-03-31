@@ -538,18 +538,21 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             hide_index=True, 
             key="v5_editor",
             column_config={
-                "상태": st.column_config.TextColumn("상태", width=60),
-                "상품명": st.column_config.TextColumn("상품명", width=250),
-                "옵션": st.column_config.TextColumn("옵션", width=120),
-                "공급처상품명": st.column_config.TextColumn("공급처상품명", width=150),
-                # 숫자 셀 너비 최소화
-                "가용": st.column_config.NumberColumn("가용", width=40),
-                "기존": st.column_config.NumberColumn("기존", width=40),
-                "추가": st.column_config.NumberColumn("추가", width=50, min_value=0),
-                "권장": st.column_config.NumberColumn("권장", width=40),
-                # 메모 칸 최대 확보 (450 이상)
-                "📝 이슈/입고메모": st.column_config.TextColumn(width=500, help="입고 지연 등 특이사항 입력")
-            },
+    "상태": st.column_config.TextColumn("상태", width=70),
+    "상품명": st.column_config.TextColumn("상품명", width=280),
+    "옵션": st.column_config.TextColumn("옵션", width=150),
+    "공급처상품명": st.column_config.TextColumn("공급처상품명", width=180),
+    
+    # 💡 숫자 셀: 40~50에서 80으로 키워 가독성 확보
+    "가용": st.column_config.NumberColumn("가용", width=80),
+    "기존": st.column_config.NumberColumn("기존", width=80),
+    "추가": st.column_config.NumberColumn("추가", width=80, min_value=0),
+    "권장": st.column_config.NumberColumn("권장", width=80),
+    
+    # 메모 칸은 여전히 넉넉하게 유지 (400~500)
+    "📝 이슈/입고메모": st.column_config.TextColumn(width=450), 
+    "이슈/메모": st.column_config.TextColumn(width=450) # 6단계용
+}
             disabled=["상태", "상품명", "옵션", "공급처상품명", "가용", "기존", "권장"]
         )
         
@@ -690,16 +693,22 @@ if st.session_state.get('analyzed'):
                         df_view, 
                         use_container_width=True, 
                         hide_index=True,
-                        column_config={
-                            "발주시간": st.column_config.TextColumn("📅 발주시간", width=160),
-                            "업체명": st.column_config.TextColumn("🏭 업체명", width=120),
-                            "공급처상품명": st.column_config.TextColumn("🆔 공급처 상품명", width=180),
-                            "이슈/메모": st.column_config.TextColumn("📝 이슈/메모", width=450),
-                            "가용": st.column_config.TextColumn(width=40),
-                            "기존": st.column_config.TextColumn(width=40),
-                            "추가": st.column_config.TextColumn(width=40),
-                            "권장": st.column_config.TextColumn(width=40),
-                        }
+                       column_config={
+    "상태": st.column_config.TextColumn("상태", width=70),
+    "상품명": st.column_config.TextColumn("상품명", width=280),
+    "옵션": st.column_config.TextColumn("옵션", width=150),
+    "공급처상품명": st.column_config.TextColumn("공급처상품명", width=180),
+    
+    # 💡 숫자 셀: 40~50에서 80으로 키워 가독성 확보
+    "가용": st.column_config.NumberColumn("가용", width=80),
+    "기존": st.column_config.NumberColumn("기존", width=80),
+    "추가": st.column_config.NumberColumn("추가", width=80, min_value=0),
+    "권장": st.column_config.NumberColumn("권장", width=80),
+    
+    # 메모 칸은 여전히 넉넉하게 유지 (400~500)
+    "📝 이슈/입고메모": st.column_config.TextColumn(width=450), 
+    "이슈/메모": st.column_config.TextColumn(width=450) # 6단계용
+}
                     )
                 else:
                     st.warning("🧐 기록이 없습니다.")
