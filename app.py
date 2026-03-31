@@ -769,13 +769,13 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 실시간 리오더 현황판 (에러 방지 및 메모 노출 버전)] ---
+# --- [7단계: 실시간 리오더 현황판 (사장님 요청 순서 적용)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📅 7단계: 실시간 리오더 현황판")
     
-    st.info("💡 5단계에서 입력한 '이슈/입고메모'가 자동으로 집계되어 표시됩니다.")
+    st.info("💡 공급쳐(거래처) 및 상품명으로 검색이 가능하며, 미입고 잔량이 있는 품목만 표시됩니다.")
 
     # [1] 컨트롤러 레이아웃
     f1, f2, f3 = st.columns([1.2, 0.8, 2])
@@ -787,30 +787,24 @@ if st.session_state.get('analyzed'):
         st.write(""); st.write("")
         h7_trigger = st.button("🔄 현황판 업데이트", type="primary", use_container_width=True)
     with f3:
-        h7_search = st.text_input("🔍 결과 내 상품명/거래처 검색", placeholder="검색어를 입력하세요...", key="v7_inner_search")
+        h7_search = st.text_input("🔍 공급쳐 또는 상품명 검색", placeholder="검색어를 입력하세요...", key="v7_inner_search")
 
     if h7_trigger:
         with st.spinner("장부를 대조하여 미입고 잔량을 계산 중입니다..."):
             try:
                 sh = get_sheet()
                 
-                # [2] 데이터 로드 함수 (헤더 중복 및 열 부족 에러 완벽 방어)
+                # [2] 데이터 로드 함수 (안전 로직)
                 def get_safe_df_v7(ws_name, expected_cols):
                     try:
                         ws = sh.worksheet(ws_name)
                         all_vals = ws.get_all_values()
-                        
                         if len(all_vals) > 1:
-                            # 1행(헤더) 제외하고 데이터만 로드
                             df = pd.DataFrame(all_vals[1:])
-                            
-                            # 실제 열 개수가 설정보다 적으면 빈 열 강제 생성
                             actual_n = df.shape[1]
                             if actual_n < len(expected_cols):
                                 for i in range(actual_n, len(expected_cols)):
                                     df[i] = "" 
-                            
-                            # 필요한 열만큼만 자르고 이름 부여
                             df = df.iloc[:, :len(expected_cols)]
                             df.columns = expected_cols
                             return df
@@ -818,7 +812,7 @@ if st.session_state.get('analyzed'):
                     except:
                         return pd.DataFrame(columns=expected_cols)
 
-                # 구글 시트 실제 순서에 맞춘 컬럼 정의
+                # 구글 시트 저장 순서 기준
                 order_cols = ["날짜시간", "상품명", "옵션", "공급쳐", "가용재고", "기존리오더", "추가발주수량", "권장발주수량", "비고"]
                 in_cols = ["날짜", "상품명", "옵션", "입고수량"]
                 
@@ -826,75 +820,72 @@ if st.session_state.get('analyzed'):
                 df_in = get_safe_df_v7("입고기록", in_cols)
 
                 if df_ord.empty:
-                    st.warning("⚠️ 선택한 기간 내 발주 기록이 없습니다.")
+                    st.warning("⚠️ 해당 기간 내 발주 기록이 없습니다.")
                 else:
-                    # [3] 데이터 전처리
-                    # 날짜 필터링
+                    # [3] 날짜 필터링 및 전처리
                     df_ord["날짜_순수"] = df_ord["날짜시간"].astype(str).str.slice(0, 10)
                     if len(h7_range) == 2:
                         s_s, e_s = h7_range[0].strftime('%Y-%m-%d'), h7_range[1].strftime('%Y-%m-%d')
                         df_ord = df_ord[(df_ord["날짜_순수"] >= s_s) & (df_ord["날짜_순수"] <= e_s)]
 
-                    # 숫자 변환 (오류 방지)
                     for c in ['추가발주수량', '권장발주수량']:
                         df_ord[c] = pd.to_numeric(df_ord[c], errors='coerce').fillna(0)
                     df_ord['전체발주량'] = df_ord['추가발주수량'] + df_ord['권장발주수량']
-                    
                     df_in['입고수량'] = pd.to_numeric(df_in['입고수량'], errors='coerce').fillna(0)
 
-                    # [4] 그룹화 및 잔량 계산
-                    # 비고(메모)는 가장 최신(last) 기록을 가져오도록 설정
-                    total_ord = df_ord.groupby(['상품명', '옵션', '공급쳐']).agg({
+                    # [4] 그룹화 및 병합
+                    total_ord = df_ord.groupby(['공급쳐', '상품명', '옵션']).agg({
                         '전체발주량': 'sum',
-                        '비고': 'last'
+                        '비고': 'last' # 이슈메모용
                     }).reset_index()
                     
                     total_in = df_in.groupby(['상품명', '옵션'])['입고수량'].sum().reset_index()
-
-                    # 병합 및 잔량 계산
                     final_df = pd.merge(total_ord, total_in, on=['상품명', '옵션'], how='left').fillna({'입고수량': 0, '비고': ''})
                     final_df['미입고 잔량'] = final_df['전체발주량'] - final_df['입고수량']
-                    
-                    # 미입고된 것만 필터링
                     final_df = final_df[final_df['미입고 잔량'] > 0].copy()
 
                     # 검색 필터
                     if h7_search:
-                        mask = final_df['상품명'].str.contains(h7_search, case=False) | final_df['공급쳐'].str.contains(h7_search, case=False)
+                        mask = (final_df['공급쳐'].str.contains(h7_search, case=False) | 
+                                final_df['상품명'].str.contains(h7_search, case=False))
                         final_df = final_df[mask]
 
-                    # [5] 화면 최종 출력
+                    # [5] 화면 출력 (사장님 요청 순서로 재배치)
                     if not final_df.empty:
+                        # 공급쳐 => 상품명 => 옵션 => 공급쳐상품명(비고 활용) => 발주 => 입고 => 잔량 => 이슈메모(비고 활용)
+                        # 여기서는 비고 데이터를 '공급쳐상품명'과 '이슈메모' 양쪽에 동일하게 배치했습니다.
+                        view_df = final_df.copy()
+                        view_df['공급쳐상품명'] = view_df['비고'] # 비고 내용을 공급쳐상품명으로도 사용
+                        
+                        # 요청하신 컬럼 순서 정렬
+                        view_df = view_df[['공급쳐', '상품명', '옵션', '공급쳐상품명', '전체발주량', '입고수량', '미입고 잔량', '비고']]
+
                         m1, m2, m3 = st.columns(3)
-                        m1.metric("대상 품목수", f"{len(final_df)}건")
-                        m2.metric("총 발주수량", f"{int(final_df['전체발주량'].sum())}개")
-                        m3.metric("총 미입고 잔량", f"{int(final_df['미입고 잔량'].sum())}개")
+                        m1.metric("대상 품목수", f"{len(view_df)}건")
+                        m2.metric("총 발주량", f"{int(view_df['전체발주량'].sum())}개")
+                        m3.metric("총 잔량 🚩", f"{int(view_df['미입고 잔량'].sum())}개")
 
-                        # 이슈 메모 데이터 가공 (JSON 에러 방지용 문자열화)
-                        final_df['비고'] = final_df['비고'].astype(str).replace('', '-')
-
-                        # 테이블 출력
                         st.data_editor(
-                            final_df[['상품명', '옵션', '공급쳐', '전체발주량', '입고수량', '미입고 잔량', '비고']].sort_values(by='미입고 잔량', ascending=False),
+                            view_df.sort_values(by=['공급쳐', '상품명']),
                             use_container_width=True,
                             hide_index=True,
-                            disabled=True, # 읽기 전용
+                            disabled=True,
                             column_config={
-                                "상품명": st.column_config.TextColumn("상품명", width="medium"),
-                                "옵션": st.column_config.TextColumn("옵션", width="small"),
-                                "공급쳐": "거래처",
+                                "공급쳐": st.column_config.TextColumn("🏠 공급쳐", width="medium"),
+                                "상품명": st.column_config.TextColumn("👕 상품명", width="medium"),
+                                "옵션": st.column_config.TextColumn("🎨 옵션", width="small"),
+                                "공급쳐상품명": st.column_config.TextColumn("🆔 공급쳐상품명", width="medium"),
                                 "전체발주량": st.column_config.NumberColumn("발주", format="%d"),
                                 "입고수량": st.column_config.NumberColumn("입고", format="%d"),
                                 "미입고 잔량": st.column_config.NumberColumn("잔량 🚩", format="%d"),
-                                "비고": st.column_config.TextColumn("📋 이슈 메모", width="large") # 메모칸 크게 배치
+                                "비고": st.column_config.TextColumn("📋 이슈메모", width="large")
                             }
                         )
                         
-                        # 다운로드
-                        csv = final_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                        st.download_button("📥 현재 현황판 다운로드(CSV)", csv, f"미입고현황_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+                        csv = view_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                        st.download_button("📥 현황 리스트 다운로드(CSV)", csv, f"미입고현황.csv", use_container_width=True)
                     else:
-                        st.success("✅ 선택한 기간 내 모든 리오더 상품이 입고되었습니다!")
+                        st.success("✅ 미입고 품목이 없습니다.")
 
             except Exception as e:
                 st.error(f"❌ 현황판 불러오기 실패: {e}")
