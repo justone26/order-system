@@ -387,7 +387,7 @@ if st.session_state.get('df_raw') is not None:
 
 
 # ==========================================================
-# --- [4단계: 데이터 편집 및 재고 관리 (리오더 입고 문구 수정)] ---
+# --- [4단계: 데이터 편집 및 재고 관리] ---
 # ==========================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -419,7 +419,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work["리오더 수량"] = pd.to_numeric(df_work["리오더 수량"], errors='coerce').fillna(0).astype(int)
     df_work["리오더 입고수량"] = 0 
 
-    # 3. 선택한 날짜의 입고 기록 가져오기 (조회용)
+    # 3. 날짜별 입고 기록 가져오기 (조회용)
     @st.cache_data(ttl=10)
     def get_incoming_by_date(target_date):
         try:
@@ -463,7 +463,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         df_filtered = df_filtered[df_filtered[item].astype(str).str.contains(search_q, case=False) | 
                                  df_filtered[option].astype(str).str.contains(search_q, case=False)]
 
-    # 5. 화면 출력 (컬럼명 수정 반영)
+    # 5. 화면 출력 (좌측 정렬 적용)
     df_display = df_filtered.rename(columns={
         sold_out_col: "상태", vendor: "공급쳐", v_item: "공급상품명", 
         item: "상품명", option: "옵션", stock: "정상", avail: "가용"
@@ -479,9 +479,14 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             key="v4_editor_fix",
             column_config={
                 "상품명": st.column_config.TextColumn(width=350),
-                "과거리오더 입고": st.column_config.NumberColumn(f"{hist_date_4.strftime('%m/%d')} 입고", width=90, format="%d"),
-                "리오더 입고수량": st.column_config.NumberColumn("리오더 입고", width=90, format="%d", min_value=0), # ⭐ 문구 수정됨
-                "권장발주": st.column_config.NumberColumn(width=70, format="%d"),
+                "정상": st.column_config.NumberColumn(format="%d", alignment="left"),
+                "가용": st.column_config.NumberColumn(format="%d", alignment="left"),
+                "리오더 수량": st.column_config.NumberColumn(format="%d", alignment="left"),
+                "리오더 입고수량": st.column_config.NumberColumn("리오더 입고", width=90, format="%d", min_value=0, alignment="left"),
+                "과거리오더 입고": st.column_config.NumberColumn(f"{hist_date_4.strftime('%m/%d')} 입고", width=90, format="%d", alignment="left"),
+                "일판매": st.column_config.NumberColumn(format="%d", alignment="left"),
+                "3일발주": st.column_config.NumberColumn(format="%d", alignment="left"),
+                "권장발주": st.column_config.NumberColumn(width=70, format="%d", alignment="left"),
             }
         )
 
