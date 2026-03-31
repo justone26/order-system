@@ -589,109 +589,104 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ------------------------------------------------------------------
-# [6단계: 전체 히스토리 관리] - 업체 필터 및 데이터 위치 교정
+# [6단계: 전체 히스토리 관리] - 레이아웃 순서: 범위 > 조회 > 검색 > 회차
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📜 6단계: 전체 히스토리 관리")
 
-    # 6단계 필터 레이아웃 (날짜, 업체선택, 조회버튼, 상품검색)
-    f1, f2, f3, f4 = st.columns([1.2, 1.2, 0.8, 1.5])
+    # [1] 상단 컨트롤러 레이아웃 (조회범위 -> 내역조회 -> 상품명 검색)
+    f1, f2, f3 = st.columns([1.2, 0.8, 2])
     
     with f1:
         today = datetime.now(KST).date()
-        d_range = st.date_input("🗓️ 조회 범위", value=(today, today), key="v6_date_range")
+        # 조회 날짜 범위 설정
+        d_range = st.date_input("🗓️ 1. 조회 날짜 범위", value=(today, today), key="v6_date_range")
     
-    # [업체 목록 동적 로드]
-    try:
-        ws_hist = get_sheet().worksheet("발주기록")
-        all_h = ws_hist.get_all_values()
-        if len(all_h) > 1:
-            h_df_tmp = pd.DataFrame(all_h[1:])
-            # 시트의 10번째 열(인덱스 9)이 업체명(0.아거스 등)임을 확인
-            v_list = sorted(h_df_tmp[9].unique().tolist()) 
-        else: 
-            v_list = []
-    except: 
-        v_list = []
-
     with f2:
-        v_choice = st.selectbox("🏭 업체 선택", ["전체보기"] + v_list, key="v6_vendor_filter")
-    
-    with f3:
-        st.write(""); st.write("") 
-        search_trigger = st.button("🔍 내역 조회", use_container_width=True, type="primary", key="v6_search_btn")
-        
-    with f4:
-        h_q = st.text_input("🔍 상품명 검색", key="v6_search_q", placeholder="상품명 입력...")
+        st.write(""); st.write("") # 라벨 높이 맞춤용
+        # 내역 조회 버튼
+        search_trigger = st.button("🔍 2. 내역 조회", use_container_width=True, type="primary", key="v6_search_btn")
 
+    with f3:
+        # 결과 내 상품명 검색
+        h_q = st.text_input("🔍 3. 상품명 검색 (결과 내 찾기)", placeholder="찾으실 상품명을 입력하세요...", key="v6_search_q")
+
+    # [2] 데이터 로드 및 회차별 표시 로직
     if search_trigger or h_q:
         try:
+            with st.spinner("📡 발주 기록을 불러오는 중..."):
+                worksheet = get_sheet().worksheet("발주기록")
+                all_h = worksheet.get_all_values()
+            
             if len(all_h) > 1:
                 # 0:시간, 1:상품명, 2:옵션, 3:공급처상품명, 4:가용, 5:기존, 6:추가, 7:권장, 8:비고, 9:업체명
                 df_hist = pd.DataFrame(all_h[1:])
-                
-                # 컬럼명 강제 매핑 (데이터 뒤바뀜 방지)
-                df_hist.columns = [
-                    "발주시간", "상품명", "옵션", "공급처상품명", 
-                    "가용", "기존", "추가", "권장", "이슈/메모", "업체명"
-                ]
-                
-                # [1] 날짜 필터링
+                df_hist.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모", "업체명"]
+
+                # 날짜 필터링
                 df_hist["날짜_만"] = df_hist["발주시간"].astype(str).str.slice(0, 10)
                 if isinstance(d_range, tuple) and len(d_range) == 2:
                     s_d, e_d = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
                     df_hist = df_hist[(df_hist["날짜_만"] >= s_d) & (df_hist["날짜_만"] <= e_d)]
 
-                # [2] 업체 필터링
-                if v_choice != "전체보기":
-                    df_hist = df_hist[df_hist["업체명"] == v_choice]
-
-                # [3] 유효 데이터 처리 (추가발주가 있는 것만)
-                df_hist["추가"] = pd.to_numeric(df_hist["추가"], errors='coerce').fillna(0)
-                df_hist = df_hist[df_hist["추가"] > 0].sort_values(by="발주시간", ascending=False)
-                
-                # [4] 상품명 검색어 필터링
-                if h_q:
-                    df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False)]
-
                 if not df_hist.empty:
-                    # 표에 보여줄 최종 순서 재정렬
-                    display_order = [
-                        "발주시간", "업체명", "상품명", "옵션", "공급처상품명", 
-                        "가용", "기존", "추가", "권장", "이슈/메모"
-                    ]
+                    # [3] 시간대별 회차 그룹화 (최신순)
+                    sessions = sorted(df_hist["발주시간"].unique(), reverse=True)
                     
-                    st.success(f"✅ 총 **{len(df_hist)}**건의 내역이 조회되었습니다.")
-                    st.dataframe(
-                        df_hist[display_order], 
-                        use_container_width=True, 
-                        hide_index=True,
-                        column_config={
-                            "발주시간": st.column_config.TextColumn("📅 발주시간", width=160),
-                            "업체명": st.column_config.TextColumn("🏭 업체명", width=120),
-                            "상품명": st.column_config.TextColumn("📦 상품명", width=250),
-                            "옵션": st.column_config.TextColumn("옵션", width=150),
-                            "공급처상품명": st.column_config.TextColumn("🆔 공급처 상품명", width=180),
-                            "가용": st.column_config.TextColumn("가용", width=80),
-                            "기존": st.column_config.TextColumn("기존", width=80),
-                            "추가": st.column_config.TextColumn("추가", width=80),
-                            "권장": st.column_config.TextColumn("권장", width=80),
-                            "이슈/메모": st.column_config.TextColumn("📝 이슈/메모", width=450)
-                        }
-                    )
-                    
-                    # CSV 다운로드 기능
-                    csv_data = df_hist[display_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button("📥 조회 결과 CSV 다운로드", csv_data, f"발주히스토리_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+                    st.write(f"### 📦 총 {len(sessions)}개의 발주 회차가 검색되었습니다.")
+
+                    for i, t_stamp in enumerate(sessions):
+                        df_session = df_hist[df_hist["발주시간"] == t_stamp].copy()
+                        
+                        # 상품명 검색어 필터링
+                        if h_q:
+                            df_session = df_session[df_session["상품명"].astype(str).str.contains(h_q, case=False)]
+                        
+                        if df_session.empty: continue
+
+                        # [회차 UI] Expander로 깔끔하게 묶음
+                        session_time = t_stamp[11:16] # HH:MM
+                        with st.expander(f"✅ {i+1}회차 발주 내역 | 저장시간: {session_time} (총 {len(df_session)}건)", expanded=(i==0)):
+                            
+                            # 표시 순서: 업체명 -> 상품명 -> 옵션 -> 공급처상품명 ...
+                            display_order = ["업체명", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가", "권장", "이슈/메모"]
+                            
+                            st.dataframe(
+                                df_session[display_order],
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "업체명": st.column_config.TextColumn("🏭 업체명", width=120),
+                                    "상품명": st.column_config.TextColumn("📦 상품명", width=250),
+                                    "옵션": st.column_config.TextColumn("옵션", width=150),
+                                    "공급처상품명": st.column_config.TextColumn("🆔 공급처 상품명", width=180),
+                                    # 가독성 개선된 숫자 셀 너비 (80)
+                                    "가용": st.column_config.TextColumn("가용", width=80),
+                                    "기존": st.column_config.TextColumn("기존", width=80),
+                                    "추가": st.column_config.TextColumn("추가", width=80),
+                                    "권장": st.column_config.TextColumn("권장", width=80),
+                                    # 넓은 메모 칸 (450)
+                                    "이슈/메모": st.column_config.TextColumn("📝 이슈/메모", width=450)
+                                }
+                            )
+                            
+                            # 회차별 엑셀 다운로드
+                            csv_data = df_session[display_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                            st.download_button(
+                                label=f"📥 {i+1}회차 발주서 다운로드", 
+                                data=csv_data, 
+                                file_name=f"발주_{t_stamp[:10]}_{i+1}회차.csv", 
+                                key=f"dl_{t_stamp}",
+                                use_container_width=True
+                            )
                 else:
-                    st.warning("🧐 해당 조건에 맞는 발주 기록이 없습니다.")
+                    st.warning("🧐 해당 범위 내에 저장된 기록이 없습니다.")
             else:
-                st.info("💡 아직 저장된 발주 내역이 없습니다.")
+                st.info("💡 기록이 비어있습니다. 5단계에서 저장을 먼저 진행해주세요.")
                 
         except Exception as e:
-            st.error(f"📡 데이터 로딩 오류: {e}")
-
+            st.error(f"📡 오류 발생: {e}")
 
 
 # ==========================================================
