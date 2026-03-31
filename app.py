@@ -671,82 +671,86 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 발주 현황 조회 (요약 정보 + 리오더 중심)] ---
+# --- [7단계: 품목별 최종 리오더 수량 현황 (집계 버전)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
-    st.subheader("📊 7단계: 전체 누적 발주 현황")
+    st.subheader("📊 7단계: 품목별 최종 리오더 현황 (미입고 총계)")
 
     try:
-        sh_log = get_sheet().worksheet("발주기록")
-        raw_data = sh_log.get_all_values()
+        # 1. 메인 시트(시트1)에서 실시간 리오더 수량 가져오기
+        # 발주기록은 '과거 기록'일 뿐이므로, 실제 남은 수량은 메인 시트가 정확합니다.
+        df_main = st.session_state.df_raw.copy()
+        p = st.session_state.p
         
-        if len(raw_data) > 1:
-            df_log = pd.DataFrame(raw_data[1:], columns=None)
-            
-            # [1. 데이터 구성] - 가용/권장은 제외하고 리오더 중심으로
-            display_df = pd.DataFrame({
-                "날짜": df_log.iloc[:, 0],
-                "업체명": df_log.iloc[:, 9] if df_log.shape[1] > 9 else "",
-                "상품명": df_log.iloc[:, 1],
-                "옵션": df_log.iloc[:, 2],
-                "공급처상품명": df_log.iloc[:, 3],
-                "기존": pd.to_numeric(df_log.iloc[:, 5], errors='coerce').fillna(0).astype(int),
-                "추가": pd.to_numeric(df_log.iloc[:, 6], errors='coerce').fillna(0).astype(int),
-                "메모": df_log.iloc[:, 8]
-            })
+        # 리오더 수량이 0보다 큰 품목만 추출
+        df_reorder_active = df_main[pd.to_numeric(df_main["리오더 수량"], errors='coerce').fillna(0) > 0].copy()
 
-            # [2. 상단 요약 정보 (Metric) - 사장님이 찾으시던 부분!]
-            # 현재 필터링 전 전체 리오더 수치를 보여줍니다.
-            t_items = len(display_df)
-            t_qty = display_df["기존"].sum() + display_df["추가"].sum()
+        if not df_reorder_active.empty:
+            # 숫자 변환
+            df_reorder_active["리오더 수량"] = pd.to_numeric(df_reorder_active["리오더 수량"]).astype(int)
+
+            # [2. 상단 요약 정보 (Metric)] - 사장님이 원하신 요약!
+            t_items = len(df_reorder_active)
+            t_qty = df_reorder_active["리오더 수량"].sum()
             
             m1, m2 = st.columns(2)
-            m1.metric("📦 총 발주 품목 수", f"{t_items}건")
-            m2.metric("🔢 전체 발주 총합계", f"{t_qty:,}개")
-            st.write("") # 간격 조절
+            m1.metric("📦 리오더 진행 품목 수", f"{t_items}건")
+            m2.metric("🔢 총 미입고 합계", f"{t_qty:,}개")
+            st.write("") 
 
-            # [3. 필터 및 검색 레이아웃]
+            # [3. 필터 및 검색]
             col1, col2 = st.columns([1, 1])
             with col1:
-                vendor_list = ["전체"] + sorted([v for v in display_df["업체명"].unique() if v])
-                selected_vendor = st.selectbox("🏠 업체별 필터", vendor_list, key="v7_re_vendor")
+                # 업체명 필터 (업체명 열이 있을 경우)
+                vn_col = p['vn']
+                v_list = ["전체"] + sorted(df_reorder_active[vn_col].unique().tolist())
+                sel_v = st.selectbox("🏠 업체별 보기", v_list, key="v7_fin_v")
             with col2:
-                search_7 = st.text_input("🔍 상품명 검색", key="v7_re_search")
+                search_v7 = st.text_input("🔍 상품명 검색", key="v7_fin_s")
 
             # 필터링 적용
-            if selected_vendor != "전체":
-                display_df = display_df[display_df["업체명"] == selected_vendor]
-            if search_7:
-                mask = display_df.apply(lambda row: row.astype(str).str.contains(search_7, case=False).any(), axis=1)
-                display_df = display_df[mask]
+            if sel_v != "전체":
+                df_reorder_active = df_reorder_active[df_reorder_active[vn_col] == sel_v]
+            if search_v7:
+                df_reorder_active = df_reorder_active[
+                    df_reorder_active[p['it']].astype(str).str.contains(search_v7, case=False) |
+                    df_reorder_active[p['op']].astype(str).str.contains(search_v7, case=False)
+                ]
 
-            # [4. 데이터 에디터 출력 - 불필요한 열 제거 및 메모 최적화]
+            # [4. 화면 출력 데이터 구성]
+            # 사장님 요청대로 업체명-상품명 순서로 배치
+            display_df = pd.DataFrame({
+                "업체명": df_reorder_active[p['vn']],
+                "상품명": df_reorder_active[p['it']],
+                "옵션": df_reorder_active[p['op']],
+                "공급처상품명": df_reorder_active[p['vi']],
+                "최종 리오더 수량": df_reorder_active["리오더 수량"],
+                "메모": df_reorder_active["비고"] if "비고" in df_reorder_active.columns else ""
+            })
+
+            # [5. 데이터 에디터 출력 - 셀 간격 최적화]
             st.data_editor(
                 display_df,
                 use_container_width=True,
                 hide_index=True,
-                key="v7_re_editor",
+                key="v7_final_reorder_view",
                 column_config={
-                    "날짜": st.column_config.TextColumn(width=110),
                     "업체명": st.column_config.TextColumn(width=100),
-                    "상품명": st.column_config.TextColumn(width=180),
-                    "옵션": st.column_config.TextColumn(width=120),
+                    "상품명": st.column_config.TextColumn(width=200),
+                    "옵션": st.column_config.TextColumn(width=150),
                     "공급처상품명": st.column_config.TextColumn(width=180),
-                    # 숫자 열은 아주 작게
-                    "기존": st.column_config.NumberColumn("기존", width=60, format="%d"),
-                    "추가": st.column_config.NumberColumn("추가", width=60, format="%d"),
-                    # 메모 칸을 최대로!
-                    "메모": st.column_config.TextColumn("📝 이슈 및 입고메모", width=500),
+                    "최종 리오더 수량": st.column_config.NumberColumn("🔢 수량", width=80, format="%d"),
+                    "메모": st.column_config.TextColumn("📝 이슈 및 입고메모", width=500), # 메모 넓게
                 }
             )
 
-            # [5. 다운로드 버튼]
-            csv_data = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 리스트 다운로드 (CSV)", csv_data, "발주현황.csv", use_container_width=True)
+            # [6. 다운로드 버튼]
+            csv_7 = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 현재 리오더 현황 다운로드", csv_7, "최종_리오더_현황.csv", use_container_width=True)
             
         else:
-            st.warning("발주 내역이 없습니다.")
+            st.info("현재 진행 중인 리오더(미입고)가 없습니다. 모든 물건이 입고되었습니다!")
             
     except Exception as e:
-        st.error(f"7단계 에러: {e}")
+        st.error(f"현황판 로딩 중 오류: {e}")
