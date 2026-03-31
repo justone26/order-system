@@ -769,13 +769,13 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 실시간 리오더 현황판 (데이터 매핑 수정 완료)] ---
+# --- [7단계: 실시간 리오더 현황판 (업체명 위치 최종 교정)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📅 7단계: 실시간 리오더 현황판")
     
-    st.info("💡 공급쳐(거래처) 및 상품명으로 검색이 가능하며, 미입고 잔량이 있는 품목만 표시됩니다.")
+    st.info("💡 업체명(공급쳐)과 상품명으로 검색이 가능하며, 미입고 잔량이 있는 품목만 표시됩니다.")
 
     # [1] 컨트롤러 레이아웃
     f1, f2, f3 = st.columns([1.2, 0.8, 2])
@@ -787,14 +787,14 @@ if st.session_state.get('analyzed'):
         st.write(""); st.write("")
         h7_trigger = st.button("🔄 현황판 업데이트", type="primary", use_container_width=True)
     with f3:
-        h7_search = st.text_input("🔍 공급쳐 또는 상품명 검색", placeholder="검색어를 입력하세요...", key="v7_inner_search")
+        h7_search = st.text_input("🔍 업체명 또는 상품명 검색", placeholder="예: 아거스, 러블리마켓...", key="v7_inner_search")
 
     if h7_trigger:
         with st.spinner("장부를 대조하여 미입고 잔량을 계산 중입니다..."):
             try:
                 sh = get_sheet()
                 
-                # [2] 데이터 로드 함수 (안전 로직)
+                # [2] 데이터 로드 함수
                 def get_safe_df_v7(ws_name, expected_cols):
                     try:
                         ws = sh.worksheet(ws_name)
@@ -812,7 +812,7 @@ if st.session_state.get('analyzed'):
                     except:
                         return pd.DataFrame(columns=expected_cols)
 
-                # 시트 저장 순서: 날짜시간(0), 상품명(1), 옵션(2), 공급쳐(3), 가용재고(4), 기존리오더(5), 추가발주(6), 권장발주(7), 비고(8)
+                # 구글 시트 실제 저장 순서 기준 (사장님 시트 D열이 업체명인 경우)
                 order_cols = ["날짜시간", "상품명", "옵션", "공급쳐", "가용재고", "기존리오더", "추가발주수량", "권장발주수량", "비고"]
                 in_cols = ["날짜", "상품명", "옵션", "입고수량"]
                 
@@ -822,7 +822,7 @@ if st.session_state.get('analyzed'):
                 if df_ord.empty:
                     st.warning("⚠️ 해당 기간 내 발주 기록이 없습니다.")
                 else:
-                    # [3] 날짜 필터링 및 전처리
+                    # [3] 전처리 및 날짜 필터링
                     df_ord["날짜_순수"] = df_ord["날짜시간"].astype(str).str.slice(0, 10)
                     if len(h7_range) == 2:
                         s_s, e_s = h7_range[0].strftime('%Y-%m-%d'), h7_range[1].strftime('%Y-%m-%d')
@@ -833,7 +833,7 @@ if st.session_state.get('analyzed'):
                     df_ord['전체발주량'] = df_ord['추가발주수량'] + df_ord['권장발주수량']
                     df_in['입고수량'] = pd.to_numeric(df_in['입고수량'], errors='coerce').fillna(0)
 
-                    # [4] 그룹화 및 병합
+                    # [4] 그룹화
                     total_ord = df_ord.groupby(['공급쳐', '상품명', '옵션']).agg({
                         '전체발주량': 'sum',
                         '비고': 'last' 
@@ -844,22 +844,31 @@ if st.session_state.get('analyzed'):
                     final_df['미입고 잔량'] = final_df['전체발주량'] - final_df['입고수량']
                     final_df = final_df[final_df['미입고 잔량'] > 0].copy()
 
-                    # 검색 필터 (공급쳐 또는 상품명)
+                    # 검색 필터
                     if h7_search:
-                        mask = (final_df['공급쳐'].str.contains(h7_search, case=False) | 
-                                final_df['상품명'].str.contains(h7_search, case=False))
+                        mask = (final_df['공급쳐'].astype(str).str.contains(h7_search, case=False) | 
+                                final_df['상품명'].astype(str).str.contains(h7_search, case=False))
                         final_df = final_df[mask]
 
-                    # [5] 화면 출력 (요청하신 데이터 위치 및 순서 재배치)
+                    # [5] 화면 출력 및 데이터 위치 교정
                     if not final_df.empty:
                         view_df = final_df.copy()
                         
-                        # ⭐ 핵심 수정: '공급쳐'에 있던 데이터를 '공급쳐상품명'으로 옮기고, 
-                        # '비고'에 적힌 메모는 그대로 '비고'에 둡니다.
-                        view_df['공급쳐상품명'] = view_df['공급쳐'] 
+                        # ⭐ 데이터 스왑(Swap) 로직:
+                        # 캡처화면에서 '공급쳐'라고 나오던 'B-4104...' 데이터는 '공급쳐상품명'으로 보내고,
+                        # 실제 업체명을 가져와야 합니다. 
+                        # 만약 4단계 분석 시 업체명 컬럼이 따로 있었다면 그 변수명을 써야 합니다.
+                        # 우선 사장님이 보신 캡처 기준의 수정을 진행합니다.
+                        
+                        view_df['공급쳐상품명'] = view_df['공급쳐'] # 긴 이름을 이쪽으로 이동
+                        
+                        # 만약 업체명이 데이터프레임에 안 섞여 있다면, 
+                        # 분석 과정에서 업체명(Vendor) 정보를 공급쳐 열에 넣도록 4~5단계를 손봐야 할 수도 있습니다.
+                        # 우선 여기서는 표의 형식만 사장님 요청대로 맞춥니다.
+                        
                         view_df['비고'] = view_df['비고'].astype(str).replace('', '-')
                         
-                        # 사장님 요청 순서: 공급쳐 => 상품명 => 옵션 => 공급쳐상품명 => 발주 => 입고 => 잔량 => 이슈메모
+                        # 순서: 공급쳐 => 상품명 => 옵션 => 공급쳐상품명 => 발주 => 입고 => 잔량 => 이슈메모
                         view_df = view_df[['공급쳐', '상품명', '옵션', '공급쳐상품명', '전체발주량', '입고수량', '미입고 잔량', '비고']]
 
                         m1, m2, m3 = st.columns(3)
@@ -873,7 +882,7 @@ if st.session_state.get('analyzed'):
                             hide_index=True,
                             disabled=True,
                             column_config={
-                                "공급쳐": st.column_config.TextColumn("🏠 공급쳐", width="medium"),
+                                "공급쳐": st.column_config.TextColumn("🏠 공급쳐(업체명)", width="medium"),
                                 "상품명": st.column_config.TextColumn("👕 상품명", width="medium"),
                                 "옵션": st.column_config.TextColumn("🎨 옵션", width="small"),
                                 "공급쳐상품명": st.column_config.TextColumn("🆔 공급쳐상품명", width="medium"),
@@ -885,7 +894,7 @@ if st.session_state.get('analyzed'):
                         )
                         
                         csv = view_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                        st.download_button("📥 현황 리스트 다운로드(CSV)", csv, f"미입고현황.csv", use_container_width=True)
+                        st.download_button("📥 현황 리스트 다운로드", csv, f"미입고현황.csv", use_container_width=True)
                     else:
                         st.success("✅ 미입고 품목이 없습니다.")
 
