@@ -484,17 +484,23 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📋 5단계: 최종 발주 리스트 요약")
 
+    # 4단계 계산 데이터 활용 (품절 제외)
     df_v5 = df_work[~df_work[sold_out_col].astype(str).str.contains('품절', na=False)].copy()
     
+    # 상단 필터 레이아웃
     f1, f2, f3 = st.columns([1.5, 2, 1])
     m5_f = f1.selectbox("🚦 상태 필터", ["🚨 고위험/주의", "✅ 전체정상"], key="v5_main_filter")
-    s5_q = f2.text_input("🔍 상품명 검색", key="v5_main_search")
+    s5_q = f2.text_input("🔍 상품명 검색", key="v5_main_search", placeholder="상품명 입력...")
     d5_d = f3.date_input("🗓️ 기준 날짜", datetime.now(KST).date(), key="v5_main_date")
 
-    if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
+    if 'add_order_dict' not in st.session_state: 
+        st.session_state.add_order_dict = {}
+    
+    # 데이터 매핑 및 상태 계산
     df_v5['추가발주수량'] = df_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
     df_v5['상태'] = df_v5['권장발주'].apply(lambda x: "🚨 긴급" if x > 0 else "✅ 정상")
 
+    # 위험 상품군 필터링
     danger_names = df_v5[df_v5['권장발주'] > 0][item].unique()
     if m5_f == "🚨 고위험/주의":
         df_v5_view = df_v5[df_v5[item].isin(danger_names)].copy()
@@ -506,7 +512,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     
     df_v5_view = df_v5_view.sort_values(by=[item, option])
 
-    # 화면 표시용 매핑 (공급처 제외)
+    # 에디터 컬럼 설정 (공급처 제외, 메모장 확대)
     map_v5 = {
         "상태": "상태", item: "상품명", option: "옵션", v_item: "공급처상품명", 
         avail: "가용", "리오더 수량": "기존", "추가발주수량": "추가", "권장발주": "권장", "비고": "📝 이슈/입고메모"
@@ -564,10 +570,20 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 try:
                     get_sheet().worksheet("발주기록").append_rows(log_rows)
                     st.session_state.add_order_dict = {} 
-                    st.success("✅ 발주기록 저장 완료!"); time.sleep(0.5); st.rerun()
+                    st.success("✅ 발주기록 시트 저장 완료!"); time.sleep(0.5); st.rerun()
                 except Exception as e: st.error(f"❌ 저장 실패: {e}")
 
-
+    with c_down:
+        df_v5['최종합계'] = df_v5['권장발주'] + df_v5['추가발주수량']
+        csv_target = df_v5[df_v5['최종합계'] > 0].copy()
+        if not csv_target.empty:
+            csv_res = csv_target[[vendor, item, option, v_item, '최종합계']].rename(columns={
+                vendor: "공급처", item: "상품명", option: "옵션", v_item: "공급처상품명", "최종합계": "발주수량"
+            })
+            csv_data = csv_res.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 최종 발주서 CSV 다운로드", csv_data, f"발주서_{d5_d.strftime('%m%d')}.csv", use_container_width=True)
+        else:
+            st.button("📥 최종 발주서 CSV 다운로드 (내역 없음)", disabled=True, use_container_width=True)
 
 
 
@@ -582,17 +598,18 @@ if st.session_state.get('analyzed'):
     f1, f2, f3 = st.columns([1.2, 0.6, 2])
     with f1:
         today = datetime.now(KST).date()
-        d_range = st.date_input("🗓️ 조회 날짜 범위", value=(today, today), key="v6_date_range")
+        d_range = st.date_input("🗓️ 조회 범위", value=(today, today), key="v6_date_range")
     with f2:
         st.write(""); st.write("") 
         search_trigger = st.button("🔍 내역 조회", use_container_width=True, type="primary", key="v6_search_btn")
     with f3:
-        h_q = st.text_input("🔍 결과 내 상품명 검색", key="v6_search_q")
+        h_q = st.text_input("🔍 상품명 검색", key="v6_search_q", placeholder="상품명 입력...")
 
     if search_trigger or h_q:
         try:
-            worksheet = get_sheet().worksheet("발주기록")
-            all_values = worksheet.get_all_values()
+            with st.spinner("📡 데이터를 불러오는 중..."):
+                worksheet = get_sheet().worksheet("발주기록")
+                all_values = worksheet.get_all_values()
             
             if len(all_values) > 1:
                 temp_df = pd.DataFrame(all_values[1:])
@@ -600,22 +617,26 @@ if st.session_state.get('analyzed'):
                 df_hist["발주시간"] = temp_df[0]
                 df_hist["상품명"] = temp_df[1]
                 df_hist["옵션"] = temp_df[2]
-                # 🚨 위치 정정: 업체명은 9번 인덱스, 공급처상품명은 3번 인덱스
+                
+                # 🚨 사장님 시트 맞춤 교정: 10번째(9)가 업체명, 4번째(3)가 공급처상품명
                 df_hist["업체명"] = temp_df[9]      
                 df_hist["공급처상품명"] = temp_df[3] 
+                
                 df_hist["가용"] = temp_df[4]
                 df_hist["기존"] = temp_df[5]
                 df_hist["추가"] = temp_df[6]
                 df_hist["권장"] = temp_df[7]
                 df_hist["이슈/메모"] = temp_df[8]
 
+                # 필터링
                 df_hist["날짜_만"] = df_hist["발주시간"].astype(str).str.slice(0, 10)
                 if isinstance(d_range, tuple) and len(d_range) == 2:
-                    s_date, e_date = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
-                    df_hist = df_hist[(df_hist["날짜_만"] >= s_date) & (df_hist["날짜_만"] <= e_date)]
+                    s_d, e_d = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
+                    df_hist = df_hist[(df_hist["날짜_만"] >= s_d) & (df_hist["날짜_만"] <= e_d)]
 
                 df_hist["추가"] = pd.to_numeric(df_hist["추가"], errors='coerce').fillna(0)
                 df_hist = df_hist[df_hist["추가"] > 0].sort_values(by="발주시간", ascending=False)
+                
                 if h_q:
                     df_hist = df_hist[df_hist["상품명"].astype(str).str.contains(h_q, case=False)]
 
@@ -629,6 +650,7 @@ if st.session_state.get('analyzed'):
                             "발주시간": st.column_config.TextColumn("📅 발주시간", width=160),
                             "업체명": st.column_config.TextColumn("🏭 업체명", width=120),
                             "상품명": st.column_config.TextColumn("📦 상품명", width=250),
+                            "옵션": st.column_config.TextColumn("옵션", width=150),
                             "공급처상품명": st.column_config.TextColumn("🆔 공급처 상품명", width=180),
                             "가용": st.column_config.TextColumn("가용", width=80),
                             "기존": st.column_config.TextColumn("기존", width=80),
@@ -640,7 +662,9 @@ if st.session_state.get('analyzed'):
                 else:
                     st.warning("🧐 기록이 없습니다.")
         except Exception as e:
-            st.error(f"📡 오류: {e}")
+            st.error(f"📡 오류 발생: {e}")
+
+
 
 
 
