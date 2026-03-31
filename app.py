@@ -671,83 +671,77 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 전체 발주 기록 현황 (누락 없는 전체 조회)] ---
+# --- [7단계: 최종 리오더 현황 (수량 합산 및 간소화)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
-    st.subheader("📊 7단계: 전체 누적 발주 현황 (발주기록 기반)")
+    st.subheader("📊 7단계: 업체별 최종 리오더 현황")
 
     try:
-        # 1. '발주기록' 시트에서 직접 데이터를 가져옵니다 (메인 시트 X)
+        # 1. 데이터의 원천인 '발주기록' 시트에서 전체 데이터를 읽어옵니다.
         sh_log = get_sheet().worksheet("발주기록")
         raw_data = sh_log.get_all_values()
         
         if len(raw_data) > 1:
-            # 제목 줄 제외하고 데이터 구성
             df_log_all = pd.DataFrame(raw_data[1:], columns=None)
             
-            # [시트 컬럼 매핑 - 사장님 시트 A~J열 기준]
-            # 0:날짜, 1:상품명, 2:옵션, 3:공급처상품명, 5:기존리오더, 6:추가발주, 8:메모, 9:업체명
+            # [데이터 가공: 기존+추가를 더해서 '최종수량' 하나로 합칩니다]
+            # A:0(날짜), B:1(상품명), C:2(옵션), D:3(공급처상품명), F:5(기존), G:6(추가), I:8(메모), J:9(업체명)
+            v_exist = pd.to_numeric(df_log_all.iloc[:, 5], errors='coerce').fillna(0).astype(int)
+            v_added = pd.to_numeric(df_log_all.iloc[:, 6], errors='coerce').fillna(0).astype(int)
+            
             display_df = pd.DataFrame({
                 "날짜": df_log_all.iloc[:, 0],
                 "업체명": df_log_all.iloc[:, 9] if df_log_all.shape[1] > 9 else "미기입",
                 "상품명": df_log_all.iloc[:, 1],
                 "옵션": df_log_all.iloc[:, 2],
                 "공급처상품명": df_log_all.iloc[:, 3],
-                "기존": pd.to_numeric(df_log_all.iloc[:, 5], errors='coerce').fillna(0).astype(int),
-                "추가": pd.to_numeric(df_log_all.iloc[:, 6], errors='coerce').fillna(0).astype(int),
+                "최종 리오더 수량": v_exist + v_added, # 👈 두 숫자를 합쳐서 하나로!
                 "메모": df_log_all.iloc[:, 8]
             })
 
-            # [2. 상단 요약 정보]
-            # 필터링 전 전체 합계를 보여줍니다.
-            total_items = len(display_df)
-            total_qty = display_df["기존"].sum() + display_df["추가"].sum()
-            
+            # [2. 상단 요약 Metric]
+            t_qty = display_df["최종 리오더 수량"].sum()
             m1, m2 = st.columns(2)
-            m1.metric("📦 누적 발주 건수", f"{total_items}건")
-            m2.metric("🔢 총 발주 수량 합계", f"{total_qty:,}개")
-            st.write("")
+            m1.metric("📦 전체 발주 품목", f"{len(display_df)}건")
+            m2.metric("🔢 총 미입고 수량", f"{t_qty:,}개")
 
-            # [3. 업체 필터 및 검색]
+            # [3. 필터 레이아웃]
             col1, col2 = st.columns([1, 1])
             with col1:
                 v_list = ["전체"] + sorted([v for v in display_df["업체명"].unique() if v])
-                selected_v = st.selectbox("🏠 업체별 필터", v_list, key="v7_all_v")
+                selected_v = st.selectbox("🏠 업체 필터", v_list, key="v7_fin_vendor")
             with col2:
-                search_v = st.text_input("🔍 상품명 검색", key="v7_all_s")
+                search_v = st.text_input("🔍 상품명 검색", key="v7_fin_search")
 
-            # 필터 적용
+            # 필터링
             if selected_v != "전체":
                 display_df = display_df[display_df["업체명"] == selected_v]
             if search_v:
                 mask = display_df.apply(lambda row: row.astype(str).str.contains(search_v, case=False).any(), axis=1)
                 display_df = display_df[mask]
 
-            # [4. 표 출력 - 셀 너비 최적화]
+            # [4. 표 출력 - 메모 칸 여유 있게]
             st.data_editor(
                 display_df,
                 use_container_width=True,
                 hide_index=True,
-                key="v7_all_view_editor",
+                key="v7_fin_editor",
                 column_config={
                     "날짜": st.column_config.TextColumn(width=110),
                     "업체명": st.column_config.TextColumn(width=100),
-                    "상품명": st.column_config.TextColumn(width=180),
-                    "옵션": st.column_config.TextColumn(width=120),
-                    "공급처상품명": st.column_config.TextColumn(width=180),
-                    "기존": st.column_config.NumberColumn(width=60),
-                    "추가": st.column_config.NumberColumn(width=60),
-                    "메모": st.column_config.TextColumn("📝 이슈 및 입고메모", width=500), # 메모장 넓게
+                    "상품명": st.column_config.TextColumn(width=200),
+                    "최종 리오더 수량": st.column_config.NumberColumn("🔢 수량", width=80, format="%d"),
+                    "메모": st.column_config.TextColumn("📝 입고관련 메모", width=500), # 메모창 최대화
                 }
             )
 
             # [5. 다운로드]
             csv_data = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 발주 데이터 다운로드", csv_data, "발주기록_전체.csv", use_container_width=True)
+            st.download_button("📥 현재 현황 다운로드", csv_data, "최종_발주현황.csv", use_container_width=True)
             
         else:
-            st.warning("기록된 데이터가 없습니다. 발주기록 시트를 확인해 주세요.")
+            st.warning("발주 기록이 없습니다.")
             
     except Exception as e:
-        st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
+        st.error(f"데이터 로드 실패: {e}")
