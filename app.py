@@ -1,22 +1,25 @@
 import streamlit as st
-
 import pandas as pd
-
-from datetime import datetime, timedelta, timezone
-
 import time
-
-import pytz
-
 import io
+import streamlit.components.v1 as components
 
+# 🚨 [수정] pytz를 삭제하고 파이썬 기본 기능만 사용 (설치 에러 완벽 방지)
 from datetime import datetime, timedelta, timezone
 
-import streamlit.components.v1 as components # <-- 1. 이 라이브러리가 꼭 필요합니다!
-
-# 한국 시간(KST)을 pytz 없이 설정하는 법
+# 1. 한국 시간(KST) 및 오늘 날짜 설정 (pytz 없이도 정확함)
 KST = timezone(timedelta(hours=9)) 
 current_today = datetime.now(KST).date()
+
+# 2. (선택사항) 만약 코드 하단에서 pytz를 꼭 써야 하는 상황이라면 
+# 아래 try-except 구문을 써서 설치 안 됐을 때를 대비하세요.
+try:
+    import pytz
+    KST_PYTZ = pytz.timezone('Asia/Seoul')
+except ImportError:
+    # pytz가 없으면 위에서 만든 기본 KST를 사용함
+    pass
+
 
 # --- [세션 상태 초기화] ---
 
