@@ -671,81 +671,80 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 공장 미입고 총 수량 현황 (문구 최적화)] ---
+# --- [7단계: 미입고 현황 및 메모 실시간 저장 기능] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📊 7단계: 공장 미입고 총 수량 현황")
 
     try:
-        # 1. 데이터의 원천인 '발주기록' 시트에서 전체 데이터를 읽어옵니다.
         sh_log = get_sheet().worksheet("발주기록")
         raw_data = sh_log.get_all_values()
         
         if len(raw_data) > 1:
-            df_log_all = pd.DataFrame(raw_data[1:], columns=None)
+            # 전체 데이터를 가져옵니다 (수정을 위해 index를 포함한 원본 형태 유지)
+            df_log_all = pd.DataFrame(raw_data[1:], columns=raw_data[0])
             
-            # [수량 합산: 기존 주문분 + 오늘 추가분 = 전체 미입고 수량]
-            # F열(5): 기존, G열(6): 추가
+            # [화면 표시용 가공]
+            # F(기존), G(추가) 수량을 합산하여 '미입고 총수량' 생성
             v_exist = pd.to_numeric(df_log_all.iloc[:, 5], errors='coerce').fillna(0).astype(int)
             v_added = pd.to_numeric(df_log_all.iloc[:, 6], errors='coerce').fillna(0).astype(int)
-            
-            display_df = pd.DataFrame({
-                "날짜": df_log_all.iloc[:, 0],
-                "업체명": df_log_all.iloc[:, 9] if df_log_all.shape[1] > 9 else "미기입",
-                "상품명": df_log_all.iloc[:, 1],
-                "옵션": df_log_all.iloc[:, 2],
-                "공급처상품명": df_log_all.iloc[:, 3],
-                "미입고 총수량": v_exist + v_added, # 👈 인지하기 쉬운 문구로 변경
-                "메모": df_log_all.iloc[:, 8]
-            })
+            df_log_all["미입고 총수량"] = v_exist + v_added
 
-            # [2. 상단 요약 Metric - 문구 직관화]
-            t_qty = display_df["미입고 총수량"].sum()
-            m1, m2 = st.columns(2)
-            m1.metric("📦 발주 진행 품목", f"{len(display_df)}건")
-            m2.metric("🔢 공장 미입고 총합계", f"{t_qty:,}개") # 👈 '총합계' 강조
-            st.write("")
-
-            # [3. 필터 및 검색]
+            # 필터/검색용 레이아웃
             col1, col2 = st.columns([1, 1])
             with col1:
-                v_list = ["전체"] + sorted([v for v in display_df["업체명"].unique() if v])
-                selected_v = st.selectbox("🏠 업체별 필터", v_list, key="v7_final_v")
+                v_list = ["전체"] + sorted([v for v in df_log_all.iloc[:, 9].unique() if v])
+                selected_v = st.selectbox("🏠 업체별 필터", v_list, key="v7_save_v")
             with col2:
-                search_v = st.text_input("🔍 상품명 검색 (러블리마켓/아거스 등)", key="v7_final_s")
+                search_v = st.text_input("🔍 상품명 검색", key="v7_save_s")
 
-            # 필터링
+            # 필터링 적용
+            filtered_df = df_log_all.copy()
             if selected_v != "전체":
-                display_df = display_df[display_df["업체명"] == selected_v]
+                filtered_df = filtered_df[filtered_df.iloc[:, 9] == selected_v]
             if search_v:
-                mask = display_df.apply(lambda row: row.astype(str).str.contains(search_v, case=False).any(), axis=1)
-                display_df = display_df[mask]
+                mask = filtered_df.apply(lambda row: row.astype(str).str.contains(search_v, case=False).any(), axis=1)
+                filtered_df = filtered_df[mask]
 
-            # [4. 표 출력 - 셀 구성 최적화]
-            st.data_editor(
-                display_df,
+            # [핵심: 데이터 에디터]
+            # 여기서 수정하면 edited_rows에 변경 내용이 담깁니다.
+            edited_df = st.data_editor(
+                filtered_df,
                 use_container_width=True,
-                hide_index=True,
-                key="v7_final_editor",
+                hide_index=False, # 수정을 위해 인덱스 잠시 표시
+                key="v7_editor_with_save",
+                column_order=("날짜", "업체명", "상품명", "옵션", "미입고 총수량", "메모"),
                 column_config={
-                    "날짜": st.column_config.TextColumn(width=110),
-                    "업체명": st.column_config.TextColumn("업체명", width=100),
-                    "상품명": st.column_config.TextColumn(width=180),
-                    "옵션": st.column_config.TextColumn(width=130),
-                    "공급처상품명": st.column_config.TextColumn(width=180),
-                    # '미입고 총수량'을 굵게 강조하는 느낌으로 배치
-                    "미입고 총수량": st.column_config.NumberColumn("🔢 미입고 총수량", width=100, format="%d"),
-                    "메모": st.column_config.TextColumn("📝 입고/이슈 메모", width=500), 
+                    "미입고 총수량": st.column_config.NumberColumn("🔢 미입고 총수량", disabled=True), # 수량은 수정 불가
+                    "메모": st.column_config.TextColumn("📝 입고/이슈 메모 (수정 후 저장 버튼 클릭)", width=500),
                 }
             )
 
-            # [5. 다운로드]
-            csv_data = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 현재 현황 다운로드 (엑셀용 CSV)", csv_data, "미입고_현황.csv", use_container_width=True)
-            
+            # [저장 버튼 로직]
+            if st.button("💾 변경된 메모 시트에 저장하기", use_container_width=True, type="primary"):
+                with st.spinner("구글 시트에 메모를 기록 중입니다..."):
+                    # 변경된 셀 정보 확인
+                    if st.session_state["v7_editor_with_save"]["edited_rows"]:
+                        updates = st.session_state["v7_editor_with_save"]["edited_rows"]
+                        
+                        for row_idx, changes in updates.items():
+                            if "메모" in changes:
+                                # 실제 시트의 행 번호 계산 (헤더 1줄 + 인덱스는 0부터 시작하므로 +2)
+                                # 주의: 필터링된 상태이므로 원본 df의 인덱스를 찾아야 함
+                                actual_row_in_sheet = int(filtered_df.index[int(row_idx)]) + 2
+                                new_memo = changes["메모"]
+                                
+                                # I열(9번째 열)이 메모 칸입니다.
+                                sh_log.update_cell(actual_row_in_sheet, 9, new_memo)
+                        
+                        st.success("✅ 메모가 구글 시트에 안전하게 저장되었습니다!")
+                        st.rerun() # 저장 후 새로고침해서 반영
+                    else:
+                        st.info("수정된 메모 내용이 없습니다.")
+
         else:
-            st.warning("아직 기록된 미입고 데이터가 없습니다.")
+            st.warning("기록된 데이터가 없습니다.")
             
     except Exception as e:
-        st.error(f"현황 로드 실패: {e}")
+        st.error(f"메모 저장 중 오류 발생: {e}")
