@@ -748,7 +748,7 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 실시간 리오더 현황판 (오류 방지 & 이슈 툴팁 적용)] ---
+# --- [7단계: 실시간 리오더 현황판 (자동 열 생성 및 툴팁 적용)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
@@ -773,23 +773,30 @@ if st.session_state.get('analyzed'):
             try:
                 sh = get_sheet()
                 
-                # [2] 데이터 로드 함수 (헤더 중복 오류 방지 로직)
+                # [2] 데이터 로드 함수 (Column Missing 에러 방지 로직 포함)
                 def get_safe_df_v7(ws_name, expected_cols):
                     try:
                         ws = sh.worksheet(ws_name)
-                        all_values = ws.get_all_values() # 전체 데이터를 리스트로 읽음
-                        if len(all_values) > 1:
-                            # 첫 줄은 무시하고 데이터만 가져와서 지정된 컬럼명 강제 부여
-                            df = pd.DataFrame(all_values[1:])
-                            # 실제 데이터 컬럼 수에 맞춰 슬라이싱
+                        all_vals = ws.get_all_values()
+                        
+                        if len(all_vals) > 1:
+                            df = pd.DataFrame(all_vals[1:])
+                            
+                            # ⭐ 핵심: 실제 시트의 열 개수가 부족하면 빈 열을 자동으로 채워줌
+                            actual_n = df.shape[1]
+                            if actual_n < len(expected_cols):
+                                for i in range(actual_n, len(expected_cols)):
+                                    df[i] = "" 
+                            
+                            # 설정된 컬럼 수만큼 슬라이싱 후 이름 부여
                             df = df.iloc[:, :len(expected_cols)]
-                            df.columns = expected_cols[:df.shape[1]]
+                            df.columns = expected_cols
                             return df
                         return pd.DataFrame(columns=expected_cols)
                     except:
                         return pd.DataFrame(columns=expected_cols)
 
-                # 컬럼 정의 (구글 시트의 실제 순서와 동일해야 함)
+                # 컬럼 정의 (시트 순서와 일치해야 함)
                 order_cols = ["날짜시간", "상품명", "옵션", "공급쳐", "가용재고", "기존리오더", "추가발주수량", "권장발주수량", "비고"]
                 in_cols = ["날짜", "상품명", "옵션", "입고수량"]
                 
@@ -799,50 +806,45 @@ if st.session_state.get('analyzed'):
                 if df_ord.empty:
                     st.warning("⚠️ 분석할 발주 기록이 없습니다. 기간을 조절해 보세요.")
                 else:
-                    # [3] 데이터 전처리 및 필터링
+                    # [3] 데이터 전처리
                     # 날짜 필터링
                     df_ord["날짜_순수"] = df_ord["날짜시간"].astype(str).str.slice(0, 10)
                     if len(h7_range) == 2:
                         s_s, e_s = h7_range[0].strftime('%Y-%m-%d'), h7_range[1].strftime('%Y-%m-%d')
                         df_ord = df_ord[(df_ord["날짜_순수"] >= s_s) & (df_ord["날짜_순수"] <= e_s)]
 
-                    # 숫자 변환 (오류 방지를 위해 한번 더 처리)
+                    # 숫자 변환
                     for c in ['추가발주수량', '권장발주수량']:
                         df_ord[c] = pd.to_numeric(df_ord[c], errors='coerce').fillna(0)
                     df_ord['전체발주량'] = df_ord['추가발주수량'] + df_ord['권장발주수량']
                     
                     df_in['입고수량'] = pd.to_numeric(df_in['입고수량'], errors='coerce').fillna(0)
 
-                    # [4] 그룹화 및 병합 (잔량 계산)
-                    # 발주 요약 (비고는 가장 마지막/최신 메모를 가져옴)
+                    # [4] 그룹화 및 잔량 계산
                     total_ord = df_ord.groupby(['상품명', '옵션', '공급쳐']).agg({
                         '전체발주량': 'sum',
-                        '비고': 'last'
+                        '비고': 'last' # 최신 메모 유지
                     }).reset_index()
                     
-                    # 입고 요약
                     total_in = df_in.groupby(['상품명', '옵션'])['입고수량'].sum().reset_index()
 
-                    # 데이터 병합
                     final_df = pd.merge(total_ord, total_in, on=['상품명', '옵션'], how='left').fillna({'입고수량': 0, '비고': ''})
                     final_df['미입고 잔량'] = final_df['전체발주량'] - final_df['입고수량']
-                    
-                    # 잔량이 남은 것만 표시
                     final_df = final_df[final_df['미입고 잔량'] > 0].copy()
 
-                    # 검색 필터 적용
+                    # 검색 필터
                     if h7_search:
                         mask = final_df['상품명'].str.contains(h7_search, case=False) | final_df['공급쳐'].str.contains(h7_search, case=False)
                         final_df = final_df[mask]
 
-                    # [5] 화면 최종 출력
+                    # [5] 화면 출력
                     if not final_df.empty:
                         m1, m2, m3 = st.columns(3)
                         m1.metric("대상 품목수", f"{len(final_df)}건")
-                        m2.metric("총 발주수량", f"{int(final_df['전체발주량'].sum())}개")
-                        m3.metric("총 미입고 잔량", f"{int(final_df['미입고 잔량'].sum())}개", delta_color="inverse")
+                        m2.metric("총 발주량", f"{int(final_df['전체발주량'].sum())}개")
+                        m3.metric("총 미입고 잔량", f"{int(final_df['미입고 잔량'].sum())}개")
 
-                        # 테이블 출력 (툴팁 포함)
+                        # 툴팁 적용 테이블 (비고 열 숨김)
                         st.dataframe(
                             final_df[['상품명', '옵션', '공급쳐', '전체발주량', '입고수량', '미입고 잔량', '비고']].sort_values(by='미입고 잔량', ascending=False),
                             use_container_width=True,
@@ -850,21 +852,18 @@ if st.session_state.get('analyzed'):
                             column_config={
                                 "상품명": st.column_config.TextColumn(
                                     "상품명 💬", 
-                                    help="💡 메모: " + final_df['비고'].astype(str) # 마우스 올리면 이슈 노출
+                                    help="💡 메모: " + final_df['비고'].astype(str)
                                 ),
-                                "비고": None, # 화면 공간 절약을 위해 실제 열은 숨김
+                                "비고": None,
                                 "공급쳐": "거래처",
-                                "전체발주량": st.column_config.NumberColumn("발주", format="%d"),
-                                "입고수량": st.column_config.NumberColumn("입고", format="%d"),
                                 "미입고 잔량": st.column_config.NumberColumn("잔량 🚩", format="%d")
                             }
                         )
                         
-                        # CSV 다운로드 기능
                         csv = final_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                        st.download_button("📥 현재 현황판 리스트 다운로드", csv, f"미입고현황_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
+                        st.download_button("📥 현황 리스트 다운로드", csv, f"미입고현황_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
                     else:
-                        st.success("✅ 해당 기간 내 모든 리오더 상품이 정상 입고되었습니다.")
+                        st.success("✅ 선택 기간 내 모든 리오더 상품이 입고되었습니다.")
 
             except Exception as e:
                 st.error(f"❌ 현황판 불러오기 실패: {e}")
