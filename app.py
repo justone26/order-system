@@ -671,7 +671,7 @@ if st.session_state.get('analyzed'):
 
 
 # ==========================================================
-# --- [7단계: 발주 현황 조회 (업체명 우선 배치 버전)] ---
+# --- [7단계: 발주 현황 조회 (업체 필터 + 업체명 전진 배치)] ---
 # ==========================================================
 if st.session_state.get('analyzed'):
     st.divider()
@@ -684,28 +684,44 @@ if st.session_state.get('analyzed'):
         if len(raw_data) > 1:
             df_log = pd.DataFrame(raw_data[1:], columns=None)
             
-            # [열 순서 재배치] 업체명을 상품명 앞으로 이동
-            # 데이터 위치는 사장님 시트(A~J)를 그대로 유지하되, 화면에 보여주는 순서만 바꿉니다.
+            # [1. 데이터 구성]
             display_df = pd.DataFrame({
-                "날짜": df_log.iloc[:, 0],          # A열
-                "업체명": df_log.iloc[:, 9] if df_log.shape[1] > 9 else "", # J열을 앞으로!
-                "상품명": df_log.iloc[:, 1],        # B열
-                "옵션": df_log.iloc[:, 2],          # C열
-                "공급처상품명": df_log.iloc[:, 3],  # D열
-                "가용재고": df_log.iloc[:, 4],      # E열
-                "기존리오더": df_log.iloc[:, 5],    # F열
-                "추가발주": df_log.iloc[:, 6],      # G열
-                "권장발주": df_log.iloc[:, 7],      # H열
-                "메모": df_log.iloc[:, 8]           # I열
+                "날짜": df_log.iloc[:, 0],
+                "업체명": df_log.iloc[:, 9] if df_log.shape[1] > 9 else "",
+                "상품명": df_log.iloc[:, 1],
+                "옵션": df_log.iloc[:, 2],
+                "공급처상품명": df_log.iloc[:, 3],
+                "가용재고": df_log.iloc[:, 4],
+                "기존리오더": df_log.iloc[:, 5],
+                "추가발주": df_log.iloc[:, 6],
+                "권장발주": df_log.iloc[:, 7],
+                "메모": df_log.iloc[:, 8]
             })
 
-            # [UI 구성]
-            search_7 = st.text_input("🔍 상품명 또는 업체명 검색", key="v7_final_search")
+            # [2. 검색 및 업체 필터 레이아웃]
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                # 업체명 리스트 추출 (중복 제거 및 정렬)
+                vendor_list = ["전체"] + sorted([v for v in display_df["업체명"].unique() if v])
+                selected_vendor = st.selectbox("🏠 업체별 필터", vendor_list, key="v7_vendor_filter")
+            
+            with col2:
+                search_7 = st.text_input("🔍 상품명 직접 검색", placeholder="검색어를 입력하세요...", key="v7_text_search")
+
+            # [3. 필터링 로직 적용]
+            # 업체 필터 적용
+            if selected_vendor != "전체":
+                display_df = display_df[display_df["업체명"] == selected_vendor]
+            
+            # 검색어 필터 적용
             if search_7:
                 mask = display_df.apply(lambda row: row.astype(str).str.contains(search_7, case=False).any(), axis=1)
                 display_df = display_df[mask]
 
-            # [데이터 에디터 출력]
+            # [4. 데이터 에디터 출력]
+            st.info(f"✅ 현재 조건에 맞는 데이터가 {len(display_df)}건 조회되었습니다.")
+            
             st.data_editor(
                 display_df,
                 use_container_width=True,
@@ -722,12 +738,12 @@ if st.session_state.get('analyzed'):
                 }
             )
 
-            # [CSV 다운로드 버튼]
+            # [5. CSV 다운로드 버튼]
             csv_data = display_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button(
-                label="📥 현재 화면 리스트 다운로드 (CSV)",
+                label="📥 현재 필터링된 리스트 다운로드 (CSV)",
                 data=csv_data,
-                file_name=f"발주현황_{datetime.now(KST).strftime('%m%d')}.csv",
+                file_name=f"발주현황_{selected_vendor}_{datetime.now(KST).strftime('%m%d')}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
