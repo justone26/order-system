@@ -584,31 +584,31 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ------------------------------------------------------------------
-# [5단계: 최종 발주 요약] - KeyError(비고->메모) 수정 및 컬럼 완벽 매칭
+# [5단계: 최종 발주 요약] - '메모' 컬럼 부재로 인한 KeyError 완벽 해결
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📋 5단계: 최종 발주 리스트 요약")
 
-    # [1] 최신 데이터 로드
+    # [1] 데이터 로드 및 기본 설정
     reorder_map_v5, _ = get_realtime_data_v4(datetime.now(KST).date())
     df_v5 = df_work[~df_work[s_out].astype(str).str.contains('품절', na=False)].copy()
     
-    # 데이터 매핑용 키 생성 (4단계와 동일)
+    # ⭐ [핵심] df_v5와 원본 데이터 양쪽에 '메모' 컬럼이 있는지 확인하고 없으면 만듭니다.
+    if '메모' not in df_v5.columns:
+        df_v5['메모'] = ""
+    if '메모' not in st.session_state.df_raw.columns:
+        st.session_state.df_raw['메모'] = ""
+
     df_v5["리오더 총합"] = df_v5['clean_key'].map(reorder_map_v5).fillna(0).astype(int)
     
     if 'add_order_dict' not in st.session_state: 
         st.session_state.add_order_dict = {}
     
     df_v5['추가발주입력'] = df_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
-    
-    # ⭐ 사장님 요청대로 '비고' 대신 '메모' 컬럼 사용 (없으면 생성)
-    if '메모' not in st.session_state.df_raw.columns:
-        st.session_state.df_raw['메모'] = ""
-
     df_v5['상태표시'] = df_v5['발주권장'].apply(lambda x: "🚨 긴급" if x > 0 else "✅ 정상")
 
-    # 검색 UI
+    # [2] 검색 UI
     f1, f2, f3 = st.columns([1.5, 2, 1])
     with f1: m5_f = st.selectbox("🚦 상태 필터", ["🚨 고위험/주의", "✅ 전체정상"], key="v5_f")
     with f2: s5_q = st.text_input("🔍 상품명/옵션 검색", key="v5_s")
@@ -618,16 +618,18 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     if m5_f == "🚨 고위험/주의": 
         df_v5_v = df_v5_v[df_v5_v['발주권장'] > 0]
     
-    # 명칭 매핑 (사장님 요청 스타일)
+    # [3] 컬럼 매핑 (KeyError 방지를 위해 실제 존재하는 컬럼만 필터링)
     v_map = {
         "상태표시": "상태", item: "상품명", opt: "옵션", v_it: "공급처상품명",
         avl: "가용재고", "리오더 총합": "리오더잔량", "추가발주입력": "추가발주", "발주권장": "발주권장", "메모": "메모"
     }
-    available_cols = [c for c in v_map.keys() if c in df_v5_v.columns or c == "메모"]
+    
+    # 실제 df_v5_v에 존재하는 컬럼들만 추려서 가져옵니다.
+    actual_cols = [c for c in v_map.keys() if c in df_v5_v.columns]
 
     with st.form("v5_form"):
-        # 에디터에 '메모'라는 이름으로 직접 연결
-        df_ed = df_v5_v[available_cols].rename(columns=v_map)
+        # 여기서 KeyError가 나지 않도록 actual_cols를 사용합니다.
+        df_ed = df_v5_v[actual_cols].rename(columns=v_map)
         st.data_editor(
             df_ed, use_container_width=True, hide_index=True, key="v5_edit",
             column_config={
@@ -647,7 +649,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 if "메모" in val: st.session_state.df_raw.at[idx, "메모"] = str(val["메모"])
             st.success("✅ 확정되었습니다!"); time.sleep(0.5); st.rerun()
 
-    # [저장 로직] KeyError 해결 포인트
+    # [4] 저장 및 다운로드 버튼
     c_save, c_down = st.columns(2)
     with c_save:
         if st.button("💾 2. 구글 시트 최종 저장", use_container_width=True, type="primary"):
@@ -656,26 +658,16 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 try:
                     ws_log = get_sheet().worksheet("발주기록")
                     now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
-                    
                     rows = []
                     for i in v_ids:
-                        # ⭐ 여기서 '비고' 대신 '메모'를 참조하도록 수정함
                         memo_val = st.session_state.df_raw.at[i, '메모'] if '메모' in st.session_state.df_raw.columns else ""
-                        
                         row = [
-                            now_s, 
-                            str(st.session_state.df_raw.at[i, item]), 
-                            str(st.session_state.df_raw.at[i, opt]), 
-                            str(st.session_state.df_raw.at[i, v_it]), 
-                            int(df_v5.at[i, avl]), 
-                            int(df_v5.at[i, '리오더 총합']), 
-                            int(st.session_state.add_order_dict[i]), 
-                            0, 
-                            str(memo_val), 
-                            str(st.session_state.df_raw.at[i, vnd])
+                            now_s, str(st.session_state.df_raw.at[i, item]), str(st.session_state.df_raw.at[i, opt]), 
+                            str(st.session_state.df_raw.at[i, v_it]), int(df_v5.at[i, avl]), 
+                            int(df_v5.at[i, '리오더 총합']), int(st.session_state.add_order_dict[i]), 
+                            0, str(memo_val), str(st.session_state.df_raw.at[i, vnd])
                         ]
                         rows.append(row)
-                    
                     ws_log.append_rows(rows)
                     st.session_state.add_order_dict = {} 
                     st.success("✅ 구글 시트 저장 성공!"); time.sleep(1); st.rerun()
@@ -691,7 +683,6 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             st.download_button("📥 3. 발주서(CSV) 다운로드", data=res.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'), file_name=f"발주서_{d5_d.strftime('%m%d')}.csv", mime="text/csv", use_container_width=True)
         else:
             st.button("📥 3. 다운로드할 데이터 없음", disabled=True, use_container_width=True)
-
 
 
 # ------------------------------------------------------------------
