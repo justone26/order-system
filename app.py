@@ -556,7 +556,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             }
         )
         
-        if st.form_submit_button("💾 입고 정보 저장 및 리오더 차감"):
+        if st.form_submit_button("💾 입고 정보 저장 및 리오더 차감", use_container_width=True):
             edited_rows = st.session_state["v4_editor"].get("edited_rows", {})
             if edited_rows:
                 try:
