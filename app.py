@@ -264,147 +264,117 @@ tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리
 
 
 with tab1:
-
     # --- 1단계: 데이터 업로드 ---
-
     st.subheader("📁 1단계: 데이터 업로드")
-
     
-
-    # 파일 업로드 위젯 (초기화 시 파일명 삭제 기능 포함)
-
+    # 파일 업로드 위젯
     up_file = st.file_uploader(
-
         "엑셀/CSV 파일 업로드", 
-
         type=['xlsx', 'xls', 'csv'], 
-
         key=f"up_file_{st.session_state.upload_key}"
-
     )
-
     
-
     # [🔄 화면 전체 초기화 버튼]
-
     if st.button("🔄 화면 전체 초기화", use_container_width=True):
-
         for key in list(st.session_state.keys()):
-
             if key != "upload_key": 
-
                 del st.session_state[key]
-
         st.session_state.upload_key += 1
-
         st.session_state.analyzed = False 
-
         st.session_state.df_raw = None
-
         st.query_params.clear() 
-
         st.rerun()
 
-
-
-  # 데이터 로드 로직 (이 블록 전체를 교체하세요)
+    # --- 데이터 로드 및 시트 동기화 로직 ---
     if up_file:
+        # 파일이 처음 올라왔거나, 아직 데이터프레임이 생성되지 않았을 때 실행
         if st.session_state.get('df_raw') is None:
             try:
-                # 1. 먼저 업로드한 파일을 읽습니다.
+                # 1. 파일 읽기
                 df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
-                df.columns = df.columns.str.strip()
+                df.columns = [str(c).strip() for c in df.columns] # 컬럼명 공백 제거
                 
-                # 2. ⭐ [중요] 여기서 시트의 '리오더 수량'을 가져와 합칩니다!
-                # 아까 정의한 함수를 여기서 호출(사용)해야 데이터가 0이 안 됩니다.
-                with st.spinner("🔄 구글 시트에서 기존 리오더 수량을 동기화 중..."):
+                # 2. ⭐ [핵심] 구글 시트에서 리오더 수량 가져오기 (날짜 칸 무시 로직 포함된 함수)
+                with st.spinner("🔄 구글 시트(발주기록)에서 리오더 수량을 실시간 매칭 중..."):
+                    # 여기서 우리가 고친 sync_reorder_from_sheet 함수를 실행합니다.
                     df = sync_reorder_from_sheet(df)
                 
-                # 3. '리오더 수량' 컬럼이 없는 경우를 대비한 기본 처리
+                # 3. 만약 리오더 수량 컬럼이 끝까지 안 생겼다면 0으로 채워줌
                 if "리오더 수량" not in df.columns: 
                     df["리오더 수량"] = 0
                 
                 df = df.fillna("") 
                 st.session_state.df_raw = df
-                st.success("✅ 파일 업로드 및 시트 데이터 동기화 완료!")
+                # 성공 메시지는 sync_reorder_from_sheet 내부에서 띄워줌
                 
             except Exception as e:
                 st.error(f"파일 로드 오류: {e}")
 
+    # --- 2~3단계: 매핑 및 분석 설정 (데이터가 로드된 경우에만 표시) ---
+    if st.session_state.get('df_raw') is not None:
+        st.divider()
+        
+        # --- 2단계: 매핑 항목 ---
+        st.subheader("📋 2단계: 매핑 항목")
+        st.info("💡 '리오더 수량'은 시트에서 자동으로 가져왔습니다. 나머지 항목을 확인해주세요.")
+        
+        cols = st.session_state.df_raw.columns.tolist()
+        
+        def auto_idx(keys, exclude_keys=None):
+            for i, c in enumerate(cols):
+                column_name = str(c)
+                if exclude_keys and any(ek in column_name for ek in exclude_keys): continue
+                if any(k in column_name for k in keys): return i
+            return 0
 
-   # --- 2~3단계: 매핑 및 분석 설정 ---
-if st.session_state.get('df_raw') is not None:
-    st.divider()
-    
-    # --- 2단계: 매핑 항목 ---
-    st.subheader("📋 2단계: 매핑 항목")
-    st.info("💡 좌측은 기본 정보, 우측은 수량 및 날짜 정보를 매칭해주세요.")
-    cols = st.session_state.df_raw.columns.tolist()
-    
-    def auto_idx(keys, exclude_keys=None):
-        for i, c in enumerate(cols):
-            column_name = str(c)
-            if exclude_keys and any(ek in column_name for ek in exclude_keys): continue
-            if any(k in column_name for k in keys): return i
-        return 0
+        # 5개씩 2열로 배치
+        c_left, c_right = st.columns(2)
+        
+        with c_left:
+            st.markdown("##### [ 기본 정보 ]")
+            it = st.selectbox("📦 상품명", cols, index=auto_idx(['상품명']), key="sel_it")
+            op = st.selectbox("🎨 옵션", cols, index=auto_idx(['옵션']), key="sel_op")
+            vn = st.selectbox("🏭 공급처", cols, index=auto_idx(['공급처']), key="sel_vn")
+            vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(['공급처상품명']), key="sel_vi")
+            so = st.selectbox("🚫 품절 여부", cols, index=auto_idx(['품절']), key="sel_so")
 
-    # 5개씩 2열로 배치 (좌: 기본정보 / 우: 수량 및 날짜)
-    c_left, c_right = st.columns(2)
-    
-    with c_left:
-        st.markdown("##### [ 기본 정보 ]")
-        it = st.selectbox("📦 상품명", cols, index=auto_idx(['상품명']), key="sel_it")
-        op = st.selectbox("🎨 옵션", cols, index=auto_idx(['옵션']), key="sel_op")
-        vn = st.selectbox("🏭 공급처", cols, index=auto_idx(['공급처']), key="sel_vn")
-        vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(['공급처상품명']), key="sel_vi")
-        so = st.selectbox("🚫 품절 여부", cols, index=auto_idx(['품절']), key="sel_so")
+        with c_right:
+            st.markdown("##### [ 수량 및 날짜 ]")
+            av = st.selectbox("✅ 가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
+            stk = st.selectbox("📦 정상재고", cols, index=auto_idx(['정상재고']), key="sel_stk")
+            
+            t3_target = "3일 발주합계"
+            t3_idx = cols.index(t3_target) if t3_target in cols else auto_idx(['3일'], exclude_keys=['1주', '7일', '품절'])
+            t3 = st.selectbox("🔥 3일 판매", cols, index=t3_idx, key="sel_t3")
+            
+            t7_target = "1주발주합계"
+            t7_idx = cols.index(t7_target) if t7_target in cols else auto_idx(['7일', '1주'], exclude_keys=['3일', '품절'])
+            t7 = st.selectbox("📅 7일 판매", cols, index=t7_idx, key="sel_t7")
+            
+            reg = st.selectbox("📆 상품 등록일", cols, index=auto_idx(['등록일', '등록일자', '최초등록']), key="sel_reg")
 
-    with c_right:
-        st.markdown("##### [ 수량 및 날짜 ]")
-        av = st.selectbox("✅ 가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
-        stk = st.selectbox("📦 정상재고", cols, index=auto_idx(['정상재고']), key="sel_stk")
-        
-        # 3일 판매: '3일 발주합계' 최우선
-        t3_target = "3일 발주합계"
-        t3_idx = cols.index(t3_target) if t3_target in cols else auto_idx(['3일'], exclude_keys=['1주', '7일', '품절'])
-        t3 = st.selectbox("🔥 3일 판매", cols, index=t3_idx, key="sel_t3")
-        
-        # 7일 판매: '1주발주합계' 최우선
-        t7_target = "1주발주합계"
-        t7_idx = cols.index(t7_target) if t7_target in cols else auto_idx(['7일', '1주'], exclude_keys=['3일', '품절'])
-        t7 = st.selectbox("📅 7일 판매", cols, index=t7_idx, key="sel_t7")
-        
-        # 등록일 추가
-        reg = st.selectbox("📆 상품 등록일", cols, index=auto_idx(['등록일', '등록일자', '최초등록']), key="sel_reg")
+        # --- 3단계: 데이터 분석 설정 ---
+        st.subheader("🚀 3단계: 데이터 분석 설정")
+        s1, s2 = st.columns(2)
+        with s1:
+            lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
+        with s2:
+            ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
 
-    st.write("") # 간격 조절
-    
-    # --- 3단계: 데이터 분석 설정 ---
-    st.subheader("🚀 3단계: 데이터 분석 설정")
-    
-    s1, s2 = st.columns(2)
-    with s1:
-        lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
-    with s2:
-        ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
-
-    # 분석 시작 버튼
-    if st.button("📊 데이터 분석 시작", use_container_width=True, type="primary"):
-        st.session_state.p = {
-            'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 
-            'st': stk, 'av': av, 't3': t3, 't7': t7, 'reg': reg,
-            'lt': lt_val, 'ss': ss_val
-        }
-        
-        df_final = st.session_state.df_raw.copy()
-        
-        # 등록일 날짜 형식 변환
-        if reg in df_final.columns:
-            df_final[reg] = pd.to_datetime(df_final[reg], errors='coerce')
-        
-        st.session_state.df_raw = df_final 
-        st.session_state.analyzed = True   
-        st.rerun()
+        if st.button("📊 데이터 분석 시작", use_container_width=True, type="primary"):
+            st.session_state.p = {
+                'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 
+                'st': stk, 'av': av, 't3': t3, 't7': t7, 'reg': reg,
+                'lt': lt_val, 'ss': ss_val
+            }
+            
+            df_final = st.session_state.df_raw.copy()
+            if reg in df_final.columns:
+                df_final[reg] = pd.to_datetime(df_final[reg], errors='coerce')
+            
+            st.session_state.df_raw = df_final 
+            st.session_state.analyzed = True   
+            st.rerun()
 
 
 # ------------------------------------------------------------------
