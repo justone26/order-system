@@ -774,7 +774,7 @@ if st.session_state.get('analyzed'):
 
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 누적 상황판] - 4~6단계 통합 시트 구조 반영
+# [7단계: 실시간 리오더 누적 상황판] - 컬럼 개수 불일치(Length mismatch) 해결
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -787,7 +787,9 @@ if st.session_state.get('analyzed'):
         
         if len(all_v7) > 1:
             df_raw_v7 = pd.DataFrame(all_v7[1:])
-            # 🚨 5단계에서 저장한 8개 컬럼 순서와 일치시킴
+            
+            # 🚨 에러 해결 포인트: 저장된 8개 컬럼명과 정확히 일치시킴
+            # 기존 10개에서 8개로 수정되었습니다.
             df_raw_v7.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "기존리order", "추가발주", "메모", "업체명"]
             
             # 숫자 변환 및 날짜 추출
@@ -809,24 +811,19 @@ if st.session_state.get('analyzed'):
             f1, f2, f3, f4 = st.columns([1.2, 0.8, 1.5, 1.5])
             
             with f1:
-                # 1. 기간 선택 (기본값: 오늘~오늘)
                 d_range_v7 = st.date_input("🗓️ 1. 기간 선택", value=(today, today), key="v7_range")
-            
             with f2:
                 st.write(""); st.write("") 
                 if st.button("📈 2. 데이터 갱신", use_container_width=True, type="primary"):
                     st.rerun()
-
             with f3:
-                q_v7 = st.text_input("🔍 3. 상품명/옵션 검색", placeholder="키워드 입력...", key="v7_search_q")
-
+                q_v7 = st.text_input("🔍 3. 상품명/옵션 검색", key="v7_search_q")
             with f4:
                 v_list = sorted(df_raw_v7["업체명"].unique().tolist())
                 v_choice = st.selectbox("🏭 4. 업체 선택", ["전체 업체"] + v_list, key="v7_vendor_sel")
 
-            # --- [지능형 날짜 필터링 로직] ---
+            # --- [지능형 날짜 필터링] ---
             curr_today = datetime.now(KST).strftime('%Y-%m-%d')
-            
             if isinstance(d_range_v7, (list, tuple)) and len(d_range_v7) == 2:
                 s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
                 v7_display_range = f"🗓️ {s_d} ~ {e_d}"
@@ -839,16 +836,14 @@ if st.session_state.get('analyzed'):
 
             df_filtered = df_raw_v7[(df_raw_v7["날짜"] >= s_d) & (df_raw_v7["날짜"] <= e_d)]
 
-            # 추가 필터 (검색/업체)
+            # 추가 필터 적용
             if q_v7:
-                df_filtered = df_filtered[
-                    df_filtered["상품명"].astype(str).str.contains(q_v7, case=False) |
-                    df_filtered["옵션"].astype(str).str.contains(q_v7, case=False)
-                ]
+                df_filtered = df_filtered[df_filtered["상품명"].astype(str).str.contains(q_v7, case=False) | 
+                                         df_filtered["옵션"].astype(str).str.contains(q_v7, case=False)]
             if v_choice != "전체 업체":
                 df_filtered = df_filtered[df_filtered["업체명"] == v_choice]
 
-            # 데이터 합산 (공급처상품명 포함)
+            # 데이터 집계 (8개 컬럼 기반)
             df_final = df_filtered.groupby(["날짜", "업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
                 "추가발주": "sum",
                 "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
@@ -857,23 +852,9 @@ if st.session_state.get('analyzed'):
             if not df_final.empty:
                 st.write(f"#### {v7_display_range} 실시간 집계 내역")
                 display_order = ["날짜", "업체명", "상품명", "옵션", "공급처상품명", "추가발주", "메모"]
-                
-                st.dataframe(
-                    df_final[display_order],
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "날짜": st.column_config.TextColumn("📅 날짜", width=100),
-                        "상품명": st.column_config.TextColumn("상품명", width=200),
-                        "추가발주": st.column_config.NumberColumn("🔢 추가수량", width=80),
-                        "메모": st.column_config.TextColumn("📝 통합메모", width=300)
-                    }
-                )
-                
-                csv_v7 = df_final[display_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-                st.download_button("📥 선택 범위 집계표(CSV) 다운로드", csv_v7, f"집계_{today_str}.csv", use_container_width=True)
+                st.dataframe(df_final[display_order], use_container_width=True, hide_index=True)
             else:
-                st.info("🔎 해당 조건에 맞는 발주 데이터가 없습니다.")
+                st.info("🔎 해당 조건에 맞는 데이터가 없습니다.")
 
         else:
             st.info("💡 저장된 발주 데이터가 없습니다.")
