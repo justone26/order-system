@@ -740,10 +740,9 @@ if st.session_state.get('analyzed'):
                 }
             )
             
-            # 다운로드 버튼
+             # 다운로드 버튼
             csv_data = df_display[display_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button(f"📥 {sel_session_label} CSV 다운로드", csv_data, f"발주합계_{datetime.now().strftime('%m%d')}.csv", use_container_width=True)
-
 
 
 
