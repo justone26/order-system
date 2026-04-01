@@ -566,50 +566,41 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         )
         
         if st.form_submit_button("💾 입고 정보 저장 및 리오더 차감", use_container_width=True):
-            # 세션 스테이트의 에디터 변경사항 확인
             edits = st.session_state["v4_editor"].get("edited_rows", {})
-            
             if edits:
                 sh = get_sheet()
                 v7_sh = sh.worksheet("발주기록")
-                h_sh = sh.worksheet("입고기록") # 과거 입고 내역 시트
+                h_sh = sh.worksheet("입고기록")
+                
+                # 현재 화면 상단에서 선택된 날짜 (이 날짜로 저장해야 조회 시 보입니다!)
+                target_date_str = s_date.strftime('%Y-%m-%d')
                 
                 success_count = 0
                 for r_idx, val in edits.items():
-                    # '리오더 입고' 수량 가져오기
-                    qty = int(val.get("리오더 입고", 0)) 
-                    
+                    qty = int(val.get("리오더 입고", 0))
                     if qty > 0:
                         row_data = df_disp.iloc[int(r_idx)]
-                        now_str = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
                         
-                        # 1. [발주기록] 시트에 차감행 추가
-                        new_row_v7 = [
-                            now_str, str(row_data["상품명"]), str(row_data["옵션"]), 
-                            str(row_data.get("공급처상품명", "")), 0, 0, -qty, 0, "입고차감", str(row_data.get("공급처", "미지정"))
-                        ]
-                        v7_sh.append_row(new_row_v7)
+                        # [발주기록] 차감행 추가
+                        v7_sh.append_row([
+                            datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'),
+                            str(row_data["상품명"]), str(row_data["옵션"]), str(row_data.get("공급처상품명", "")),
+                            0, 0, -qty, 0, "입고차감", str(row_data.get("공급처", "미지정"))
+                        ])
 
-                        # 2. [입고기록] 시트에 기록 추가
-                        new_row_h = [
-                            s_date.strftime('%Y-%m-%d'), 
+                        # [입고기록] 기록 추가 (날짜를 s_date와 정확히 일치시킴)
+                        h_sh.append_row([
+                            target_date_str, # ⭐ 중요: 화면의 '입고 조회 날짜'와 동일하게 저장
                             str(row_data["상품명"]), 
                             str(row_data["옵션"]), 
                             qty
-                        ]
-                        h_sh.append_row(new_row_h)
-                        
+                        ])
                         success_count += 1
                 
-                if success_count > 0:
-                    st.success(f"✅ {success_count}건의 입고 차감이 완료되었습니다!")
-                    time.sleep(0.5)
-                    st.cache_data.clear() 
-                    st.rerun()
-            else:
-                # ⭐ 이 부분 괄호를 하나만 남겨야 합니다!
-                st.warning("⚠️ 수정된 입고 수량이 없습니다.")
-
+                st.success(f"✅ {success_count}건 처리 완료! 잠시만 기다려주세요...")
+                st.cache_data.clear() # 캐시를 지워야 시트에서 새로 읽어옵니다.
+                time.sleep(1) # 시트 반영 시간 확보
+                st.rerun()
 
 
 # ------------------------------------------------------------------
