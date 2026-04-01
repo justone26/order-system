@@ -586,7 +586,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     
 
 # ------------------------------------------------------------------
-# [5단계: 최종 발주 요약] - 4단계 데이터 완벽 연동 및 버튼 확장 버전
+# [5단계: 최종 발주 요약] - 가용재고 열 추가 및 버튼 가로 확장 완결판
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -595,19 +595,18 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     # [1] 최신 리오더 잔량 다시 로드 (4단계와 동일한 로직 사용)
     reorder_map_v5, _ = get_realtime_data_v4(datetime.now(KST).date())
 
-    # [2] 데이터 준비 (4단계에서 계산된 df_work 활용)
+    # [2] 데이터 준비
     df_v5 = df_work[~df_work[s_out].astype(str).str.contains('품절', na=False)].copy()
     
-    # ⭐ 4단계와 동일하게 정제된 키(clean_key)로 매칭해야 숫자가 안 깨집니다.
-    if 'clean_key' not in df_v5.columns:
-        import unicodedata
-        import re
-        def get_clean_key_v5(r):
-            n = unicodedata.normalize('NFC', str(r[item]))
-            o = unicodedata.normalize('NFC', str(r[opt]))
-            return re.sub(r'[^a-zA-Z0-9가-힣]', '', n).upper() + "_" + re.sub(r'[^a-zA-Z0-9가-힣]', '', o).upper()
-        df_v5['clean_key'] = df_v5.apply(get_clean_key_v5, axis=1)
-
+    # 4단계와 매칭을 위한 정제된 키(clean_key) 생성
+    import unicodedata
+    import re
+    def get_clean_key_v5(r):
+        n = unicodedata.normalize('NFC', str(r[item]))
+        o = unicodedata.normalize('NFC', str(r[opt]))
+        return re.sub(r'[^a-zA-Z0-9가-힣]', '', n).upper() + "_" + re.sub(r'[^a-zA-Z0-9가-힣]', '', o).upper()
+    
+    df_v5['clean_key'] = df_v5.apply(get_clean_key_v5, axis=1)
     df_v5["리오더 총합"] = df_v5['clean_key'].map(reorder_map_v5).fillna(0).astype(int)
     
     if 'add_order_dict' not in st.session_state: 
@@ -615,7 +614,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     
     df_v5['추가발주입력'] = df_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
     
-    # 비고(메모) 컬럼이 없는 경우를 대비해 안전하게 생성
+    # 비고(메모) 컬럼 안전하게 생성
     if '비고' not in df_v5.columns:
         df_v5['비고'] = ""
 
@@ -627,28 +626,29 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     with f2: s5_q = st.text_input("🔍 상품명/옵션 검색", key="v5_s")
     with f3: d5_d = st.date_input("🗓️ 발주 기록 날짜", datetime.now(KST).date(), key="v5_date")
 
-    # 검색 적용
+    # 검색 및 필터 적용
     df_v5_v = df_v5[df_v5[item].astype(str).str.contains(s5_q, case=False)] if s5_q else df_v5
     if m5_f == "🚨 고위험/주의":
         df_v5_v = df_v5_v[df_v5_v['권장수량'] > 0]
     
-    # [3] 에디터 설정 (KeyError 방지를 위해 실제 존재하는 열만 매핑)
+    # [3] 에디터 설정 (가용재고를 기존잔량 앞으로 배치)
     v_map = {
         "상태표시": "상태", 
         item: "상품명", 
         opt: "옵션", 
         v_it: "공급처상품명", 
-        "리오더 총합": "리오더총합", 
-        "추가발주입력": "추가발주", 
-        "권장수량": "권장수량", 
+        avl: "가용재고",      # ⭐ 추가된 위치
+        "리오더 총합": "기존잔량", 
+        "추가발주입력": "이번발주", 
+        "권장수량": "추가필요", 
         "비고": "메모"
     }
     
-    # 실제로 존재하는 열만 골라내기 (KeyError 원천 차단)
+    # 데이터프레임에 실제 존재하는 열만 추출 (KeyError 방지)
     available_cols = [c for c in v_map.keys() if c in df_v5_v.columns]
 
     with st.form("v5_form"):
-        # 표 그리기
+        # 표 출력 및 설정
         df_ed = df_v5_v[available_cols].rename(columns=v_map)
         st.data_editor(
             df_ed, 
@@ -656,25 +656,26 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             hide_index=True, 
             key="v5_edit",
             column_config={
-                "리오더총합": st.column_config.NumberColumn("기존잔량", format="%d"),
-                "추가발주": st.column_config.NumberColumn("이번발주", min_value=0),
-                "권장수량": "추가필요"
+                "가용재고": st.column_config.NumberColumn("가용재고", format="%d"),
+                "기존잔량": st.column_config.NumberColumn("기존잔량", format="%d"),
+                "이번발주": st.column_config.NumberColumn("이번발주", min_value=0),
+                "추가필요": st.column_config.NumberColumn("추가필요", format="%d")
             },
-            disabled=[c for c in v_map.values() if c not in ["추가발주", "메모"]]
+            disabled=[c for c in v_map.values() if c not in ["이번발주", "메모"]]
         )
         
-        # ⭐ 사장님 요청: 가로로 꽉 찬 버튼 1
+        # 가로로 꽉 찬 버튼 1
         if st.form_submit_button("✅ 1. 추가발주 및 메모 확정", use_container_width=True):
             edits = st.session_state["v5_edit"].get("edited_rows", {})
             for r_idx, val in edits.items():
                 idx = df_v5_v.index[int(r_idx)]
-                if "추가발주" in val: 
-                    st.session_state.add_order_dict[idx] = int(val["추가발주"])
+                if "이번발주" in val: 
+                    st.session_state.add_order_dict[idx] = int(val["이번발주"])
                 if "메모" in val: 
                     st.session_state.df_raw.at[idx, "비고"] = str(val["메모"])
             st.success("확정되었습니다!"); time.sleep(0.5); st.rerun()
 
-    # [4] 저장 및 다운로드 (가로로 꽉 찬 버튼 2)
+    # [4] 저장 및 다운로드 버튼 (가로로 꽉 찬 구성)
     c_save, c_down = st.columns(2)
     with c_save:
         if st.button("💾 2. 구글 시트 최종 저장", use_container_width=True, type="primary"):
@@ -686,10 +687,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     
                     rows = []
                     for i in v_ids:
-                        # 비고 데이터 안전하게 가져오기
                         memo_val = st.session_state.df_raw.at[i, '비고'] if '비고' in st.session_state.df_raw.columns else ""
-                        
-                        # A~J열 순서: 날짜, 상품명, 옵션, 공급처상품명, 가용, 리오더총합, 추가발주, 0, 비고, 공급처
                         row = [
                             now_s, 
                             str(st.session_state.df_raw.at[i, item]), 
@@ -705,13 +703,12 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                         rows.append(row)
                     
                     ws_log.append_rows(rows)
-                    st.session_state.add_order_dict = {} # 저장 후 초기화
+                    st.session_state.add_order_dict = {} 
                     st.success("✅ 구글 시트 저장 성공!"); time.sleep(1); st.rerun()
                 except Exception as e:
-                    st.error(f"시트 저장 중 오류: {e}")
+                    st.error(f"시트 저장 실패: {e}")
 
     with c_down:
-        # 다운로드 데이터 구성
         v_ids_to_down = [k for k, v in st.session_state.add_order_dict.items() if v > 0]
         if v_ids_to_down:
             csv_t = df_v5[df_v5.index.isin(v_ids_to_down)].copy()
@@ -727,8 +724,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 use_container_width=True
             )
         else:
-            st.button("📥 3. 발주 데이터 없음", disabled=True, use_container_width=True)
-
+            st.button("📥 3. 다운로드할 데이터 없음", disabled=True, use_container_width=True)
 
             
 
