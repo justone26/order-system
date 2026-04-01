@@ -689,7 +689,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ------------------------------------------------------------------
-# [6단계: 전체 히스토리 관리] - 4/5단계 변경 시트 구조 반영 버전
+# [6단계: 전체 히스토리 관리] - 5단계 저장 구조(10개 컬럼) 완벽 반영 버전
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -699,14 +699,12 @@ if st.session_state.get('analyzed'):
     
     with f1:
         today = datetime.now(KST).date()
-        # 조회 범위 선택 (기본값: 오늘)
         d_range = st.date_input("🗓️ 1. 조회 범위", value=(today, today), key="v6_date_range")
     
     with f2:
         st.write(""); st.write("") 
         search_trigger = st.button("🔍 2. 내역 조회", use_container_width=True, type="primary")
 
-    # 세션 상태 초기화
     if 'v6_data' not in st.session_state: st.session_state.v6_data = None
     if 'v6_sessions' not in st.session_state: st.session_state.v6_sessions = []
     if 'v6_display_text' not in st.session_state: st.session_state.v6_display_text = ""
@@ -719,14 +717,17 @@ if st.session_state.get('analyzed'):
                 all_h = worksheet.get_all_values()
                 if len(all_h) > 1:
                     df_all = pd.DataFrame(all_h[1:])
-                    # 🚨 사장님 시트 컬럼 순서에 맞춤 (8개 핵심 컬럼)
-                    df_all.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "기존리order", "추가발주", "메모", "업체명"]
                     
-                    # 날짜 필터링을 위한 임시 컬럼
+                    # ⭐ [수정포인트] 5단계 저장 로직의 10개 컬럼 순서와 완벽 일치시킴
+                    # 순서: 발주시간, 상품명, 옵션, 공급처상품명, 가용재고, 리오더잔량, 추가발주, 발주권장(0), 메모, 업체명
+                    df_all.columns = [
+                        "발주시간", "상품명", "옵션", "공급처상품명", 
+                        "가용재고", "리오더잔량", "추가발주", "발주권장", "메모", "업체명"
+                    ]
+                    
                     df_all["날짜_만"] = df_all["발주시간"].astype(str).str.slice(0, 10)
-                    
-                    # 날짜 범위 처리
                     curr_str = datetime.now(KST).strftime('%Y-%m-%d')
+                    
                     if isinstance(d_range, (list, tuple)) and len(d_range) == 2:
                         s_d, e_d = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
                         st.session_state.v6_display_text = f"🗓️ {s_d} ~ {e_d}"
@@ -737,10 +738,8 @@ if st.session_state.get('analyzed'):
                         s_d, e_d = "0000-00-00", "9999-99-99"
                         st.session_state.v6_display_text = "🗓️ 전체 내역"
                     
-                    # 필터링 및 세션(회차) 저장
                     df_filtered = df_all[(df_all["날짜_만"] >= s_d) & (df_all["날짜_만"] <= e_d)].copy()
                     st.session_state.v6_data = df_filtered
-                    # 최근 발주가 위로 오도록 정렬하여 세션 리스트 생성
                     st.session_state.v6_sessions = sorted(df_filtered["발주시간"].unique(), reverse=True)
                 else:
                     st.session_state.v6_data = None
@@ -762,18 +761,20 @@ if st.session_state.get('analyzed'):
     if st.session_state.v6_data is not None and sel_session_label:
         df_display = st.session_state.v6_data.copy()
         
-        # 숫자 변환 (합산을 위해 필요)
-        df_display["추가발주"] = pd.to_numeric(df_display["추가발주"], errors='coerce').fillna(0)
-        df_display["기존리order"] = pd.to_numeric(df_display["기존리order"], errors='coerce').fillna(0)
+        # 숫자 변환 (가용재고, 리오더잔량, 추가발주 포함)
+        num_cols = ["가용재고", "리오더잔량", "추가발주", "발주권장"]
+        for col in num_cols:
+            df_display[col] = pd.to_numeric(df_display[col], errors='coerce').fillna(0)
 
-        # 회차별 필터링
         if sel_session_label == "📊 선택 범위 전체 합산":
             display_title = st.session_state.v6_display_text + " 발주 합계"
-            # 전체 합산 로직 (가용/권장 제외)
+            # 합산 로직 (가용/권장 등은 마지막 값 기준, 추가발주는 합계)
             df_display = df_display.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
                 "발주시간": "max", 
-                "기존리order": "last", # 마지막 기준 총합
-                "추가발주": "sum",     # 선택 기간 내 추가발주 총합
+                "가용재고": "last",
+                "리오더잔량": "last",
+                "추가발주": "sum",
+                "발주권장": "last",
                 "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
             })
         else:
@@ -781,21 +782,18 @@ if st.session_state.get('analyzed'):
             df_display = df_display[df_display["발주시간"] == target_time].copy()
             display_title = f"✅ {sel_session_label} 상세 내역"
 
-        # 상품명/옵션 검색 적용
         if h_q:
             df_display = df_display[
                 df_display["상품명"].astype(str).str.contains(h_q, case=False) | 
                 df_display["옵션"].astype(str).str.contains(h_q, case=False)
             ]
 
-        # 최종 화면 출력
         if not df_display.empty:
             st.write(f"#### {display_title}")
-            # 표시할 컬럼 순서 (사장님 시트 구조와 일치)
-            view_order = ["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "기존리order", "추가발주", "메모"]
+            # ⭐ 화면에 보여줄 순서 (10개 컬럼 전체 노출)
+            view_order = ["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "가용재고", "리오더잔량", "추가발주", "발주권장", "메모"]
             st.dataframe(df_display[view_order], use_container_width=True, hide_index=True)
             
-            # CSV 다운로드
             csv_data = df_display[view_order].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button(
                 label=f"📥 {display_title} CSV 다운로드", 
@@ -804,8 +802,6 @@ if st.session_state.get('analyzed'):
                 mime="text/csv",
                 use_container_width=True
             )
-
-
 
 # ------------------------------------------------------------------
 # [7단계: 실시간 리오더 최종 잔량 상황판] - 컬럼 너비 최적화 (메모란 확보)
