@@ -774,13 +774,14 @@ if st.session_state.get('analyzed'):
 
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 최종 잔량 상황판] - 기간 제한 없이 잔량 있는 모든 업체 노출
+# [7단계: 실시간 리오더 최종 잔량 상황판] - 날짜 컬럼 선두 배치 및 전체 순서 조정
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
 
     try:
+        # [1. 데이터 실시간 로드]
         ws_v7 = get_sheet().worksheet("발주기록")
         all_v7 = ws_v7.get_all_values()
         
@@ -788,19 +789,25 @@ if st.session_state.get('analyzed'):
             header_v7 = [c.strip() for c in all_v7[0]]
             df_raw_v7 = pd.DataFrame(all_v7[1:], columns=header_v7)
             
-            # 1. 데이터 전처리 (공백 제거 및 숫자 변환)
+            # 업체명 공백 제거 및 수량 숫자 변환
             if "업체명" in df_raw_v7.columns:
                 df_raw_v7["업체명"] = df_raw_v7["업체명"].astype(str).str.strip()
             
             qty_col = '추가발주' if '추가발주' in df_raw_v7.columns else ('추가' if '추가' in df_raw_v7.columns else df_raw_v7.columns[5])
-            df_raw_v7[qty_col] = pd.to_numeric(df_raw_v7[qty_col], errors='coerce').fillna(0).astype(int)
+            time_col = '발주시간' if '발주시간' in df_raw_v7.columns else df_raw_v7.columns[0]
             
-            # 2. 상단 필터 영역 (순서 유지)
+            df_raw_v7[qty_col] = pd.to_numeric(df_raw_v7[qty_col], errors='coerce').fillna(0).astype(int)
+            # 날짜 형식 추출 (YYYY-MM-DD)
+            df_raw_v7["날짜"] = df_raw_v7[time_col].astype(str).str.slice(0, 10)
+
+            # ---------------------------------------------------------
+            # [2. 상단 필터 영역] - 순서: 기간 -> 동기화 -> 검색 -> 업체
+            # ---------------------------------------------------------
             f1, f2, f3, f4 = st.columns([1.2, 0.8, 1.5, 1.5])
             with f1:
-                # 💡 시작 날짜를 아예 '전체'로 인식하게끔 아주 과거로 기본값 설정
-                default_start = datetime(2025, 1, 1).date() 
-                d_range_v7 = st.date_input("🗓️ 1. 조회 시작일 (과거 발주분 포함)", value=(default_start, datetime.now(KST).date()), key="v7_range")
+                # 넉넉한 조회를 위해 기본값 설정
+                default_start = (datetime.now(KST) - timedelta(days=60)).date() 
+                d_range_v7 = st.date_input("🗓️ 1. 기간 선택", value=(default_start, datetime.now(KST).date()), key="v7_range")
             with f2:
                 st.write(""); st.write("")
                 if st.button("📈 2. 데이터 동기화", use_container_width=True, type="primary"):
@@ -811,55 +818,65 @@ if st.session_state.get('analyzed'):
                 v_list = sorted(df_raw_v7["업체명"].unique().tolist())
                 v_choice = st.selectbox("🏭 4. 업체 선택", ["전체 업체"] + v_list, key="v7_vendor_sel")
 
-            # --- [필터링 로직 수정: 날짜는 참고용, 잔량 위주로] ---
+            # --- [필터링 및 집계] ---
             if isinstance(d_range_v7, (list, tuple)) and len(d_range_v7) == 2:
                 s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
             else:
                 s_d = d_range_v7[0].strftime('%Y-%m-%d') if isinstance(d_range_v7, (list, tuple)) else d_range_v7.strftime('%Y-%m-%d')
                 e_d = datetime.now(KST).strftime('%Y-%m-%d')
 
-            # 일단 전체 데이터를 가져온 뒤 그룹화 (날짜 필터링을 그룹화 '후'에 하거나 범위를 넓게 잡음)
-            df_all = df_raw_v7.copy()
-            
-            # 업체/상품/옵션별 최종 잔량 계산 (날짜 상관없이 전체 합산)
-            group_cols = ["업체명", "상품명", "옵션", "공급처상품명"]
-            df_total_balance = df_all.groupby(group_cols, as_index=False).agg({
-                qty_col: "sum",
-                "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
-            }).rename(columns={qty_col: "미입고 잔량"})
-
-            # 🚨 잔량이 0보다 큰 것만 남김 (러블리마켓이 1개라도 남았으면 여기서 걸러짐)
-            df_display = df_total_balance[df_total_balance["미입고 잔량"] > 0].copy()
-
-            # 선택한 필터 적용 (업체 선택/검색어)
+            # 필터 적용
+            df_f = df_raw_v7[(df_raw_v7["날짜"] >= s_d) & (df_raw_v7["날짜"] <= e_d)].copy()
             if v_choice != "전체 업체":
-                df_display = df_display[df_display["업체명"] == v_choice]
+                df_f = df_f[df_f["업체명"] == v_choice]
             if q_v7:
-                df_display = df_display[df_display["상품명"].str.contains(q_v7, case=False) | df_display["옵션"].str.contains(q_v7, case=False)]
+                df_f = df_f[df_f["상품명"].str.contains(q_v7, case=False) | df_f["옵션"].str.contains(q_v7, case=False)]
 
-            # ---------------------------------------------------------
-            # [3. 출력 영역]
-            # ---------------------------------------------------------
-            if not df_display.empty:
-                # 상단 업체별 요약
-                df_vendor_sum = df_display.groupby("업체명")["미입고 잔량"].sum().reset_index().sort_values(by="미입고 잔량", ascending=False)
-                st.write(f"#### 🏭 업체별 현재 잔량 요약 (총 {df_vendor_sum['미입고 잔량'].sum():,}개)")
+            if not df_f.empty:
+                # 🚨 [날짜 포함 그룹화] 날짜별로 잔량을 보여주기 위해 그룹에 추가
+                group_cols = ["날짜", "업체명", "상품명", "옵션", "공급처상품명"]
+                df_display = df_f.groupby(group_cols, as_index=False).agg({
+                    qty_col: "sum",
+                    "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
+                }).rename(columns={qty_col: "미입고 잔량"})
+
+                # 잔량이 있는 것만 노출
+                df_display = df_display[df_display["미입고 잔량"] > 0].sort_values("날짜", ascending=False)
+
+                # ---------------------------------------------------------
+                # [3. 상단 업체별 요약 카드]
+                # ---------------------------------------------------------
+                df_vendor_sum = df_display.groupby("업체명")["미입고 잔량"].sum().reset_index().sort_values("미입고 잔량", ascending=False)
+                st.write(f"#### 🏭 업체별 미입고 상황 (총 {df_vendor_sum['미입고 잔량'].sum():,}개)")
                 v_cols = st.columns(4)
                 for i, r in df_vendor_sum.reset_index(drop=True).iterrows():
                     with v_cols[i % 4]:
                         st.metric(label=r["업체명"], value=f"{r['미입고 잔량']:,}개")
                 st.divider()
 
-                # 하단 상세 리스트 (날짜 열은 가장 최근 기록 날짜를 보여주도록 추가 처리 가능하지만, 우선 순서대로 출력)
-                st.write(f"#### 📋 상세 미입고 리스트 (잔량 있는 품목 전체)")
-                # 화면 표시 순서: 업체명 -> 상품명 -> 옵션 -> 공급처상품명 -> 미입고 잔량 -> 메모
-                display_cols = ["업체명", "상품명", "옵션", "공급처상품명", "미입고 잔량", "메모"]
-                st.dataframe(df_display[display_cols], use_container_width=True, hide_index=True)
+                # ---------------------------------------------------------
+                # [4. 하단 상세 내역] - 순서: 날짜가 가장 앞으로!
+                # ---------------------------------------------------------
+                st.write(f"#### 📋 상세 미입고 리스트")
+                # 사장님 요청 순서: 날짜 -> 업체명 -> 상품명 -> 옵션 -> 공급처상품명 -> 미입고 잔량 -> 메모
+                display_order = ["날짜", "업체명", "상품명", "옵션", "공급처상품명", "미입고 잔량", "메모"]
+                actual_cols = [c for c in display_order if c in df_display.columns]
+                
+                st.dataframe(
+                    df_display[actual_cols], 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "날짜": st.column_config.TextColumn(width=100),
+                        "미입고 잔량": st.column_config.NumberColumn(format="%d개", label="잔량 📦"),
+                        "상품명": st.column_config.TextColumn(width=200)
+                    }
+                )
             else:
-                st.info("🔎 현재 잔량이 남은 데이터가 없습니다. 모든 리오더가 입고 완료되었거나 검색 조건에 맞는 데이터가 없습니다.")
+                st.info("🔎 해당 조건에 맞는 미입고 데이터가 없습니다.")
 
         else:
             st.info("💡 발주 데이터가 없습니다.")
             
     except Exception as e:
-        st.error(f"📡 상황판 로딩 오류: {e}")
+        st.error(f"📡 상황판 복구 오류: {e}")
