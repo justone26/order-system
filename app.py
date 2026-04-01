@@ -572,52 +572,43 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             if edits:
                 sh = get_sheet()
                 v7_sh = sh.worksheet("발주기록")
-                h_sh = sh.worksheet("입고기록") # ⭐ 과거 입고 내역 시트 불러오기
+                h_sh = sh.worksheet("입고기록") # 과거 입고 내역 시트
                 
                 success_count = 0
                 for r_idx, val in edits.items():
-                    # '리오더 입고' 또는 '📥 입고차감' (에디터에 설정된 정확한 이름 확인)
+                    # '리오더 입고' 수량 가져오기
                     qty = int(val.get("리오더 입고", 0)) 
                     
                     if qty > 0:
-                        # 현재 행의 데이터 추출
                         row_data = df_disp.iloc[int(r_idx)]
                         now_str = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
                         
-                        # 1. [발주기록] 시트에 차감행 추가 (7단계 잔량 반영용)
+                        # 1. [발주기록] 시트에 차감행 추가
                         new_row_v7 = [
-                            now_str,                   # A: 발주시간
-                            str(row_data["상품명"]),    # B: 상품명
-                            str(row_data["옵션"]),      # C: 옵션
-                            str(row_data["공급처상품명"]),# D: 공급처상품명
-                            0,                         # E: 가용재고
-                            0,                         # F: 기존리오더
-                            -qty,                      # G: 추가발주 (여기서 차감!)
-                            0,                         # H: 발주권장
-                            "입고차감",                 # I: 메모
-                            str(row_data["공급처"])     # J: 업체명
+                            now_str, str(row_data["상품명"]), str(row_data["옵션"]), 
+                            str(row_data.get("공급처상품명", "")), 0, 0, -qty, 0, "입고차감", str(row_data.get("공급처", "미지정"))
                         ]
                         v7_sh.append_row(new_row_v7)
 
-                        # 2. ⭐ [입고기록] 시트에 기록 추가 (4단계 '과거입고데이터' 표시용)
-                        # 순서: 날짜(s_date 기준), 상품명, 옵션, 수량
+                        # 2. [입고기록] 시트에 기록 추가
                         new_row_h = [
-                            s_date.strftime('%Y-%m-%d'), # A: 입고조회 날짜 기준
-                            str(row_data["상품명"]),      # B: 상품명
-                            str(row_data["옵션"]),        # C: 옵션
-                            qty                         # D: 입고수량
+                            s_date.strftime('%Y-%m-%d'), 
+                            str(row_data["상품명"]), 
+                            str(row_data["옵션"]), 
+                            qty
                         ]
                         h_sh.append_row(new_row_h)
                         
                         success_count += 1
                 
-                st.success(f"✅ {success_count}건의 입고 차감 및 기록이 완료되었습니다!")
-                time.sleep(0.5)
-                st.cache_data.clear() # 7단계 데이터를 새로 고침하기 위해 캐시 삭제
-                st.rerun()
+                if success_count > 0:
+                    st.success(f"✅ {success_count}건의 입고 차감이 완료되었습니다!")
+                    time.sleep(0.5)
+                    st.cache_data.clear() 
+                    st.rerun()
             else:
-                st.warning("⚠️ 수정된 입고 수량이 없습니다."))
-
+                # ⭐ 이 부분 괄호를 하나만 남겨야 합니다!
+                st.warning("⚠️ 수정된 입고 수량이 없습니다.")
 
 
 
