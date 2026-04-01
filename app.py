@@ -37,7 +37,7 @@ def get_sheet():
 
 # --- [핵심: 리오더 동기화 함수] ---
 def sync_reorder_from_sheet(df_uploaded):
-    """ 구글 시트에서 상품명/옵션별 리오더 합계(기존+추가)를 가져와 매칭합니다. """
+    """ 구글 시트 '발주기록' 탭에서 (기존리오더 + 추가발주) 수량을 가져와 매칭합니다. """
     try:
         sh = get_sheet()
         if not sh:
@@ -53,6 +53,7 @@ def sync_reorder_from_sheet(df_uploaded):
         for row in all_data[1:]:
             try:
                 # 1. 시트 데이터 정리 (B:상품명, C:옵션)
+                # 공백 제거 및 대문자 변환으로 매칭률 극대화
                 s_name = str(row[1]).strip().replace(" ", "").upper()
                 s_opt = str(row[2]).strip().replace(" ", "").upper()
                 
@@ -66,12 +67,12 @@ def sync_reorder_from_sheet(df_uploaded):
                 total_qty = clean_val(row[5]) + clean_val(row[6])
                 
                 if total_qty > 0:
-                    key = f"{s_name}_{s_opt}"
+                    key = s_name + "_" + s_opt
                     reorder_map[key] = reorder_map.get(key, 0) + total_qty
             except:
                 continue
 
-        # 3. 업로드 파일 매칭 (기존 컬럼 있으면 삭제 후 재생성)
+        # 3. 업로드 파일 매칭 (기존 컬럼이 있으면 삭제 후 새로 생성)
         if "리오더 수량" in df_uploaded.columns:
             df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
 
@@ -82,15 +83,15 @@ def sync_reorder_from_sheet(df_uploaded):
 
         df_uploaded['리오더 수량'] = df_uploaded.apply(get_val, axis=1)
         
-        # 성공 메시지
+        # 성공 메시지 알림 (토스트 형식)
         if len(reorder_map) > 0:
             st.toast("✅ 구글 시트 리오더 데이터 연동 완료!")
             
         return df_uploaded
 
     except Exception as e:
-        # 에러 메시지 따옴표 문제 해결 (f-string 대신 일반 문자열 합치기 사용으로 안전성 확보)
-        st.warning("리오더 확인 중 알림: " + str(e))
+        # 🚨 에러 발생 시 따옴표 문제 없도록 일반 결합 방식 사용
+        st.warning("데이터 확인 중 알림: " + str(e))
         return df_uploaded
 
 # --- [보조 함수] ---
@@ -109,8 +110,6 @@ def get_incoming_history():
     except: 
         return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
         
-
-
 
 def sync_reorder_from_sheet(df_uploaded):
     try:
