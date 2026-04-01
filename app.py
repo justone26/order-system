@@ -804,82 +804,80 @@ if st.session_state.get('analyzed'):
             )
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 최종 잔량 상황판] - 컬럼명 무관 강제 매핑 버전
+# [7단계: 실시간 리오더 최종 잔량 상황판] - F(기존) + G(추가) 합산 버전
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
 
     try:
-        # [1] 데이터 로드 (캐시 없이 실시간으로 시도)
+        # [1] 데이터 로드
         ws_v7 = get_sheet().worksheet("발주기록")
         all_v7 = ws_v7.get_all_values()
         
         if len(all_v7) > 1:
-            # 데이터프레임 생성 (제목 줄 제외)
             df_raw_v7 = pd.DataFrame(all_v7[1:])
             
-            # ⭐ 핵심: 컬럼명을 시트에서 가져오지 않고 코드에서 강제로 부여 (Mismatch 방지)
-            # 5단계 저장 순서: 발주시간(0), 상품명(1), 옵션(2), 공급처상품명(3), 가용(4), 리오더잔량(5), 추가발주(6), 권장(7), 메모(8), 업체명(9)
-            forced_cols = ["발주시간", "상품명", "옵션", "공급처상품명", "가용", "리잔량", "수량", "권장", "메모", "업체명"]
+            # 10개 컬럼 구조 강제 할당 (5단계 저장 순서)
+            # 0:시간, 1:상품, 2:옵션, 3:공급명, 4:가용, 5:기존리오더(F), 6:추가발주(G), 7:권장, 8:메모, 9:업체명
+            col_names = ["발주시간", "상품명", "옵션", "공급처상품명", "가용재고", "기존리오더", "추가발주", "발주권장", "메모", "업체명"]
+            df_raw_v7.columns = col_names[:len(df_raw_v7.columns)]
             
-            # 현재 불러온 데이터의 칸 수에 맞춰서 이름을 붙여줍니다.
-            df_raw_v7.columns = forced_cols[:len(df_raw_v7.columns)]
+            # [2] ⭐ 핵심 계산: F열(기존) + G열(추가) 더하기
+            df_raw_v7["기존리오더"] = pd.to_numeric(df_raw_v7["기존리오더"], errors='coerce').fillna(0).astype(int)
+            df_raw_v7["추가발주"] = pd.to_numeric(df_raw_v7["추가발주"], errors='coerce').fillna(0).astype(int)
             
-            # [2] 전처리: 수량(6번 칸)을 숫자로 변환
-            df_raw_v7["수량"] = pd.to_numeric(df_raw_v7["수량"], errors='coerce').fillna(0).astype(int)
+            # 실제 우리가 봐야 할 '최종 잔량' 계산
+            df_raw_v7["최종잔량"] = df_raw_v7["기존리오더"] + df_raw_v7["추가발주"]
             df_raw_v7["업체명"] = df_raw_v7["업체명"].astype(str).str.strip()
-            
-            # [3] 필터 및 검색 UI
+
+            # [3] 필터 및 검색
             f1, f2, f3 = st.columns([1.5, 1.5, 1])
-            with f1:
-                q_v7 = st.text_input("🔍 상품명 또는 옵션 검색", key="v7_search_q")
+            with f1: q_v7 = st.text_input("🔍 상품명/옵션 검색", key="v7_f_q")
             with f2:
                 v_list = sorted(df_raw_v7["업체명"].unique().tolist())
-                v_choice = st.selectbox("🏭 업체 선택", ["전체 업체"] + v_list, key="v7_vendor_sel")
+                v_choice = st.selectbox("🏭 업체 선택", ["전체 업체"] + v_list, key="v7_f_v")
             with f3:
                 st.write(""); st.write("")
-                if st.button("🔄 데이터 새로고침", use_container_width=True):
-                    st.rerun()
+                if st.button("🔄 새로고침", use_container_width=True): st.rerun()
 
-            # [4] 필터링 적용
-            df_f = df_raw_v7[df_raw_v7["수량"] != 0].copy() # 수량이 있는 것만
+            # [4] 필터링 적용 (최종잔량이 0이 아닌 것만)
+            df_f = df_raw_v7[df_raw_v7["최종잔량"] != 0].copy()
             
             if v_choice != "전체 업체":
                 df_f = df_f[df_f["업체명"] == v_choice]
             if q_v7:
                 df_f = df_f[df_f["상품명"].str.contains(q_v7, case=False) | df_f["옵션"].str.contains(q_v7, case=False)]
 
-            # [5] 최종 출력 (집계)
+            # [5] 집계 및 화면 출력
             if not df_f.empty:
-                # 날짜 보기 좋게 자르기 (2026-04-01 -> 04-01)
-                df_f["날짜"] = df_f["발주시간"].str.slice(5, 10)
-                
-                # 중복 항목 합산 및 메모 통합
-                df_final = df_f.groupby(["날짜", "업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
-                    "수량": "sum",
+                # 같은 상품/옵션은 가장 최근 기록의 '최종잔량'을 기준으로 합산
+                # (히스토리에 여러 번 기록되었을 수 있으므로 업체/상품/옵션별로 그룹화)
+                df_final = df_f.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
+                    "발주시간": "max",
+                    "최종잔량": "last", # 가장 최근에 계산된 잔량 수치
                     "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
-                })
+                }).sort_values("발주시간", ascending=False)
 
-                # 합계 표시
-                total_qty = df_final["수량"].sum()
-                st.info(f"📊 현재 조건의 미입고 총 합계: **{total_qty:,}개**")
+                # 상단 카드 요약
+                total_sum = df_final["최종잔량"].sum()
+                st.info(f"📊 현재 미입고 총 잔량: **{total_sum:,}개** (기존 리오더 + 금일 발주 합계)")
 
-                # 테이블 출력 (너비 최적화)
+                # 데이터 테이블
                 st.dataframe(
-                    df_final.sort_values(["날짜", "업체명"], ascending=[False, True]),
+                    df_final[["발주시간", "업체명", "상품명", "옵션", "최종잔량", "메모"]],
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "날짜": st.column_config.TextColumn("📅", width=50),
-                        "수량": st.column_config.NumberColumn("🔢 잔량", format="%d", width=60),
+                        "발주시간": st.column_config.TextColumn("🕒", width=100),
+                        "최종잔량": st.column_config.NumberColumn("📦 최종잔량", format="%d", width=80),
                         "메모": st.column_config.TextColumn("📝 비고", width=300)
                     }
                 )
             else:
-                st.warning("⚠️ 표시할 미입고 데이터가 없습니다. (수량이 0이거나 필터 조건에 없음)")
+                st.warning("🔎 미입고 잔량이 있는 데이터가 없습니다.")
         else:
-            st.error("📡 '발주기록' 시트에 데이터가 없습니다. 5단계에서 저장을 먼저 진행해 주세요.")
+            st.error("📡 '발주기록' 시트에 데이터가 없습니다.")
 
     except Exception as e:
-        st.error(f"❌ 7단계 로드 중 치명적 오류: {e}")
+        st.error(f"❌ 7단계 계산 오류: {e}")
