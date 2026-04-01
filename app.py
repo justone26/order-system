@@ -479,11 +479,21 @@ with tab1:
 
 
 # ------------------------------------------------------------------
-# [4단계: 데이터 편집 및 재고 관리] - 사장님 요청 13개 컬럼 완벽 포함
+# [4단계: 데이터 편집 및 재고 관리] - 시트 연결(NoneType) 오류 방지 로직 추가
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
+
+    # ⭐ [핵심 추가] 시트 연결이 끊겼는지 확인하고 다시 불러옵니다.
+    try:
+        sh = get_sheet()
+        if sh is None:
+            st.error("❗ 구글 시트 연결에 실패했습니다. 상단의 인증 버튼을 다시 눌러주시거나 새로고침 해주세요.")
+            st.stop()
+    except NameError:
+        st.error("❗ get_sheet() 함수를 찾을 수 없습니다. 코드 상단에 인증 로직이 있는지 확인해주세요.")
+        st.stop()
 
     # [1] 설정값 로드
     p = st.session_state.p
@@ -498,7 +508,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     with c2: s_query = st.text_input("🔍 상품 검색", key="v4_s")
     with c3: s_date = st.date_input("🗓️ 입고 조회 날짜", datetime.now(KST).date(), key="v4_d")
 
-    # [3] 데이터 계산 로직
+    # [3] 데이터 계산 (get_realtime_data_v4 호출)
     reorder_map, history_map = get_realtime_data_v4(s_date)
     df_work = st.session_state.df_raw.copy()
 
@@ -515,7 +525,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
     df_work['clean_key'] = df_work.apply(get_clean_key_v4, axis=1)
     
-    # ⭐ 사장님이 요청하신 모든 데이터 매핑
+    # 데이터 매핑
     df_work["리오더 총합"] = df_work['clean_key'].map(reorder_map).fillna(0).astype(int)
     df_work["과거입고데이터"] = df_work['clean_key'].map(history_map).fillna(0).astype(int)
     df_work["리오더 입고"] = 0 
@@ -528,20 +538,13 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     if s_query:
         df_f = df_f[df_f[item].astype(str).str.contains(s_query, case=False) | df_f[opt].astype(str).str.contains(s_query, case=False)]
 
-    # [5] 화면 표시용 컬럼명 변경 및 순서 배치 (사장님 요청 순서)
-    # 상태, 공급처, 상품명, 옵션, 공급처상품명, 정상재고, 가용재고, 리오더 총합, 리오더 입고, 과거입고데이터, 3일발주데이터(t3), 일판매, 발주권장
+    # [5] 화면 표시용 컬럼명 변경
     df_disp = df_f.rename(columns={
-        s_out: "상태", 
-        vnd: "공급처", 
-        item: "상품명", 
-        opt: "옵션", 
-        v_it: "공급처상품명", 
-        stk: "정상재고",
-        avl: "가용재고",
-        t3: "3일발주데이터"
+        s_out: "상태", vnd: "공급처", item: "상품명", opt: "옵션", 
+        v_it: "공급처상품명", stk: "정상재고", avl: "가용재고", t3: "3일발주데이터"
     })
     
-    # 4단계 테이블 최종 출력 (컬럼 순서 100% 일치)
+    # 4단계 테이블 최종 출력
     with st.form("v4_form"):
         target_cols = [
             "상태", "공급처", "상품명", "옵션", "공급처상품명", 
@@ -567,19 +570,19 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             disabled=[c for c in target_cols if c != "리오더 입고"]
         )
         
-        # 저장 버튼 (가로 확장)
         if st.form_submit_button("💾 입고 정보 저장 및 리오더 차감", use_container_width=True):
             edits = st.session_state["v4_editor"].get("edited_rows", {})
             if edits:
-                v7_sh = get_sheet().worksheet("발주기록")
-                h_sh = get_sheet().worksheet("입고기록")
+                # 여기서 다시 한번 sh를 체크하여 안전하게 저장합니다.
+                sh = get_sheet()
+                v7_sh = sh.worksheet("발주기록")
+                h_sh = sh.worksheet("입고기록")
                 for r_idx, val in edits.items():
                     if "📥 입고차감" in val and int(val["📥 입고차감"]) > 0:
                         row_data = df_disp.iloc[int(r_idx)]; qty = int(val["📥 입고차감"])
                         v7_sh.append_row([datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'), str(row_data["상품명"]), str(row_data["옵션"]), str(row_data["공급처상품명"]), 0, 0, -qty, 0, "입고차감", str(row_data["공급처"])])
                         h_sh.append_row([s_date.strftime('%Y-%m-%d'), str(row_data["상품명"]), str(row_data["옵션"]), qty])
                 st.success("✅ 저장이 완료되었습니다!"); time.sleep(0.5); st.rerun()
-
 
 
 
