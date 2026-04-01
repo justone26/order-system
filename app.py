@@ -409,7 +409,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     # UI 레이아웃
     f_c1, f_c2, f_c3 = st.columns([1, 2, 1])
     with f_c1: filter_m = st.selectbox("🚦 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_main_filter")
-    with f_c2: search_q = st.text_input("🔍 검색", placeholder="상품명 또는 옵션 입력 후 엔터...", key="v4_main_search")
+    with f_c2: search_q = st.text_input("🔍 검색", placeholder="검색할 상품을 넣어주세요...", key="v4_main_search")
     with f_c3: hist_date_4 = st.date_input("🗓️ 입고 기록 날짜", datetime.now(KST).date(), key="v4_main_date")
 
     # 판매량 및 권장발주 계산
@@ -489,7 +489,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     # 상단 필터 레이아웃
     f1, f2, f3 = st.columns([1.5, 2, 1])
     m5_f = f1.selectbox("🚦 상태 필터", ["🚨 고위험/주의", "✅ 전체정상"], key="v5_main_filter")
-    s5_q = f2.text_input("🔍 상품명 검색", key="v5_main_search", placeholder="필터 무시 검색 가능...")
+    s5_q = f2.text_input("🔍 상품명 검색", key="v5_main_search", placeholder="검색할 상품을 넣어주세요...")
     
     from datetime import datetime, timedelta, timezone
     KST_SAFE = timezone(timedelta(hours=9)) 
