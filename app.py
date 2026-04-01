@@ -398,29 +398,38 @@ with tab1:
             
             reg = st.selectbox("📆 상품 등록일", cols, index=auto_idx(['등록일', '등록일자', '최초등록']), key="sel_reg")
 
-        # --- 3단계: 데이터 분석 설정 ---
-        st.subheader("🚀 3단계: 데이터 분석 설정")
-        s1, s2 = st.columns(2)
-        with s1:
-            lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
-        with s2:
-            ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
+      # --- 3단계: 데이터 분석 설정 ---
+    st.subheader("🚀 3단계: 데이터 분석 설정")
+    s1, s2 = st.columns(2)
+    with s1:
+        lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
+    with s2:
+        ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
 
-        if st.button("📊 데이터 분석 시작", use_container_width=True, type="primary"):
-            st.session_state.p = {
-                'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 
-                'st': stk, 'av': av, 't3': t3, 't7': t7, 'reg': reg,
-                'lt': lt_val, 'ss': ss_val
-            }
-            
-            df_final = st.session_state.df_raw.copy()
-            if reg in df_final.columns:
-                df_final[reg] = pd.to_datetime(df_final[reg], errors='coerce')
-            
-            st.session_state.df_raw = df_final 
-            st.session_state.analyzed = True   
-            st.rerun()
+    if st.button("📊 데이터 분석 시작", use_container_width=True, type="primary"):
+        st.session_state.p = {
+            'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 
+            'st': stk, 'av': av, 't3': t3, 't7': t7, 'reg': reg,
+            'lt': lt_val, 'ss': ss_val
+        }
+        
+        # [수정 포인트] 시트에서 가져온 '리오더 수량'이 포함된 원본 데이터를 복사합니다.
+        df_final = st.session_state.df_raw.copy()
+        
+        # 등록일 날짜 형식 변환
+        if reg in df_final.columns:
+            df_final[reg] = pd.to_datetime(df_final[reg], errors='coerce')
+        
+        # ⭐ 중요: 리오더 수량이 숫자인지 확인하고 빈칸은 0으로 채웁니다.
+        if "리오더 수량" in df_final.columns:
+            df_final["리오더 수량"] = pd.to_numeric(df_final["리오더 수량"], errors='coerce').fillna(0)
+        else:
+            df_final["리오더 수량"] = 0
 
+        # 수정된 데이터를 세션에 다시 저장하고 화면을 새로고침합니다.
+        st.session_state.df_raw = df_final 
+        st.session_state.analyzed = True   
+        st.rerun()
 
 # ------------------------------------------------------------------
 # [4단계: 데이터 편집 및 재고 관리] - 사장님 시트 열 순서(A~J) 정밀 타격 버전
