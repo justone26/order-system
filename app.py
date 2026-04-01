@@ -478,31 +478,34 @@ with tab1:
 
 
 
-
 # ------------------------------------------------------------------
-# [4단계: 데이터 편집 및 재고 관리]
+# [4단계: 데이터 편집 및 재고 관리] - 사장님 요청 13개 컬럼 완벽 포함
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
 
+    # [1] 설정값 로드
     p = st.session_state.p
     s_out, item, opt = p['so'], p['it'], p['op']
     vnd, v_it = p['vn'], p['vi']
     stk, avl, t3, t7 = p['st'], p['av'], p['t3'], p['t7']
     lt, ss = p['lt'], p['ss']
 
-    # UI 설정
+    # [2] UI (필터/검색)
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_f")
     with c2: s_query = st.text_input("🔍 상품 검색", key="v4_s")
     with c3: s_date = st.date_input("🗓️ 입고 조회 날짜", datetime.now(KST).date(), key="v4_d")
 
-    # 함수 호출 (상단에 정의된 공통 함수 사용)
+    # [3] 데이터 계산 로직
     reorder_map, history_map = get_realtime_data_v4(s_date)
     df_work = st.session_state.df_raw.copy()
 
-    # 데이터 정제 및 키 생성
+    # 숫자 형식 변환
+    for col in [stk, avl, t3, t7]:
+        df_work[col] = pd.to_numeric(df_work[col], errors='coerce').fillna(0).astype(int)
+    
     import unicodedata
     import re
     def get_clean_key_v4(r):
@@ -511,34 +514,71 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         return re.sub(r'[^a-zA-Z0-9가-힣]', '', n).upper() + "_" + re.sub(r'[^a-zA-Z0-9가-힣]', '', o).upper()
 
     df_work['clean_key'] = df_work.apply(get_clean_key_v4, axis=1)
-    df_work["리오더 총합"] = df_work['clean_key'].map(reorder_map).fillna(0).astype(int)
     
+    # ⭐ 사장님이 요청하신 모든 데이터 매핑
+    df_work["리오더 총합"] = df_work['clean_key'].map(reorder_map).fillna(0).astype(int)
+    df_work["과거입고데이터"] = df_work['clean_key'].map(history_map).fillna(0).astype(int)
+    df_work["리오더 입고"] = 0 
     df_work['일판매'] = df_work.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
     df_work['발주권장'] = ((df_work['일판매'] * (lt + ss)) - (df_work[avl] + df_work['리오더 총합'])).clip(lower=0).astype(int)
 
-    # 필터 적용
+    # [4] 필터링
     is_so = df_work[s_out].astype(str).str.contains('품절', na=False)
     df_f = df_work[~is_so] if f_mode == "정상만" else (df_work[is_so] if f_mode == "품절만" else df_work)
     if s_query:
         df_f = df_f[df_f[item].astype(str).str.contains(s_query, case=False) | df_f[opt].astype(str).str.contains(s_query, case=False)]
 
-    df_disp = df_f.rename(columns={s_out:"상태", vnd:"공급처", item:"상품명", opt:"옵션", v_it:"공급처상품명", avl:"가용재고"})
+    # [5] 화면 표시용 컬럼명 변경 및 순서 배치 (사장님 요청 순서)
+    # 상태, 공급처, 상품명, 옵션, 공급처상품명, 정상재고, 가용재고, 리오더 총합, 리오더 입고, 과거입고데이터, 3일발주데이터(t3), 일판매, 발주권장
+    df_disp = df_f.rename(columns={
+        s_out: "상태", 
+        vnd: "공급처", 
+        item: "상품명", 
+        opt: "옵션", 
+        v_it: "공급처상품명", 
+        stk: "정상재고",
+        avl: "가용재고",
+        t3: "3일발주데이터"
+    })
     
+    # 4단계 테이블 최종 출력 (컬럼 순서 100% 일치)
     with st.form("v4_form"):
+        target_cols = [
+            "상태", "공급처", "상품명", "옵션", "공급처상품명", 
+            "정상재고", "가용재고", "리오더 총합", "리오더 입고", 
+            "과거입고데이터", "3일발주데이터", "일판매", "발주권장"
+        ]
+        
         v4_ed = st.data_editor(
-            df_disp[["상태", "공급처", "상품명", "옵션", "공급처상품명", "가용재고", "리오더 총합", "발주권장"]], 
-            use_container_width=True, hide_index=True, key="v4_editor",
+            df_disp[target_cols], 
+            use_container_width=True, 
+            hide_index=True, 
+            key="v4_editor",
             column_config={
+                "정상재고": st.column_config.NumberColumn("🏢 정상재고", format="%d"),
                 "가용재고": st.column_config.NumberColumn("✅ 가용재고", format="%d"),
                 "리오더 총합": st.column_config.NumberColumn("📦 리오더잔량", format="%d"),
+                "리오더 입고": st.column_config.NumberColumn("📥 입고차감", min_value=0),
+                "과거입고데이터": st.column_config.NumberColumn("📜 과거입고", format="%d"),
+                "3일발주데이터": st.column_config.NumberColumn("📅 3일판매", format="%d"),
+                "일판매": st.column_config.NumberColumn("📈 일판매", format="%d"),
                 "발주권장": st.column_config.NumberColumn("🚨 발주권장", format="%d")
-            }
+            },
+            disabled=[c for c in target_cols if c != "리오더 입고"]
         )
+        
+        # 저장 버튼 (가로 확장)
         if st.form_submit_button("💾 입고 정보 저장 및 리오더 차감", use_container_width=True):
-            # 저장 로직 (필요시 추가)
-            st.success("✅ 완료!"); time.sleep(0.5); st.rerun()
-
-
+            edits = st.session_state["v4_editor"].get("edited_rows", {})
+            if edits:
+                v7_sh = get_sheet().worksheet("발주기록")
+                h_sh = get_sheet().worksheet("입고기록")
+                for r_idx, val in edits.items():
+                    if "📥 입고차감" in val and int(val["📥 입고차감"]) > 0:
+                        row_data = df_disp.iloc[int(r_idx)]; qty = int(val["📥 입고차감"])
+                        v7_sh.append_row([datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'), str(row_data["상품명"]), str(row_data["옵션"]), str(row_data["공급처상품명"]), 0, 0, -qty, 0, "입고차감", str(row_data["공급처"])])
+                        h_sh.append_row([s_date.strftime('%Y-%m-%d'), str(row_data["상품명"]), str(row_data["옵션"]), qty])
+                st.success("✅ 저장이 완료되었습니다!"); time.sleep(0.5); st.rerun()
 
 
 
