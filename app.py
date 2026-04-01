@@ -35,64 +35,70 @@ def get_sheet():
     except:
         return None
 
-# --- [핵심: 리오더 동기화 함수] ---
+# --- [핵심: 리오더 동기화 및 진단] ---
 def sync_reorder_from_sheet(df_uploaded):
-    """ 구글 시트 '발주기록' 탭에서 (기존리오더 + 추가발주) 수량을 가져와 매칭합니다. """
     try:
         sh = get_sheet()
         if not sh:
+            st.error("❌ 구글 시트 연결 실패 (Secrets 설정 확인 필요)")
             return df_uploaded
         
         ws = sh.worksheet("발주기록")
         all_data = ws.get_all_values()
         
         if len(all_data) <= 1:
+            st.warning("⚠️ '발주기록' 시트에 데이터가 없습니다.")
             return df_uploaded
             
         reorder_map = {}
+        # 시트 데이터 루프 (B:상품명, C:옵션, F:기존, G:추가)
         for row in all_data[1:]:
             try:
-                # 1. 시트 데이터 정리 (B열:상품명, C열:옵션)
-                # 모든 공백을 제거하고 대문자로 통일하여 매칭률을 높입니다.
+                # 1. 시트 데이터 표준화 (공백 제거, 대문자)
                 s_name = str(row[1]).strip().replace(" ", "").upper()
                 s_opt = str(row[2]).strip().replace(" ", "").upper()
                 
                 if not s_name: continue
                 
-                # 2. 수량 계산 (F열:기존리오더, G열:추가발주)
-                def clean_val(v):
-                    try: return int(float(str(v).replace(",", "")))
-                    except: return 0
+                # 2. 숫자 변환 (쉼표 제거 및 에러 방지)
+                def clean_num(v):
+                    try:
+                        return int(float(str(v).replace(",", "").strip()))
+                    except:
+                        return 0
                 
-                # 사진 장부 구조대로 6번째(index 5), 7번째(index 6) 칸을 더합니다.
-                total_qty = clean_val(row[5]) + clean_val(row[6])
+                # F열(index 5) + G열(index 6) 합산
+                qty = clean_num(row[5]) + clean_num(row[6])
                 
-                if total_qty > 0:
+                if qty > 0:
                     key = s_name + "_" + s_opt
-                    reorder_map[key] = reorder_map.get(key, 0) + total_qty
+                    reorder_map[key] = reorder_map.get(key, 0) + qty
             except:
                 continue
 
-        # 3. 업로드 파일 매칭 (기존 컬럼이 있으면 삭제 후 새로 생성)
+        # 3. 진단 메시지 출력
+        if not reorder_map:
+            st.info("ℹ️ 시트에서 수량이 입력된 상품을 찾지 못했습니다. (F, G열 확인)")
+        else:
+            st.success("✅ 시트에서 총 " + str(len(reorder_map)) + "건의 리오더 품목을 로드했습니다.")
+
+        # 4. 업로드 파일 매칭
         if "리오더 수량" in df_uploaded.columns:
             df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
 
-        def get_val(r):
+        def get_final_qty(r):
+            # 업로드 파일의 상품명/옵션도 공백 제거 후 비교
             u_key = (str(r['상품명']).strip().replace(" ", "") + "_" + 
                      str(r['옵션']).strip().replace(" ", "")).upper()
             return reorder_map.get(u_key, 0)
 
-        df_uploaded['리오더 수량'] = df_uploaded.apply(get_val, axis=1)
+        df_uploaded['리오더 수량'] = df_uploaded.apply(get_final_qty, axis=1)
         
-        # 성공 메시지 알림 (우측 하단 토스트)
-        if len(reorder_map) > 0:
-            st.toast("✅ 구글 시트 리오더 데이터 연동 성공!")
-            
         return df_uploaded
 
     except Exception as e:
-        # 🚨 에러 발생 시 따옴표 문제가 없도록 안전한 문자열 결합 방식 사용
-        st.warning("데이터 확인 중 알림: " + str(e))
+        # 🚨 f-string 오류 방지를 위해 일반 결합 사용
+        st.error("시스템 오류 발생: " + str(e))
         return df_uploaded
 
 # --- [보조 함수] ---
@@ -103,6 +109,7 @@ def get_incoming_history():
         data = ws.get_all_records()
         if not data: return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
         df_h = pd.DataFrame(data)
+        df_h.columns = [c.strip() for c in df_h.columns]
         df_h['상품명'] = df_h['상품명'].astype(str).str.strip()
         df_h['옵션'] = df_h['옵션'].astype(str).str.strip()
         summary = df_h.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
