@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import time
 import io
+import re  # 정규표현식 (문자열 치환용)
+import unicodedata
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta, timezone
 
@@ -474,19 +476,20 @@ with tab1:
 
 
 # ------------------------------------------------------------------
-# [4단계: 데이터 편집 및 재고 관리] - 최종 수정본
+# [4단계: 데이터 편집 및 재고 관리] - 최종 완성본
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
 
+    # [0] 시트 연결 확인
     try:
         sh = get_sheet()
         if sh is None:
             st.error("❗ 구글 시트 연결에 실패했습니다. 새로고침 해주세요.")
             st.stop()
-    except NameError:
-        st.error("❗ get_sheet() 함수를 찾을 수 없습니다.")
+    except Exception as e:
+        st.error(f"❗ 시트 연결 오류: {e}")
         st.stop()
 
     # [1] 설정값 로드
@@ -500,9 +503,11 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_f")
     with c2: s_query = st.text_input("🔍 상품 검색", key="v4_s")
+    # ⭐ s_date는 과거입고데이터를 불러오는 기준 날짜가 됩니다.
     with c3: s_date = st.date_input("🗓️ 입고 조회 날짜", datetime.now(KST).date(), key="v4_d")
 
     # [3] 데이터 계산 및 매핑
+    # get_realtime_data_v4 함수가 내부적으로 search_date[:10]을 체크하도록 되어 있어야 합니다.
     reorder_map, history_map = get_realtime_data_v4(s_date)
     df_work = st.session_state.df_raw.copy()
 
@@ -510,10 +515,11 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     for col in [stk, avl, t3, t7]:
         df_work[col] = pd.to_numeric(df_work[col], errors='coerce').fillna(0).astype(int)
 
-    # 매핑용 키 생성 함수
+    # ⭐ [핵심 수정] 매핑용 키 생성 함수: 공백과 특수문자를 더 강력하게 제거
     def get_clean_key_v4_final(r):
-        n = re.sub(r'[^a-zA-Z0-9가-힣]', '', str(r[item])).upper()
-        o = re.sub(r'[^a-zA-Z0-9가-힣]', '', str(r[opt])).upper()
+        # 한글, 영문, 숫자만 남기고 제거 (NFC 정규화 포함 권장)
+        n = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[item]))).upper()
+        o = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[opt]))).upper()
         return n + o
 
     df_work['clean_key'] = df_work.apply(get_clean_key_v4_final, axis=1)
@@ -567,35 +573,39 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 v7_sh = sh.worksheet("발주기록")
                 h_sh = sh.worksheet("입고기록")
                 
-                # 조회 중인 날짜 문자열 (기록용)
+                # ⭐ 저장할 때 시간을 빼고 날짜(YYYY-MM-DD)만 기록하여 조회 호환성을 높임
                 target_date_str = s_date.strftime('%Y-%m-%d')
                 
                 success_count = 0
                 for r_idx, val in edits.items():
-                    qty = int(val.get("리오더 입고", 0))
-                    if qty > 0:
-                        row_data = df_disp.iloc[int(r_idx)]
-                        
-                        # 1. 발주기록 시트에 마이너스(-) 추가 (잔량 차감용)
-                        v7_sh.append_row([
-                            datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'),
-                            str(row_data["상품명"]), str(row_data["옵션"]), str(row_data.get("공급처상품명", "")),
-                            0, 0, -qty, 0, "입고차감", str(row_data.get("공급처", "미지정"))
-                        ])
+                    try:
+                        qty = int(val.get("리오더 입고", 0))
+                        if qty > 0:
+                            row_data = df_disp.iloc[int(r_idx)]
+                            
+                            # 1. 발주기록 시트: 잔량 차감용 (G열에 마이너스 추가)
+                            v7_sh.append_row([
+                                datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'),
+                                str(row_data["상품명"]), str(row_data["옵션"]), str(row_data.get("공급처상품명", "")),
+                                0, 0, -qty, 0, "입고차감", str(row_data.get("공급처", "미지정"))
+                            ])
 
-                        # 2. 입고기록 시트에 상세 내역 추가 (과거 데이터 표시용)
-                        h_sh.append_row([
-                            target_date_str, # 조회 날짜로 저장
-                            str(row_data["상품명"]), 
-                            str(row_data["옵션"]), 
-                            qty
-                        ])
-                        success_count += 1
+                            # 2. 입고기록 시트: 과거 내역 조회용
+                            h_sh.append_row([
+                                target_date_str, # 조회 날짜와 일치하도록 저장
+                                str(row_data["상품명"]), 
+                                str(row_data["옵션"]), 
+                                qty
+                            ])
+                            success_count += 1
+                    except Exception as e:
+                        st.error(f"처리 중 오류 발생(행 {r_idx}): {e}")
                 
-                st.success(f"✅ {success_count}건의 입고 처리가 완료되었습니다!")
-                st.cache_data.clear() # 캐시 삭제 (데이터 새로 읽기)
-                time.sleep(1)
-                st.rerun()
+                if success_count > 0:
+                    st.success(f"✅ {success_count}건의 입고 처리가 완료되었습니다!")
+                    st.cache_data.clear() # 캐시 삭제하여 즉시 반영
+                    time.sleep(1)
+                    st.rerun()
             else:
                 st.warning("⚠️ 입력된 입고 수량이 없습니다.")
 
