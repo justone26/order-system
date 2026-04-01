@@ -783,7 +783,7 @@ if st.session_state.get('analyzed'):
             )
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 최종 잔량 상황판]
+# [7단계: 실시간 리오더 최종 잔량 상황판] - 메모 자동 보정 버전
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -802,11 +802,22 @@ if st.session_state.get('analyzed'):
             df_v7 = pd.DataFrame(all_v7[1:])
             df_v7.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "가용재고", "기존리오더", "추가발주", "발주권장", "메모", "업체명"][:len(df_v7.columns)]
             
-            # 수치 변환 및 최종 잔량(기존+추가/차감) 계산
+            # 수치 변환
             df_v7["기존리오더"] = pd.to_numeric(df_v7["기존리오더"], errors='coerce').fillna(0).astype(int)
             df_v7["추가발주"] = pd.to_numeric(df_v7["추가발주"], errors='coerce').fillna(0).astype(int)
             df_v7["최종잔량"] = df_v7["기존리오더"] + df_v7["추가발주"]
             df_v7["날짜_순수"] = df_v7["발주시간"].str.slice(0, 10)
+
+            # ⭐ [핵심 로직] 메모 보정: "입고차감"만 적힌 경우 수량을 붙여줌
+            def fix_memo(row):
+                m = str(row['메모']).strip()
+                q = row['추가발주']
+                # G열(추가발주)이 음수이고 메모가 "입고차감"인 경우 숫자를 붙여줌
+                if q < 0 and m == "입고차감":
+                    return f"{q}개 입고차감"
+                return m
+            
+            df_v7["메모"] = df_v7.apply(fix_memo, axis=1)
 
             # 필터 UI
             f1, f2, f3, f4 = st.columns([1.2, 0.6, 1.5, 1.2])
@@ -838,12 +849,18 @@ if st.session_state.get('analyzed'):
                 # 상세 리스트 합산
                 st.write("#### 📋 상세 리스트")
                 df_final = df_f.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
-                    "발주시간": "max", "최종잔량": "sum",
+                    "발주시간": "max", 
+                    "최종잔량": "sum",
+                    # 중복 메모 제거 및 연결
                     "메모": lambda x: " / ".join(dict.fromkeys(filter(None, x.astype(str))))
                 })
                 df_final = df_final[df_final["최종잔량"] > 0].sort_values(["발주시간", "업체명"], ascending=[False, True])
 
                 st.dataframe(df_final, use_container_width=True, hide_index=True,
-                    column_config={"최종잔량": st.column_config.NumberColumn("🔢 잔량", format="%d"), "메모": st.column_config.TextColumn("📝 비고(차감내역)", width=350)})
+                    column_config={
+                        "발주시간": st.column_config.TextColumn("🕒 최종발주"),
+                        "최종잔량": st.column_config.NumberColumn("🔢 잔량", format="%d"), 
+                        "메모": st.column_config.TextColumn("📝 비고(차감내역)", width=400)
+                    })
             else: st.info("데이터가 없습니다.")
     except Exception as e: st.error(f"7단계 오류: {e}")
