@@ -565,19 +565,49 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             disabled=[c for c in target_cols if c != "리오더 입고"]
         )
         
-        if st.form_submit_button("💾 입고 정보 저장 및 리오더 차감", use_container_width=True):
+        iif st.form_submit_button("💾 입고 정보 저장 및 리오더 차감", use_container_width=True):
+            # 세션 스테이트의 에디터 변경사항 확인
             edits = st.session_state["v4_editor"].get("edited_rows", {})
+            
             if edits:
-                # 여기서 다시 한번 sh를 체크하여 안전하게 저장합니다.
                 sh = get_sheet()
                 v7_sh = sh.worksheet("발주기록")
-                h_sh = sh.worksheet("입고기록")
+                
                 for r_idx, val in edits.items():
-                    if "📥 입고차감" in val and int(val["📥 입고차감"]) > 0:
-                        row_data = df_disp.iloc[int(r_idx)]; qty = int(val["📥 입고차감"])
-                        v7_sh.append_row([datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'), str(row_data["상품명"]), str(row_data["옵션"]), str(row_data["공급처상품명"]), 0, 0, -qty, 0, "입고차감", str(row_data["공급처"])])
-                        h_sh.append_row([s_date.strftime('%Y-%m-%d'), str(row_data["상품명"]), str(row_data["옵션"]), qty])
-                st.success("✅ 저장이 완료되었습니다!"); time.sleep(0.5); st.rerun()
+                    # '리오더 입고' 열의 변경된 값을 가져옵니다. 
+                    # (에디터 내 컬럼명 '리오더 입고'가 정확해야 합니다)
+                    qty = int(val.get("리오더 입고", 0)) 
+                    
+                    if qty > 0:
+                        # 현재 행의 데이터 추출
+                        row_data = df_disp.iloc[int(r_idx)]
+                        
+                        # ⭐ 핵심: 7단계에서 (기존 리오더 F + 추가발주 G)를 더하므로,
+                        # 추가발주(G) 칸에 마이너스(-) 값을 넣어 전체 합계를 줄입니다.
+                        now_str = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+                        
+                        new_row = [
+                            now_str,                   # A: 발주시간
+                            str(row_data["상품명"]),    # B: 상품명
+                            str(row_data["옵션"]),      # C: 옵션
+                            str(row_data["공급처상품명"]),# D: 공급처상품명
+                            0,                         # E: 가용재고
+                            0,                         # F: 기존리오더
+                            -qty,                      # G: 추가발주 (여기서 차감!)
+                            0,                         # H: 발주권장
+                            "입고차감",                 # I: 메모
+                            str(row_data["공급처"])     # J: 업체명
+                        ]
+                        
+                        v7_sh.append_row(new_row)
+                
+                st.success(f"✅ {len(edits)}건의 입고 차감이 완료되었습니다!")
+                time.sleep(0.5)
+                st.cache_data.clear() # ⭐ 7단계 데이터를 새로 고침하기 위해 캐시 삭제
+                st.rerun()
+            else:
+                st.warning("⚠️ 수정된 입고 수량이 없습니다.")
+
 
 
 
