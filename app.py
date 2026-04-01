@@ -804,35 +804,46 @@ if st.session_state.get('analyzed'):
             )
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 최종 잔량 상황판] - 10개 컬럼 구조 반영 및 최적화
+# [7단계: 실시간 리오더 최종 잔량 상황판] - API 부하 방지(Caching) 적용
 # ------------------------------------------------------------------
+
+# ⭐ [최적화 함수] 구글 시트 조회를 1분간 캐싱하여 429 에러를 방지합니다.
+@st.cache_data(ttl=60)
+def get_v7_remote_data():
+    try:
+        ws = get_sheet().worksheet("발주기록")
+        return ws.get_all_values()
+    except Exception as e:
+        return str(e) # 에러 발생 시 메시지 반환
+
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
 
     try:
-        # [1. 데이터 실시간 로드]
-        ws_v7 = get_sheet().worksheet("발주기록")
-        all_v7 = ws_v7.get_all_values()
+        # [1. 데이터 로드 - 캐싱 적용]
+        all_v7 = get_v7_remote_data()
         
-        if len(all_v7) > 1:
-            # ⭐ [수정포인트] 5단계 저장 구조(10개 컬럼)를 명시적으로 지정하여 Mismatch 방지
+        # API 오류 처리
+        if isinstance(all_v7, str):
+            if "429" in all_v7:
+                st.error("🚨 구글 접속량이 너무 많습니다. 1분만 기다렸다가 '데이터 동기화' 버튼을 눌러주세요.")
+                st.stop()
+            else:
+                st.error(f"📡 데이터를 불러오지 못했습니다: {all_v7}")
+                st.stop()
+
+        if all_v7 and len(all_v7) > 1:
             df_raw_v7 = pd.DataFrame(all_v7[1:])
             
-            # 시트에 저장된 데이터가 10개 컬럼일 때의 이름을 정확히 매칭합니다.
+            # ⭐ 10개 컬럼 구조 강제 지정 (Length Mismatch 방지)
             df_raw_v7.columns = [
                 "발주시간", "상품명", "옵션", "공급처상품명", 
                 "가용재고", "리오더잔량", "추가발주", "발주권장", "메모", "업체명"
             ]
             
-            # 업체명 공백 제거 및 수량 숫자 변환
             df_raw_v7["업체명"] = df_raw_v7["업체명"].astype(str).str.strip()
-            
-            # 수량(추가발주) 숫자 변환
-            qty_col = "추가발주"
-            df_raw_v7[qty_col] = pd.to_numeric(df_raw_v7[qty_col], errors='coerce').fillna(0).astype(int)
-            
-            # 날짜 간소화 (너비 절약)
+            df_raw_v7["추가발주"] = pd.to_numeric(df_raw_v7["추가발주"], errors='coerce').fillna(0).astype(int)
             df_raw_v7["날짜"] = df_raw_v7["발주시간"].astype(str).str.slice(2, 10) 
 
             # [2. 상단 필터 영역]
@@ -842,8 +853,9 @@ if st.session_state.get('analyzed'):
                 d_range_v7 = st.date_input("🗓️ 1. 기간 선택", value=(default_start, datetime.now(KST).date()), key="v7_range")
             with f2:
                 st.write(""); st.write("")
+                # ⭐ 동기화 버튼 클릭 시에만 캐시를 삭제하고 새로 가져옵니다.
                 if st.button("📈 2. 데이터 동기화", use_container_width=True, type="primary"):
-                    st.cache_data.clear() # 캐시 삭제 후 새로고침
+                    st.cache_data.clear() 
                     st.rerun()
             with f3:
                 q_v7 = st.text_input("🔍 3. 상품/옵션 검색", key="v7_search_q")
@@ -852,13 +864,13 @@ if st.session_state.get('analyzed'):
                 v_choice = st.selectbox("🏭 4. 업체 선택", ["전체 업체"] + v_list, key="v7_vendor_sel")
 
             # --- [필터링 및 집계] ---
+            # 날짜 범위 처리
             if isinstance(d_range_v7, (list, tuple)) and len(d_range_v7) == 2:
                 s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
             else:
                 s_d = d_range_v7[0].strftime('%Y-%m-%d') if isinstance(d_range_v7, (list, tuple)) else d_range_v7.strftime('%Y-%m-%d')
                 e_d = datetime.now(KST).strftime('%Y-%m-%d')
 
-            # 필터 적용
             df_f = df_raw_v7[(df_raw_v7["발주시간"].str.slice(0,10) >= s_d) & (df_raw_v7["발주시간"].str.slice(0,10) <= e_d)].copy()
             
             if v_choice != "전체 업체":
@@ -867,40 +879,33 @@ if st.session_state.get('analyzed'):
                 df_f = df_f[df_f["상품명"].str.contains(q_v7, case=False) | df_f["옵션"].str.contains(q_v7, case=False)]
 
             if not df_f.empty:
-                # 메모와 수량 합산 처리
                 group_cols = ["날짜", "업체명", "상품명", "옵션", "공급처상품명"]
                 df_display = df_f.groupby(group_cols, as_index=False).agg({
-                    qty_col: "sum",
+                    "추가발주": "sum",
                     "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
-                }).rename(columns={qty_col: "잔량"})
+                }).rename(columns={"추가발주": "잔량"})
 
-                # 수량이 있는 것만 노출
                 df_display = df_display[df_display["잔량"] > 0].sort_values("날짜", ascending=False)
 
-                # [3. 상단 업체별 요약 카드]
-                df_vendor_sum = df_display.groupby("업체명")["잔량"].sum().reset_index().sort_values("잔량", ascending=False)
-                st.write(f"#### 🏭 업체별 미입고 상황 (총 {df_vendor_sum['잔량'].sum():,}개)")
+                # [3. 업체별 요약 카드]
+                df_v_sum = df_display.groupby("업체명")["잔량"].sum().reset_index().sort_values("잔량", ascending=False)
+                st.write(f"#### 🏭 업체별 미입고 상황 (총 {df_v_sum['잔량'].sum():,}개)")
                 v_cols = st.columns(4)
-                for i, r in df_vendor_sum.reset_index(drop=True).iterrows():
+                for i, r in df_v_sum.reset_index(drop=True).iterrows():
                     with v_cols[i % 4]:
                         st.metric(label=r["업체명"], value=f"{r['잔량']:,}개")
                 st.divider()
 
-                # [4. 하단 상세 내역] - 너비 최적화
+                # [4. 상세 리스트]
                 st.write(f"#### 📋 상세 미입고 리스트")
-                display_order = ["날짜", "업체명", "상품명", "옵션", "공급처상품명", "잔량", "메모"]
-                actual_cols = [c for c in display_order if c in df_display.columns]
-                
+                view_cols = ["날짜", "업체명", "상품명", "옵션", "공급처상품명", "잔량", "메모"]
                 st.dataframe(
-                    df_display[actual_cols], 
+                    df_display[view_cols], 
                     use_container_width=True, 
                     hide_index=True,
                     column_config={
                         "날짜": st.column_config.TextColumn(width=80),         
                         "업체명": st.column_config.TextColumn(width=100),       
-                        "상품명": st.column_config.TextColumn(width=180),       
-                        "옵션": st.column_config.TextColumn(width=120),         
-                        "공급처상품명": st.column_config.TextColumn(width=150), 
                         "잔량": st.column_config.NumberColumn(format="%d", width=60), 
                         "메모": st.column_config.TextColumn(width=400)          
                     }
