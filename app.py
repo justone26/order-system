@@ -40,59 +40,62 @@ def sync_reorder_from_sheet(df_uploaded):
     try:
         sh = get_sheet()
         if not sh: 
-            st.error("❌ [진단] 구글 시트 연결 실패. Secrets 설정을 확인하세요.")
+            st.error("❌ [진단] 구글 시트 연결 실패")
             return df_uploaded
         
         try:
             ws = sh.worksheet("발주기록")
         except:
-            st.error("❌ [진단] '발주기록' 탭을 찾을 수 없습니다.")
+            st.error("❌ [진단] '발주기록' 탭을 찾을 수 없음")
             return df_uploaded
 
         all_data = ws.get_all_values()
         if len(all_data) <= 1: 
-            st.warning("⚠️ [진단] 시트에 데이터가 없습니다.")
             return df_uploaded
         
-        # 매칭 데이터 생성 (B:상품명, C:옵션, F:기존, G:추가)
+        # 1. 시트 데이터 정리 (B:상품명, C:옵션, F:기존, G:추가)
         reorder_map = {}
         for row in all_data[1:]:
             try:
-                name = str(row[1]).strip().replace(" ", "").upper()
-                opt = str(row[2]).strip().replace(" ", "").upper()
+                # 공백과 대소문자 무시하고 매칭 키 생성
+                s_name = str(row[1]).strip().replace(" ", "").upper()
+                s_opt = str(row[2]).strip().replace(" ", "").upper()
                 
-                def to_i(v):
+                if not s_name: continue
+                
+                # 수량 추출 (숫자가 아니면 0처리)
+                def to_int(v):
                     try: return int(float(str(v).replace(",", "")))
                     except: return 0
                 
-                qty = to_i(row[5]) + to_i(row[6])
-                if qty > 0:
-                    key = f"{name}_{opt}"
-                    reorder_map[key] = reorder_map.get(key, 0) + qty
+                total_qty = to_int(row[5]) + to_int(row[6])
+                
+                if total_qty > 0:
+                    key = f"{s_name}_{s_opt}"
+                    reorder_map[key] = reorder_map.get(key, 0) + total_qty
             except:
                 continue
 
-        # 진단 메시지 출력
-        if not reorder_map:
-            st.info("ℹ️ [진단] 수량이 있는 품목을 찾지 못했습니다. F, G열을 확인하세요.")
-        else:
-            st.success(f"✅ [진단] 시트에서 {len(reorder_map)}개 품목 로드 완료!")
-
-        # 매칭 로직
+        # 2. 업로드된 파일과 매칭
         if "리오더 수량" in df_uploaded.columns:
             df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
 
-        def do_match(r):
+        def match_logic(r):
             u_key = (str(r['상품명']).strip().replace(" ", "") + "_" + 
                      str(r['옵션']).strip().replace(" ", "")).upper()
             return reorder_map.get(u_key, 0)
 
-        df_uploaded['리오더 수량'] = df_uploaded.apply(do_match, axis=1)
+        df_uploaded['리오더 수량'] = df_uploaded.apply(match_logic, axis=1)
+        
+        # 3. 결과 성공 메시지 (한 번만 띄움)
+        if len(reorder_map) > 0:
+            st.success(f"✅ 시트에서 리오더 {len(reorder_map)}건 로드 성공!")
+            
         return df_uploaded
 
     except Exception as e:
-        # 🚨 따옴표 에러 수정 완료!
-        st.error(f"🔥 [치명적 오류] 시스템 에러: {str(e)}")
+        # 🚨 이번에는 따옴표와 괄호 완벽하게 닫았습니다!
+        st.error(f"🔥 오류 발생: {str(e)}")
         return df_uploaded
 
 # --- [보조 함수] ---
