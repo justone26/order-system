@@ -52,26 +52,26 @@ def sync_reorder_from_sheet(df_uploaded):
         reorder_map = {}
         for row in all_data[1:]:
             try:
-                # 시트의 상품명(B열/1번), 옵션(C열/2번)
+                # 1. 시트 데이터 정리 (B:상품명, C:옵션)
                 s_name = str(row[1]).strip().replace(" ", "").upper()
                 s_opt = str(row[2]).strip().replace(" ", "").upper()
                 
                 if not s_name: continue
                 
-                # 시트의 기존리오더(F열/5번), 추가발주(G열/6번)
+                # 2. 수량 계산 (F:기존리오더, G:추가발주)
                 def clean_val(v):
                     try: return int(float(str(v).replace(",", "")))
                     except: return 0
                 
-                qty = clean_val(row[5]) + clean_val(row[6])
+                total_qty = clean_val(row[5]) + clean_val(row[6])
                 
-                if qty > 0:
+                if total_qty > 0:
                     key = f"{s_name}_{s_opt}"
-                    reorder_map[key] = reorder_map.get(key, 0) + qty
+                    reorder_map[key] = reorder_map.get(key, 0) + total_qty
             except:
                 continue
 
-        # 리오더 수량 컬럼 초기화 및 매칭
+        # 3. 업로드 파일 매칭 (기존 컬럼 있으면 삭제 후 재생성)
         if "리오더 수량" in df_uploaded.columns:
             df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
 
@@ -82,15 +82,15 @@ def sync_reorder_from_sheet(df_uploaded):
 
         df_uploaded['리오더 수량'] = df_uploaded.apply(get_val, axis=1)
         
-        # 데이터 로드 성공 알림
+        # 성공 메시지
         if len(reorder_map) > 0:
-            st.toast(f"✅ 시트에서 리오더 데이터를 성공적으로 가져왔습니다.")
+            st.toast("✅ 구글 시트 리오더 데이터 연동 완료!")
             
         return df_uploaded
 
     except Exception as e:
-        # 에러 메시지 형식을 안전하게 수정 (따옴표 문제 해결)
-        st.warning(f"시트 동기화 중 참고사항: {str(e)}")
+        # 에러 메시지 따옴표 문제 해결 (f-string 대신 일반 문자열 합치기 사용으로 안전성 확보)
+        st.warning("리오더 확인 중 알림: " + str(e))
         return df_uploaded
 
 # --- [보조 함수] ---
@@ -108,6 +108,7 @@ def get_incoming_history():
         return summary
     except: 
         return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
+        
 
 
 
