@@ -476,9 +476,8 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 st.success("✅ 메인 데이터 저장 완료!"); time.sleep(0.5); st.rerun()
 
 
-
 # ------------------------------------------------------------------
-# [5단계: 최종 발주 요약 및 구글 시트 저장] - 검색 로직 강화
+# [5단계: 최종 발주 요약 및 구글 시트 저장] - 검색 강화 & 다운로드 포함
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -506,11 +505,13 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_v5['상태'] = df_v5['권장발주'].apply(lambda x: "🚨 긴급" if x > 0 else "✅ 정상")
 
     # --- [검색 및 필터 로직 개선] ---
+    # 검색어가 있으면 필터 무시하고 전체 발주 대상에서 검색
     if s5_q:
-        # 검색어가 있으면 필터 무시하고 전체 발주 대상에서 검색
-        df_v5_view = df_v5[df_v5[item].astype(str).str.contains(s5_q, case=False)]
+        df_v5_view = df_v5[df_v5[item].astype(str).str.contains(s5_q, case=False) | 
+                           df_v5[option].astype(str).str.contains(s5_q, case=False)]
+        
         if df_v5_view.empty:
-            st.error(f"❌ '{s5_q}' 상품을 발주 대상에서 찾을 수 없습니다.")
+            st.error(f"❌ '{s5_q}' 상품을 찾을 수 없습니다. (발주 대상 아님)")
             # 결과 없으면 필터 유지
             danger_names = df_v5[df_v5['권장발주'] > 0][item].unique() if item in df_v5.columns else []
             df_v5_view = df_v5[df_v5[item].isin(danger_names)].copy() if m5_f == "🚨 고위험/주의" else df_v5[~df_v5[item].isin(danger_names)].copy()
@@ -531,7 +532,12 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     with st.form("v5_master_form"):
         df_ed_v5 = df_v5_view[list(available_map.keys())].rename(columns=available_map)
         st.data_editor(df_ed_v5, use_container_width=True, hide_index=True, key="v5_editor",
-            column_config={"상태": st.column_config.TextColumn("상태", width=70), "상품명": st.column_config.TextColumn("상품명", width=250), "📝 이슈/입고메모": st.column_config.TextColumn(width=450)},
+            column_config={
+                "상태": st.column_config.TextColumn("상태", width=70), 
+                "상품명": st.column_config.TextColumn("상품명", width=250), 
+                "옵션": st.column_config.TextColumn("옵션", width=150),
+                "📝 이슈/입고메모": st.column_config.TextColumn(width=400)
+            },
             disabled=[col for col in df_ed_v5.columns if col not in ["추가", "📝 이슈/입고메모"]]
         )
         
@@ -550,15 +556,18 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 df_save_m = st.session_state.df_raw.copy().fillna("").astype(str)
                 m_sh.update([df_save_m.columns.values.tolist()] + df_save_m.values.tolist())
                 st.success("✅ 메인 시트 저장 완료!"); time.sleep(0.5); st.rerun()
+            else:
+                st.info("💡 수정된 내용이 없습니다.")
 
-    # (이하 5단계 저장/다운로드 버튼 로직은 동일)
     st.divider()
     c_save, c_down = st.columns(2)
+    
+    # [2. 구글 시트 전송]
     with c_save:
         if st.button("💾 2. 구글 시트에 최종 발주 기록 저장", use_container_width=True, type="primary"):
             valid_ids = [k for k, v in st.session_state.add_order_dict.items() if v > 0]
             if not valid_ids:
-                st.warning("⚠️ 저장할 추가 수량이 없습니다.")
+                st.warning("⚠️ 저장할 추가 수량이 없습니다. [1. 확정]을 먼저 눌러주세요.")
             else:
                 try:
                     with st.spinner("🚀 발주기록 전송 중..."):
@@ -569,21 +578,58 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                             if idx not in st.session_state.df_raw.index: continue
                             row = st.session_state.df_raw.loc[idx]
                             add_qty = st.session_state.add_order_dict[idx]
-                            log_rows.append([now_s, str(row.get(item, "")), str(row.get(option, "")), str(row.get(v_item, "")), int(row.get(avail, 0)), int(row.get('리오더 수량', 0) - int(add_qty)), int(add_qty), int(row.get('권장발주', 0)), str(row.get('비고', "")), str(row.get(vendor, ""))])
+                            log_rows.append([
+                                now_s, 
+                                str(row.get(item, "")), 
+                                str(row.get(option, "")), 
+                                str(row.get(v_item, "")), 
+                                int(row.get(avail, 0)), 
+                                int(row.get('리오더 수량', 0) - int(add_qty)), 
+                                int(add_qty), 
+                                int(row.get('권장발주', 0)), 
+                                str(row.get('비고', "")), 
+                                str(row.get(vendor, ""))
+                            ])
                         if log_rows:
                             ws_log.append_rows(log_rows)
                             st.session_state.add_order_dict = {}
-                            st.success("✅ 저장 완료!"); time.sleep(1); st.rerun()
-                except Exception as e: st.error(f"❌ 저장 실패: {e}")
+                            st.success("✅ 시트 저장 성공!"); time.sleep(1); st.rerun()
+                except Exception as e: 
+                    st.error(f"❌ 저장 실패: {e}")
 
+    # [3. CSV 다운로드] - 사장님이 찾으시던 엑셀용 소스!
     with c_down:
+        # 권장발주 + 추가발주 합산 계산
         df_v5['최종합계'] = df_v5.get('권장발주', 0) + df_v5['추가발주수량']
         csv_target = df_v5[df_v5['최종합계'] > 0].copy()
+        
         if not csv_target.empty:
-            existing_cols = [c for c in [vendor, item, option, v_item, '최종합계'] if c in csv_target.columns]
-            csv_res = csv_target[existing_cols].rename(columns={vendor: "공급처", item: "상품명", option: "옵션", v_item: "공급처상품명", "최종합계": "발주수량"})
+            # 출력할 컬럼 순서 정렬
+            down_cols = [vendor, item, option, v_item, '최종합계']
+            existing_cols = [c for c in down_cols if c in csv_target.columns]
+            
+            csv_res = csv_target[existing_cols].rename(columns={
+                vendor: "공급처", 
+                item: "상품명", 
+                option: "옵션", 
+                v_item: "공급처상품명", 
+                "최종합계": "발주수량"
+            })
+            
+            # 한글 깨짐 방지를 위한 utf-8-sig 인코딩
             csv_data = csv_res.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 최종 발주서 CSV", csv_data, f"발주서_{d5_d.strftime('%m%d')}.csv", use_container_width=True)
+            
+            st.download_button(
+                label="📥 최종 발주서 CSV 다운로드 (엑셀용)",
+                data=csv_data,
+                file_name=f"발주서_{d5_d.strftime('%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        else:
+            st.info("💡 발주할 수량이 없어 다운로드가 비활성화되었습니다.")
+
+
 
 
 # ------------------------------------------------------------------
