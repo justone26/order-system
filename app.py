@@ -126,51 +126,44 @@ def get_realtime_data_v4(target_date):
         import unicodedata
         import re
         
-        # ⭐ 수정: 특수문자를 지우지 않고 '공백'만 제거합니다.
-        # 이렇게 해야 [저스트원] (M) 같은 글자가 깨지지 않고 매칭됩니다.
-        def super_clean(t):
+        # ⭐ 모든 공백과 특수문자를 제거하여 순수 글자만 남기는 함수
+        def super_clean_v4(t):
             if not t: return ""
             t = unicodedata.normalize('NFC', str(t))
-            return t.replace(" ", "").upper().strip() # 공백 제거 + 대문자 통일
+            # 한글, 영문, 숫자만 남기고 싹 제거
+            return re.sub(r'[^a-zA-Z0-9가-힣]', '', t).upper().strip()
 
         sh = get_sheet()
         
-        # 1. 발주기록 시트 읽기 (리오더 잔량용)
+        # 1. 발주기록 매핑 (리오더 잔량)
         ws_v7 = sh.worksheet("발주기록")
         d7 = ws_v7.get_all_values()
         r_map = {}
         if len(d7) > 1:
             for row in d7[1:]:
                 try:
-                    # 상품명(row[1]) + 옵션(row[2]) 합치기
-                    key = super_clean(row[1]) + super_clean(row[2])
-                    
-                    def to_i(v):
-                        try: return int(float(str(v).replace(",", "").strip()))
-                        except: return 0
-                    
-                    total_qty = to_i(row[5]) + to_i(row[6]) 
-                    if total_qty != 0:
-                        r_map[key] = r_map.get(key, 0) + total_qty
+                    # ⭐ [상품명 + 옵션] 순서로 합침
+                    key = super_clean_v4(row[1]) + super_clean_v4(row[2])
+                    val = int(float(str(row[5]).replace(",", ""))) if row[5] else 0
+                    add = int(float(str(row[6]).replace(",", ""))) if row[6] else 0
+                    if (val + add) != 0:
+                        r_map[key] = r_map.get(key, 0) + (val + add)
                 except: continue
 
-        # 2. 입고기록 시트 읽기 (과거입고데이터용)
+        # 2. 입고기록 매핑 (과거 입고)
         ws_h = sh.worksheet("입고기록")
         dh = ws_h.get_all_values()
         h_map = {}
-        
         t_str = target_date.strftime('%Y-%m-%d')
         
         if len(dh) > 1:
             for row_h in dh[1:]:
                 try:
-                    # 날짜 체크 (시트 날짜에 선택한 날짜가 포함되어 있는지)
+                    # 날짜 비교 (시간 무관하게 날짜만 포함되면 OK)
                     if t_str in str(row_h[0]):
-                        # ⭐ 여기도 똑같이 공백만 제거해서 키 생성
-                        h_key = super_clean(row_h[1]) + super_clean(row_h[2])
-                        
-                        qty_val = str(row_h[3]).replace(",", "").strip()
-                        qty = int(float(qty_val)) if qty_val else 0
+                        # ⭐ 동일하게 [상품명 + 옵션] 합침
+                        h_key = super_clean_v4(row_h[1]) + super_clean_v4(row_h[2])
+                        qty = int(float(str(row_h[3]).replace(",", "")))
                         h_map[h_key] = h_map.get(h_key, 0) + qty
                 except: continue
                 
@@ -488,7 +481,7 @@ with tab1:
 
 
 # ------------------------------------------------------------------
-# [4단계: 데이터 편집 및 재고 관리] - 최종 완성본
+# [4단계: 데이터 편집 및 재고 관리] - 최종 완성본 (특수문자 제거 로직 통합)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -515,11 +508,11 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_f")
     with c2: s_query = st.text_input("🔍 상품 검색", key="v4_s")
-    # ⭐ s_date는 과거입고데이터를 불러오는 기준 날짜가 됩니다.
+    # s_date는 과거입고데이터를 불러오는 기준 날짜
     with c3: s_date = st.date_input("🗓️ 입고 조회 날짜", datetime.now(KST).date(), key="v4_d")
 
     # [3] 데이터 계산 및 매핑
-    # get_realtime_data_v4 함수가 내부적으로 search_date[:10]을 체크하도록 되어 있어야 합니다.
+    # 상단 공통 함수 호출 (reorder_map, history_map 가져오기)
     reorder_map, history_map = get_realtime_data_v4(s_date)
     df_work = st.session_state.df_raw.copy()
 
@@ -527,11 +520,13 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     for col in [stk, avl, t3, t7]:
         df_work[col] = pd.to_numeric(df_work[col], errors='coerce').fillna(0).astype(int)
 
-    # ⭐ [핵심 수정] 매핑용 키 생성 함수: 공백과 특수문자를 더 강력하게 제거
+    # ⭐ [핵심 수정] 매핑용 키 생성 함수: 공백과 특수문자를 공통 함수와 똑같이 제거
     def get_clean_key_v4_final(r):
-        # 한글, 영문, 숫자만 남기고 제거 (NFC 정규화 포함 권장)
-        n = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[item]))).upper()
-        o = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[opt]))).upper()
+        import unicodedata
+        import re
+        # 한글, 영문, 숫자만 남기고 제거 (공통 함수와 100% 동일 로직)
+        n = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[item]))).upper().strip()
+        o = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[opt]))).upper().strip()
         return n + o
 
     df_work['clean_key'] = df_work.apply(get_clean_key_v4_final, axis=1)
@@ -541,6 +536,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work["과거입고데이터"] = df_work['clean_key'].map(history_map).fillna(0).astype(int)
     df_work["리오더 입고"] = 0 
     
+    # 판매량 및 권장 발주량 계산
     df_work['일판매'] = df_work.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
     df_work['발주권장'] = ((df_work['일판매'] * (lt + ss)) - (df_work[avl] + df_work['리오더 총합'])).clip(lower=0).astype(int)
 
@@ -585,7 +581,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 v7_sh = sh.worksheet("발주기록")
                 h_sh = sh.worksheet("입고기록")
                 
-                # ⭐ 저장할 때 시간을 빼고 날짜(YYYY-MM-DD)만 기록하여 조회 호환성을 높임
+                # 저장할 때 날짜(YYYY-MM-DD)만 기록하여 조회 호환성을 높임
                 target_date_str = s_date.strftime('%Y-%m-%d')
                 
                 success_count = 0
@@ -593,18 +589,19 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     try:
                         qty = int(val.get("리오더 입고", 0))
                         if qty > 0:
+                            # 필터링된 데이터프레임에서 원본 행 데이터 추출
                             row_data = df_disp.iloc[int(r_idx)]
                             
-                            # 1. 발주기록 시트: 잔량 차감용 (G열에 마이너스 추가)
+                            # 1. 발주기록 시트: 잔량 차감 (G열에 마이너스 추가)
                             v7_sh.append_row([
                                 datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'),
                                 str(row_data["상품명"]), str(row_data["옵션"]), str(row_data.get("공급처상품명", "")),
                                 0, 0, -qty, 0, "입고차감", str(row_data.get("공급처", "미지정"))
                             ])
 
-                            # 2. 입고기록 시트: 과거 내역 조회용
+                            # 2. 입고기록 시트: 과거 내역 저장
                             h_sh.append_row([
-                                target_date_str, # 조회 날짜와 일치하도록 저장
+                                target_date_str, 
                                 str(row_data["상품명"]), 
                                 str(row_data["옵션"]), 
                                 qty
@@ -615,7 +612,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 
                 if success_count > 0:
                     st.success(f"✅ {success_count}건의 입고 처리가 완료되었습니다!")
-                    st.cache_data.clear() # 캐시 삭제하여 즉시 반영
+                    st.cache_data.clear() # 캐시 삭제
                     time.sleep(1)
                     st.rerun()
             else:
