@@ -774,7 +774,7 @@ if st.session_state.get('analyzed'):
 
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 누적 상황판] - 컬럼 개수 불일치(Length mismatch) 해결
+# [7단계: 실시간 리오더 누적 상황판] - 8개 컬럼 구조 완벽 대응
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -788,15 +788,15 @@ if st.session_state.get('analyzed'):
         if len(all_v7) > 1:
             df_raw_v7 = pd.DataFrame(all_v7[1:])
             
-            # 🚨 에러 해결 포인트: 저장된 8개 컬럼명과 정확히 일치시킴
-            # 기존 10개에서 8개로 수정되었습니다.
+            # 🚨 에러 해결 포인트: 기존 10개에서 8개 컬럼명으로 수정
+            # 5단계 저장 순서: 발주시간, 상품명, 옵션, 공급처상품명, 기존리order, 추가발주, 메모, 업체명
             df_raw_v7.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "기존리order", "추가발주", "메모", "업체명"]
             
             # 숫자 변환 및 날짜 추출
             df_raw_v7["추가발주"] = pd.to_numeric(df_raw_v7["추가발주"], errors='coerce').fillna(0).astype(int)
             df_raw_v7["날짜"] = df_raw_v7["발주시간"].astype(str).str.slice(0, 10)
             
-            # [상단 상황판 보드] - 오늘(Today) 기준 실시간 요약
+            # [상단 상황판 보드] - 오늘(Today) 기준 요약
             today_str = datetime.now(KST).strftime('%Y-%m-%d')
             df_today_stats = df_raw_v7[df_raw_v7["날짜"] == today_str]
 
@@ -836,14 +836,14 @@ if st.session_state.get('analyzed'):
 
             df_filtered = df_raw_v7[(df_raw_v7["날짜"] >= s_d) & (df_raw_v7["날짜"] <= e_d)]
 
-            # 추가 필터 적용
+            # 검색 필터 적용
             if q_v7:
                 df_filtered = df_filtered[df_filtered["상품명"].astype(str).str.contains(q_v7, case=False) | 
                                          df_filtered["옵션"].astype(str).str.contains(q_v7, case=False)]
             if v_choice != "전체 업체":
                 df_filtered = df_filtered[df_filtered["업체명"] == v_choice]
 
-            # 데이터 집계 (8개 컬럼 기반)
+            # 데이터 집계
             df_final = df_filtered.groupby(["날짜", "업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
                 "추가발주": "sum",
                 "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
@@ -851,6 +851,7 @@ if st.session_state.get('analyzed'):
 
             if not df_final.empty:
                 st.write(f"#### {v7_display_range} 실시간 집계 내역")
+                # 표시 순서: 날짜 -> 업체명 -> 상품명 -> 옵션 -> 공급처상품명 -> 추가발주 -> 메모
                 display_order = ["날짜", "업체명", "상품명", "옵션", "공급처상품명", "추가발주", "메모"]
                 st.dataframe(df_final[display_order], use_container_width=True, hide_index=True)
             else:
