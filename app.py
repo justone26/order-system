@@ -804,80 +804,92 @@ if st.session_state.get('analyzed'):
             )
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 최종 잔량 상황판] - F(기존) + G(추가) 합산 버전
+# [7단계: 실시간 리오더 최종 잔량 상황판] - 공급처상품명 & 날짜검색 추가 버전
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
 
     try:
-        # [1] 데이터 로드
+        # [1] 데이터 로드 (API 부하 방지를 위해 간결하게 호출)
         ws_v7 = get_sheet().worksheet("발주기록")
         all_v7 = ws_v7.get_all_values()
         
         if len(all_v7) > 1:
             df_raw_v7 = pd.DataFrame(all_v7[1:])
             
-            # 10개 컬럼 구조 강제 할당 (5단계 저장 순서)
-            # 0:시간, 1:상품, 2:옵션, 3:공급명, 4:가용, 5:기존리오더(F), 6:추가발주(G), 7:권장, 8:메모, 9:업체명
+            # 10개 컬럼 매핑 (순서 엄수)
             col_names = ["발주시간", "상품명", "옵션", "공급처상품명", "가용재고", "기존리오더", "추가발주", "발주권장", "메모", "업체명"]
             df_raw_v7.columns = col_names[:len(df_raw_v7.columns)]
             
-            # [2] ⭐ 핵심 계산: F열(기존) + G열(추가) 더하기
+            # 숫자 변환 및 공백 제거
             df_raw_v7["기존리오더"] = pd.to_numeric(df_raw_v7["기존리오더"], errors='coerce').fillna(0).astype(int)
             df_raw_v7["추가발주"] = pd.to_numeric(df_raw_v7["추가발주"], errors='coerce').fillna(0).astype(int)
-            
-            # 실제 우리가 봐야 할 '최종 잔량' 계산
             df_raw_v7["최종잔량"] = df_raw_v7["기존리오더"] + df_raw_v7["추가발주"]
             df_raw_v7["업체명"] = df_raw_v7["업체명"].astype(str).str.strip()
+            # 날짜 필터링용 날짜만 추출 (YYYY-MM-DD)
+            df_raw_v7["날짜_순수"] = df_raw_v7["발주시간"].str.slice(0, 10)
 
-            # [3] 필터 및 검색
-            f1, f2, f3 = st.columns([1.5, 1.5, 1])
-            with f1: q_v7 = st.text_input("🔍 상품명/옵션 검색", key="v7_f_q")
+            # [2] 상단 필터 영역 (날짜 검색 추가)
+            f1, f2, f3, f4 = st.columns([1.2, 1.2, 1.2, 0.8])
+            with f1:
+                # ⭐ 누락됐던 날짜 범위 검색 추가
+                default_start = (datetime.now(KST) - timedelta(days=30)).date()
+                d_range = st.date_input("🗓️ 기간 선택", value=(default_start, datetime.now(KST).date()), key="v7_date_range")
             with f2:
                 v_list = sorted(df_raw_v7["업체명"].unique().tolist())
-                v_choice = st.selectbox("🏭 업체 선택", ["전체 업체"] + v_list, key="v7_f_v")
+                v_choice = st.selectbox("🏭 업체 필터", ["전체 업체"] + v_list, key="v7_v_filter")
             with f3:
+                q_v7 = st.text_input("🔍 상품/옵션 검색", key="v7_s_filter")
+            with f4:
                 st.write(""); st.write("")
                 if st.button("🔄 새로고침", use_container_width=True): st.rerun()
 
-            # [4] 필터링 적용 (최종잔량이 0이 아닌 것만)
-            df_f = df_raw_v7[df_raw_v7["최종잔량"] != 0].copy()
+            # [3] 필터링 적용
+            df_f = df_raw_v7[df_raw_v7["최종잔량"] > 0].copy() # 잔량이 남은 것만
+            
+            # 날짜 필터 적용
+            if isinstance(d_range, (list, tuple)) and len(d_range) == 2:
+                s_d, e_d = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
+                df_f = df_f[(df_f["날짜_순수"] >= s_d) & (df_f["날짜_순수"] <= e_d)]
             
             if v_choice != "전체 업체":
                 df_f = df_f[df_f["업체명"] == v_choice]
             if q_v7:
                 df_f = df_f[df_f["상품명"].str.contains(q_v7, case=False) | df_f["옵션"].str.contains(q_v7, case=False)]
 
-            # [5] 집계 및 화면 출력
+            # [4] 집계 및 데이터 정리
             if not df_f.empty:
-                # 같은 상품/옵션은 가장 최근 기록의 '최종잔량'을 기준으로 합산
-                # (히스토리에 여러 번 기록되었을 수 있으므로 업체/상품/옵션별로 그룹화)
+                # 같은 상품/옵션은 최신 기록 기준으로 요약
                 df_final = df_f.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
                     "발주시간": "max",
-                    "최종잔량": "last", # 가장 최근에 계산된 잔량 수치
+                    "최종잔량": "last",
                     "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
-                }).sort_values("발주시간", ascending=False)
+                }).sort_values(["발주시간", "업체명"], ascending=[False, True])
 
-                # 상단 카드 요약
+                # 요약 수치
                 total_sum = df_final["최종잔량"].sum()
-                st.info(f"📊 현재 미입고 총 잔량: **{total_sum:,}개** (기존 리오더 + 금일 발주 합계)")
+                st.success(f"📊 선택 기간 내 미입고 총 잔량: **{total_sum:,}개**")
 
-                # 데이터 테이블
+                # [5] 데이터 테이블 출력 (순서: 날짜, 업체, 상품명, 옵션, 공급처상품명, 잔량, 메모)
                 st.dataframe(
-                    df_final[["발주시간", "업체명", "상품명", "옵션", "최종잔량", "메모"]],
+                    df_final[["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "최종잔량", "메모"]],
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "발주시간": st.column_config.TextColumn("🕒", width=100),
-                        "최종잔량": st.column_config.NumberColumn("📦 최종잔량", format="%d", width=80),
+                        "발주시간": st.column_config.TextColumn("🕒 발주시간", width=120),
+                        "업체명": st.column_config.TextColumn("🏭", width=90),
+                        "상품명": st.column_config.TextColumn("상품명", width=180),
+                        "옵션": st.column_config.TextColumn("옵션", width=120),
+                        "공급처상품명": st.column_config.TextColumn("📦 공급처명", width=150), # ⭐ 추가됨
+                        "최종잔량": st.column_config.NumberColumn("🔢 잔량", format="%d", width=70),
                         "메모": st.column_config.TextColumn("📝 비고", width=300)
                     }
                 )
             else:
-                st.warning("🔎 미입고 잔량이 있는 데이터가 없습니다.")
+                st.info("🔎 해당 조건에 맞는 미입고 데이터가 없습니다.")
         else:
             st.error("📡 '발주기록' 시트에 데이터가 없습니다.")
 
     except Exception as e:
-        st.error(f"❌ 7단계 계산 오류: {e}")
+        st.error(f"❌ 7단계 화면 정리 오류: {e}")
