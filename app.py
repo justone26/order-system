@@ -774,7 +774,7 @@ if st.session_state.get('analyzed'):
 
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 최종 상황판] - 최종 리오더 수량만 노출
+# [7단계: 실시간 리오더 최종 상황판] - KeyError: '발주시간' 해결 및 수량 단일화
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -786,30 +786,38 @@ if st.session_state.get('analyzed'):
         all_v7 = ws_v7.get_all_values()
         
         if len(all_v7) > 1:
-            raw_data = all_v7[1:]
-            df_raw_v7 = pd.DataFrame(raw_data)
+            # 헤더와 데이터 분리
+            header_v7 = all_v7[0]
+            data_v7 = all_v7[1:]
+            df_raw_v7 = pd.DataFrame(data_v7, columns=header_v7)
             
-            # 컬럼 개수 자동 감지 및 이름 부여 (에러 방지)
-            actual_col_count = df_raw_v7.shape[1]
-            if actual_col_count == 8:
-                df_raw_v7.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "기존리order", "추가발주", "메모", "업체명"]
-            else:
-                # 10개 컬럼일 경우 등 예외 대응
-                df_raw_v7.columns = [f"col_{i}" for i in range(actual_col_count)]
-                df_raw_v7.rename(columns={"col_1":"상품명", "col_2":"옵션", "col_5":"추가발주", "col_6":"메모", "col_7":"업체명"}, inplace=True)
+            # 🚨 [에러 방지] 컬럼명 양끝 공백 제거 및 이름 강제 매핑
+            df_raw_v7.columns = df_raw_v7.columns.str.strip()
+            
+            # 만약 시트의 첫 컬럼명이 '발주시간'이 아닐 경우를 대비해 첫 번째 컬럼을 '발주시간'으로 간주
+            if '발주시간' not in df_raw_v7.columns:
+                df_raw_v7.rename(columns={df_raw_v7.columns[0]: '발주시간'}, inplace=True)
 
-            # 수량 데이터 숫자 변환 (에러 방지용)
-            df_raw_v7["추가발주"] = pd.to_numeric(df_raw_v7["추가발주"], errors='coerce').fillna(0).astype(int)
+            # 수량 컬럼 찾기 (추가발주 또는 추가)
+            target_qty_col = '추가발주' if '추가발주' in df_raw_v7.columns else ('추가' if '추가' in df_raw_v7.columns else None)
+            
+            if target_qty_col:
+                df_raw_v7[target_qty_col] = pd.to_numeric(df_raw_v7[target_qty_col], errors='coerce').fillna(0).astype(int)
+            else:
+                st.error("❌ 시트에서 '추가발주' 수량 컬럼을 찾을 수 없습니다.")
+                st.stop()
+
+            # 날짜 추출
             df_raw_v7["날짜"] = df_raw_v7["발주시간"].astype(str).str.slice(0, 10)
             
-            # [상단 상황판] - 오늘 기준 핵심 요약
+            # [상단 상황판] - 오늘 기준 요약
             today_str = datetime.now(KST).strftime('%Y-%m-%d')
             df_today = df_raw_v7[df_raw_v7["날짜"] == today_str]
 
             c1, c2, c3 = st.columns(3)
             c1.metric("📅 기준 날짜", today_str)
-            c2.metric("📦 오늘 발주 품목", f"{df_today['상품명'].nunique()}종")
-            c3.metric("🔢 오늘 최종 리오더 총량", f"{int(df_today['추가발주'].sum())}개")
+            c2.metric("📦 오늘 발주 품목", f"{df_today['상품명'].nunique() if '상품명' in df_today.columns else 0}종")
+            c3.metric("🔢 오늘 최종 리오더 총량", f"{int(df_today[target_qty_col].sum())}개")
             st.divider()
 
             # [필터 영역]
@@ -823,7 +831,7 @@ if st.session_state.get('analyzed'):
                 if st.button("📈 데이터 새로고침", use_container_width=True, type="primary"):
                     st.rerun()
 
-            # --- [데이터 필터링 및 최종 집계] ---
+            # --- [날짜 필터링] ---
             if isinstance(d_range_v7, (list, tuple)) and len(d_range_v7) == 2:
                 s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
             else:
@@ -836,25 +844,20 @@ if st.session_state.get('analyzed'):
                 df_filtered = df_filtered[df_filtered["상품명"].str.contains(q_v7, case=False) | df_filtered["옵션"].str.contains(q_v7, case=False)]
 
             if not df_filtered.empty:
-                # 🚨 핵심: 입고/추가 다 빼고 "최종 리오더 총 수량"으로 합산
-                df_final = df_filtered.groupby(["업체명", "상품명", "옵션"], as_index=False).agg({
-                    "추가발주": "sum",
-                    "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
-                }).rename(columns={"추가발주": "최종 리오더 수량"})
+                # 🚨 사장님 요청: 최종 리오더 수량만 나오게 집계
+                # 필요한 컬럼이 있는지 확인 후 그룹화
+                group_cols = [c for c in ["업체명", "상품명", "옵션"] if c in df_filtered.columns]
+                memo_col = "메모" if "메모" in df_filtered.columns else ("이슈/메모" if "이슈/메모" in df_filtered.columns else None)
+                
+                agg_dict = {target_qty_col: "sum"}
+                if memo_col:
+                    agg_dict[memo_col] = lambda x: " / ".join(set(filter(None, x.astype(str))))
+
+                df_final = df_filtered.groupby(group_cols, as_index=False).agg(agg_dict)
+                df_final.rename(columns={target_qty_col: "최종 리오더 수량"}, inplace=True)
 
                 st.write(f"#### 📊 {s_d} ~ {e_d} 기간 최종 리오더 현황")
-                
-                # 깔끔한 화면 구성
-                st.dataframe(
-                    df_final, 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={
-                        "상품명": st.column_config.TextColumn(width=250),
-                        "최종 리오더 수량": st.column_config.NumberColumn(format="%d개", width=120),
-                        "메모": st.column_config.TextColumn(width=300)
-                    }
-                )
+                st.dataframe(df_final, use_container_width=True, hide_index=True)
             else:
                 st.info("🔎 선택하신 기간에는 발주 데이터가 없습니다.")
 
