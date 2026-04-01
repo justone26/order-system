@@ -432,7 +432,7 @@ with tab1:
         st.rerun()
 
 # ------------------------------------------------------------------
-# [4단계: 데이터 편집 및 재고 관리] - 날짜 컬럼 및 매칭 오류 완벽 해결 버전
+# [4단계: 데이터 편집 및 재고 관리] - 날짜 명칭 오류 완벽 차단 버전
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -444,7 +444,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     stk, avl, t3, t7 = p['st'], p['av'], p['t3'], p['t7']
     lt, ss = p['lt'], p['ss']
 
-    # [1] 실시간 데이터 로드 (사진 속 F, G열 합산 로직)
+    # [1] 실시간 데이터 로드 (오로지 칸 번호로만 데이터 추출)
     def get_realtime_data_v4(target_date):
         try:
             import unicodedata
@@ -454,15 +454,14 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 t = unicodedata.normalize('NFC', str(t))
                 return re.sub(r'[^a-zA-Z0-9가-힣]', '', t).upper()
 
+            # --- [발주기록 분석] ---
             ws_v7 = get_sheet().worksheet("발주기록")
             d7 = ws_v7.get_all_values()
             r_map = {}
-            
             if len(d7) > 1:
-                # 안전하게 데이터 루프 (헤더 제외)
                 for row in d7[1:]:
                     try:
-                        # 사장님 시트 구조: B(1):상품명, C(2):옵션, F(5):기존, G(6):추가
+                        # B(1):상품명, C(2):옵션, F(5):기존, G(6):추가 (사장님 시트 고정 위치)
                         s_name = super_clean(row[1])
                         s_opt = super_clean(row[2])
                         if not s_name: continue
@@ -471,32 +470,34 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                             try: return int(float(str(v).replace(",", "").strip()))
                             except: return 0
                         
-                        # F열 + G열 합산
                         total_qty = to_i(row[5]) + to_i(row[6])
-                        
                         if total_qty != 0:
                             key = s_name + "_" + s_opt
                             r_map[key] = r_map.get(key, 0) + total_qty
-                    except:
-                        continue
+                    except: continue
 
-            # 입고기록 조회
+            # --- [입고기록 분석 - '날짜'라는 글자 안찾고 순서로만 작동] ---
             ws_h = get_sheet().worksheet("입고기록")
             dh = ws_h.get_all_values()
             h_map = {}
             if len(dh) > 1:
-                dfh = pd.DataFrame(dh[1:], columns=[c.strip() for c in dh[0]])
                 t_str = target_date.strftime('%Y-%m-%d')
-                dfh_f = dfh[dfh['날짜'].astype(str).str.contains(t_str)]
-                if not dfh_f.empty:
-                    dfh_f['수량'] = pd.to_numeric(dfh_f['수량'], errors='coerce').fillna(0)
-                    # 입고기록 키 생성도 동일하게 정제
-                    dfh_f['clean_key'] = dfh_f.apply(lambda r: super_clean(r['상품명']) + "_" + super_clean(r['옵션']), axis=1)
-                    h_map = dfh_f.groupby('clean_key')['수량'].sum().to_dict()
+                for row_h in dh[1:]:
+                    try:
+                        # A(0):날짜, B(1):상품명, C(2):옵션, D(3):수량 (순서 고정)
+                        h_date = str(row_h[0]).strip()
+                        if t_str in h_date:
+                            h_name = super_clean(row_h[1])
+                            h_opt = super_clean(row_h[2])
+                            h_qty = int(float(str(row_h[3]).replace(",", "").strip()))
+                            h_key = h_name + "_" + h_opt
+                            h_map[h_key] = h_map.get(h_key, 0) + h_qty
+                    except: continue
             
             return r_map, h_map
         except Exception as e:
-            st.error(f"데이터 로드 중 오류: {e}")
+            # 오류가 나도 중단되지 않게 경고만 띄움
+            st.warning(f"시트 데이터를 읽는 중 알림: {e}")
             return {}, {}
 
     # UI 구성
@@ -513,7 +514,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     for col in [stk, avl, t3, t7]:
         df_work[col] = pd.to_numeric(df_work[col], errors='coerce').fillna(0).astype(int)
     
-    # ⭐ [매칭 로직 강화] 엑셀 데이터 정제 후 리오더 매핑
+    # ⭐ [매칭] 엑셀 이름표와 시트 이름표 매칭
     import re
     import unicodedata
     def get_clean_key(r):
@@ -529,7 +530,6 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     # 판매량 및 권장수량 계산
     df_work['일판매'] = df_work.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
     df_work['3일판매'] = (df_work['일판매'] * 3).astype(int)
-    # 권장수량 공식: (일판매 * (LT+SS)) - 가용재고 - 리오더수량
     df_work['권장수량'] = ((df_work['일판매'] * (lt + ss)) - (df_work[avl] + df_work['리오더 총합'])).clip(lower=0).astype(int)
 
     # 필터 적용
@@ -541,8 +541,6 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     # 화면 출력 컬럼 정리
     df_disp = df_f.rename(columns={s_out:"상태", vnd:"공급처", v_it:"공급처상품명", item:"상품명", opt:"옵션", stk:"정상", avl:"가용"})
     final_cols = ["상태", "공급처", "상품명", "옵션", "공급처상품명", "정상", "가용", "리오더 총합", "리오더 입고", "과거 입고", "3일판매", "일판매", "권장수량"]
-
-    # 존재하는 컬럼만 표시
     actual_cols = [c for c in final_cols if c in df_disp.columns]
 
     with st.form("v4_form"):
@@ -553,27 +551,23 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             key="v4_editor",
             column_config={
                 "리오더 총합": st.column_config.NumberColumn("📦 리오더 잔량", format="%d"),
-                "리오더 입고": st.column_config.NumberColumn("입고차감", min_value=0, help="입고된 수량만큼 리오더에서 뺍니다."),
+                "리오더 입고": st.column_config.NumberColumn("입고차감", min_value=0),
                 "권장수량": st.column_config.NumberColumn("🚨 발주권장", format="%d")
             }
         )
         
         if st.form_submit_button("💾 입고 정보 저장 및 리오더 차감"):
-            # 수정한 행만 가져오기
             edited_rows = st.session_state["v4_editor"].get("edited_rows", {})
             if edited_rows:
                 try:
                     v7_sh = get_sheet().worksheet("발주기록")
                     h_sh = get_sheet().worksheet("입고기록")
-                    
                     for r_idx, val in edited_rows.items():
                         if "리오더 입고" in val and int(val["리오더 입고"]) > 0:
-                            # 현재 표시된 데이터프레임의 행 정보
                             row_data = df_disp.iloc[int(r_idx)]
                             qty = int(val["리오더 입고"])
                             
-                            # 1. 발주기록에 마이너스(-) 입력 (리오더 잔량 차감)
-                            # 날짜, 상품명, 옵션, 공급처상품명, 기존(0), 추가(0), 입고차감(-qty), ..., 비고, 공급처
+                            # 발주기록에 차감 내역 추가 (위치 고정)
                             v7_sh.append_row([
                                 datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'), 
                                 str(row_data["상품명"]), 
@@ -583,22 +577,13 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                                 "입고차감", 
                                 str(row_data["공급처"])
                             ])
-                            
-                            # 2. 입고기록에 저장
-                            h_sh.append_row([
-                                s_date.strftime('%Y-%m-%d'), 
-                                str(row_data["상품명"]), 
-                                str(row_data["옵션"]), 
-                                qty
-                            ])
+                            # 입고기록 추가
+                            h_sh.append_row([s_date.strftime('%Y-%m-%d'), str(row_data["상품명"]), str(row_data["옵션"]), qty])
                     
-                    st.success("✅ 입고 처리가 완료되었습니다. 리오더 수량이 갱신됩니다.")
-                    time.sleep(1)
-                    st.rerun()
+                    st.success("✅ 완료되었습니다!"); time.sleep(1); st.rerun()
                 except Exception as e:
-                    st.error(f"저장 중 오류 발생: {e}")
-
-
+                    st.error(f"저장 실패: {e}")
+                    
 
 # ------------------------------------------------------------------
 # [5단계: 최종 발주 요약] - 사진 속 B, C열 매칭 및 J열 업체명 저장 버전
