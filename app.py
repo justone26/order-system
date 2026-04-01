@@ -35,67 +35,62 @@ def get_sheet():
     except:
         return None
 
-# --- [핵심: 리오더 동기화 및 진단 함수] ---
+# --- [핵심: 리오더 동기화 함수] ---
 def sync_reorder_from_sheet(df_uploaded):
+    """ 구글 시트에서 상품명/옵션별 리오더 합계(기존+추가)를 가져와 매칭합니다. """
     try:
         sh = get_sheet()
-        if not sh: 
-            st.error("❌ [진단] 구글 시트 연결 실패")
+        if not sh:
             return df_uploaded
         
-        try:
-            ws = sh.worksheet("발주기록")
-        except:
-            st.error("❌ [진단] '발주기록' 탭을 찾을 수 없음")
-            return df_uploaded
-
+        ws = sh.worksheet("발주기록")
         all_data = ws.get_all_values()
-        if len(all_data) <= 1: 
-            return df_uploaded
         
-        # 1. 시트 데이터 정리 (B:상품명, C:옵션, F:기존, G:추가)
+        if len(all_data) <= 1:
+            return df_uploaded
+            
         reorder_map = {}
         for row in all_data[1:]:
             try:
-                # 공백과 대소문자 무시하고 매칭 키 생성
+                # 시트의 상품명(B열/1번), 옵션(C열/2번)
                 s_name = str(row[1]).strip().replace(" ", "").upper()
                 s_opt = str(row[2]).strip().replace(" ", "").upper()
                 
                 if not s_name: continue
                 
-                # 수량 추출 (숫자가 아니면 0처리)
-                def to_int(v):
+                # 시트의 기존리오더(F열/5번), 추가발주(G열/6번)
+                def clean_val(v):
                     try: return int(float(str(v).replace(",", "")))
                     except: return 0
                 
-                total_qty = to_int(row[5]) + to_int(row[6])
+                qty = clean_val(row[5]) + clean_val(row[6])
                 
-                if total_qty > 0:
+                if qty > 0:
                     key = f"{s_name}_{s_opt}"
-                    reorder_map[key] = reorder_map.get(key, 0) + total_qty
+                    reorder_map[key] = reorder_map.get(key, 0) + qty
             except:
                 continue
 
-        # 2. 업로드된 파일과 매칭
+        # 리오더 수량 컬럼 초기화 및 매칭
         if "리오더 수량" in df_uploaded.columns:
             df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
 
-        def match_logic(r):
+        def get_val(r):
             u_key = (str(r['상품명']).strip().replace(" ", "") + "_" + 
                      str(r['옵션']).strip().replace(" ", "")).upper()
             return reorder_map.get(u_key, 0)
 
-        df_uploaded['리오더 수량'] = df_uploaded.apply(match_logic, axis=1)
+        df_uploaded['리오더 수량'] = df_uploaded.apply(get_val, axis=1)
         
-        # 3. 결과 성공 메시지 (한 번만 띄움)
+        # 데이터 로드 성공 알림
         if len(reorder_map) > 0:
-            st.success(f"✅ 시트에서 리오더 {len(reorder_map)}건 로드 성공!")
+            st.toast(f"✅ 시트에서 리오더 데이터를 성공적으로 가져왔습니다.")
             
         return df_uploaded
 
     except Exception as e:
-        # 🚨 이번에는 따옴표와 괄호 완벽하게 닫았습니다!
-        st.error(f"🔥 오류 발생: {str(e)}")
+        # 에러 메시지 형식을 안전하게 수정 (따옴표 문제 해결)
+        st.warning(f"시트 동기화 중 참고사항: {str(e)}")
         return df_uploaded
 
 # --- [보조 함수] ---
@@ -111,7 +106,8 @@ def get_incoming_history():
         summary = df_h.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
         summary.rename(columns={'수량': '과거리오더 입고'}, inplace=True)
         return summary
-    except: return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
+    except: 
+        return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
 
 
 
