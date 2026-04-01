@@ -774,69 +774,49 @@ if st.session_state.get('analyzed'):
 
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 최종 상황판] - KeyError: '발주시간' 해결 및 수량 단일화
+# [7단계: 실시간 리오더 최종 잔량 상황판] - 추가발주(+) 및 입고(-) 합산 관리
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
-    st.subheader("🚀 7단계: 실시간 리오더 최종 상황판")
+    st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
 
     try:
-        # [데이터 실시간 로드]
+        # [1. 데이터 실시간 로드]
         ws_v7 = get_sheet().worksheet("발주기록")
         all_v7 = ws_v7.get_all_values()
         
         if len(all_v7) > 1:
-            # 헤더와 데이터 분리
-            header_v7 = all_v7[0]
-            data_v7 = all_v7[1:]
-            df_raw_v7 = pd.DataFrame(data_v7, columns=header_v7)
+            header_v7 = [c.strip() for c in all_v7[0]]
+            df_raw_v7 = pd.DataFrame(all_v7[1:], columns=header_v7)
             
-            # 🚨 [에러 방지] 컬럼명 양끝 공백 제거 및 이름 강제 매핑
-            df_raw_v7.columns = df_raw_v7.columns.str.strip()
+            # 수량 컬럼 및 시간 컬럼 유연하게 찾기
+            qty_col = '추가발주' if '추가발주' in df_raw_v7.columns else ('추가' if '추가' in df_raw_v7.columns else df_raw_v7.columns[5])
+            time_col = '발주시간' if '발주시간' in df_raw_v7.columns else df_raw_v7.columns[0]
             
-            # 만약 시트의 첫 컬럼명이 '발주시간'이 아닐 경우를 대비해 첫 번째 컬럼을 '발주시간'으로 간주
-            if '발주시간' not in df_raw_v7.columns:
-                df_raw_v7.rename(columns={df_raw_v7.columns[0]: '발주시간'}, inplace=True)
-
-            # 수량 컬럼 찾기 (추가발주 또는 추가)
-            target_qty_col = '추가발주' if '추가발주' in df_raw_v7.columns else ('추가' if '추가' in df_raw_v7.columns else None)
+            # [2. 데이터 전처리]
+            # 수량을 숫자로 변환 (추가발주는 +, 입고는 -로 기록되어 있어야 함)
+            df_raw_v7[qty_col] = pd.to_numeric(df_raw_v7[qty_col], errors='coerce').fillna(0).astype(int)
+            df_raw_v7["날짜"] = df_raw_v7[time_col].astype(str).str.slice(0, 10)
             
-            if target_qty_col:
-                df_raw_v7[target_qty_col] = pd.to_numeric(df_raw_v7[target_qty_col], errors='coerce').fillna(0).astype(int)
-            else:
-                st.error("❌ 시트에서 '추가발주' 수량 컬럼을 찾을 수 없습니다.")
-                st.stop()
-
-            # 날짜 추출
-            df_raw_v7["날짜"] = df_raw_v7["발주시간"].astype(str).str.slice(0, 10)
-            
-            # [상단 상황판] - 오늘 기준 요약
-            today_str = datetime.now(KST).strftime('%Y-%m-%d')
-            df_today = df_raw_v7[df_raw_v7["날짜"] == today_str]
-
-            c1, c2, c3 = st.columns(3)
-            c1.metric("📅 기준 날짜", today_str)
-            c2.metric("📦 오늘 발주 품목", f"{df_today['상품명'].nunique() if '상품명' in df_today.columns else 0}종")
-            c3.metric("🔢 오늘 최종 리오더 총량", f"{int(df_today[target_qty_col].sum())}개")
-            st.divider()
-
-            # [필터 영역]
+            # [3. 필터 영역]
             f1, f2, f3 = st.columns([1.5, 1.5, 1])
             with f1:
-                d_range_v7 = st.date_input("🗓️ 조회 기간 선택", value=(datetime.now(KST).date(), datetime.now(KST).date()), key="v7_range")
+                # 잔량 계산을 위해 기본 조회 기간을 넉넉히 (최근 30일)
+                default_start = (datetime.now(KST) - timedelta(days=30)).date()
+                d_range_v7 = st.date_input("🗓️ 조회 기간 (발주~입고 포함)", value=(default_start, datetime.now(KST).date()), key="v7_range")
             with f2:
-                q_v7 = st.text_input("🔍 상품명/옵션 검색", key="v7_search_q", placeholder="검색어 입력...")
+                q_v7 = st.text_input("🔍 상품/옵션 검색", key="v7_search_q", placeholder="검색어 입력...")
             with f3:
                 st.write(""); st.write("")
-                if st.button("📈 데이터 새로고침", use_container_width=True, type="primary"):
+                if st.button("📈 데이터 동기화(새로고침)", use_container_width=True, type="primary"):
                     st.rerun()
 
-            # --- [날짜 필터링] ---
+            # --- [조회 기간 필터링] ---
             if isinstance(d_range_v7, (list, tuple)) and len(d_range_v7) == 2:
                 s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
             else:
                 s_d = d_range_v7[0].strftime('%Y-%m-%d') if isinstance(d_range_v7, (list, tuple)) else d_range_v7.strftime('%Y-%m-%d')
-                e_d = s_d
+                e_d = datetime.now(KST).strftime('%Y-%m-%d')
 
             df_filtered = df_raw_v7[(df_raw_v7["날짜"] >= s_d) & (df_raw_v7["날짜"] <= e_d)].copy()
 
@@ -844,25 +824,37 @@ if st.session_state.get('analyzed'):
                 df_filtered = df_filtered[df_filtered["상품명"].str.contains(q_v7, case=False) | df_filtered["옵션"].str.contains(q_v7, case=False)]
 
             if not df_filtered.empty:
-                # 🚨 사장님 요청: 최종 리오더 수량만 나오게 집계
-                # 필요한 컬럼이 있는지 확인 후 그룹화
+                # 🚨 [핵심 로직] 발주한 모든 건(+)과 입고된 모든 건(-)을 상품별로 합산
+                # 결과값이 곧 '현재 남은 미입고 잔량'이 됩니다.
                 group_cols = [c for c in ["업체명", "상품명", "옵션"] if c in df_filtered.columns]
-                memo_col = "메모" if "메모" in df_filtered.columns else ("이슈/메모" if "이슈/메모" in df_filtered.columns else None)
                 
-                agg_dict = {target_qty_col: "sum"}
-                if memo_col:
-                    agg_dict[memo_col] = lambda x: " / ".join(set(filter(None, x.astype(str))))
+                df_final = df_filtered.groupby(group_cols, as_index=False).agg({
+                    qty_col: "sum",
+                    "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
+                }).rename(columns={qty_col: "최종 리오더 잔량"})
 
-                df_final = df_filtered.groupby(group_cols, as_index=False).agg(agg_dict)
-                df_final.rename(columns={target_qty_col: "최종 리오더 수량"}, inplace=True)
+                # 💡 잔량이 있는(0보다 큰) 상품만 노출
+                df_final = df_final[df_final["최종 리오더 잔량"] > 0]
 
-                st.write(f"#### 📊 {s_d} ~ {e_d} 기간 최종 리오더 현황")
-                st.dataframe(df_final, use_container_width=True, hide_index=True)
+                st.write(f"#### 📊 {s_d} ~ {e_d} 기간 리오더 잔량 현황")
+                
+                # 상단 요약 수치
+                total_remain = df_final["최종 리오더 잔량"].sum()
+                st.info(f"💡 현재 총 **{total_remain}개**의 리오더가 입고 대기 중입니다.")
+                
+                st.dataframe(
+                    df_final, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "최종 리오더 잔량": st.column_config.NumberColumn(format="%d개", label="미입고 잔량 📦")
+                    }
+                )
             else:
-                st.info("🔎 선택하신 기간에는 발주 데이터가 없습니다.")
+                st.info("🔎 해당 기간에 발주 기록이 없습니다.")
 
         else:
-            st.info("💡 기록된 발주 데이터가 없습니다.")
+            st.info("💡 발주 기록 시트가 비어있습니다.")
             
     except Exception as e:
-        st.error(f"📡 상황판 업데이트 중 오류: {e}")
+        st.error(f"📡 상황판 계산 오류: {e}")
