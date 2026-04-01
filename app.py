@@ -122,27 +122,72 @@ def get_incoming_history():
 def sync_reorder_from_sheet(df_uploaded):
     try:
         sh = get_sheet()
-        if not sh: 
-            st.error("❌ [진단] 구글 시트 연결 자체가 안 됩니다. API 키나 시트 ID를 확인하세요.")
-            return df_uploaded
-        
-        # 1. 탭 이름 확인
-        try:
-            ws = sh.worksheet("발주기록")
-        except:
-            st.error("❌ [진단] '발주기록'이라는 이름의 탭을 찾을 수 없습니다. 탭 이름에 공백이 있는지 확인하세요.")
-            return df_uploaded
-
+        if not sh: return df_uploaded
+        ws = sh.worksheet("발주기록")
         all_data = ws.get_all_values()
-        if len(all_data) <= 1: 
-            st.warning("⚠️ [진단] 시트에 제목 외에 데이터가 한 줄도 없습니다.")
-            return df_uploaded
+        if len(all_data) <= 1: return df_uploaded
+            
+        # 1. 헤더 위치 자동 찾기 (날짜 칸이 어디 있든 상관없음)
+        header = [str(h).strip().replace(" ", "") for h in all_data[0]]
+        idx_name = next((i for i, h in enumerate(header) if "상품명" in h), 1)
+        idx_opt = next((i for i, h in enumerate(header) if "옵션" in h), 2)
+        idx_f = next((i for i, h in enumerate(header) if "기존" in h), 5)
+        idx_g = next((i for i, h in enumerate(header) if "추가" in h), 6)
+
+        reorder_map = {}
+        import unicodedata
+        import re
+
+        # 2. 시트 데이터 정리 (특수문자 싹 제거하고 알맹이 글자만 추출)
+        for row in all_data[1:]:
+            try:
+                def super_clean(t):
+                    t = unicodedata.normalize('NFC', str(t))
+                    return re.sub(r'[^a-zA-Z0-9가-힣]', '', t).upper()
+
+                s_name = super_clean(row[idx_name])
+                s_opt = super_clean(row[idx_opt])
+                if not s_name: continue
+                
+                def to_i(v):
+                    try: return int(float(str(v).replace(",", "").strip()))
+                    except: return 0
+                
+                qty = to_i(row[idx_f]) + to_i(row[idx_g])
+                if qty > 0:
+                    key = s_name + "_" + s_opt
+                    reorder_map[key] = reorder_map.get(key, 0) + qty
+            except:
+                continue
+
+        # 3. 업로드된 엑셀과 매칭 (글자가 포함만 되어도 매칭)
+        if "리오더 수량" in df_uploaded.columns:
+            df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
+
+        def final_match(r):
+            u_name = re.sub(r'[^a-zA-Z0-9가-힣]', '', str(r['상품명'])).upper()
+            u_opt = re.sub(r'[^a-zA-Z0-9가-힣]', '', str(r['옵션'])).upper()
+            u_key = u_name + "_" + u_opt
+            
+            # 1순위: 완벽 일치 / 2순위: 포함 관계 확인
+            if u_key in reorder_map: return reorder_map[u_key]
+            for k, v in reorder_map.items():
+                if u_name in k and u_opt in k: return v
+            return 0
+
+        df_uploaded['리오더 수량'] = df_uploaded.apply(final_match, axis=1)
         
-        # 2. 헤더 및 열 개수 확인
-        header = all_data[0]
-        if len(header) < 7:
-            st.error(f"❌ [진단] 시트의 열 개수가 부족합니다. (현재 {len(header)}개, 최소 7개 필요)")
-            return df_uploaded
+        # 결과 리포트
+        matched_cnt = (df_uploaded['리오더 수량'] > 0).sum()
+        if matched_cnt > 0:
+            st.success(f"✅ 날짜 칸 무시 성공! {matched_cnt}건의 수량을 매칭했습니다.")
+        else:
+            st.warning("⚠️ 시트에서 101개를 읽었으나 엑셀과 이름이 달라 매칭 실패했습니다.")
+            
+        return df_uploaded
+    except Exception as e:
+        st.error(f"매칭 오류: {str(e)}")
+        return df_uploaded
 
         # 3. 매칭 데이터 생성
         reorder_map = {}
