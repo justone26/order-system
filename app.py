@@ -352,7 +352,6 @@ st.title("📦 저스트원 통합 재고 관리 v4.0")
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
 
-
 with tab1:
     # --- 1단계: 데이터 업로드 ---
     st.subheader("📁 1단계: 데이터 업로드")
@@ -361,7 +360,7 @@ with tab1:
     up_file = st.file_uploader(
         "엑셀/CSV 파일 업로드", 
         type=['xlsx', 'xls', 'csv'], 
-        key=f"up_file_{st.session_state.upload_key}"
+        key=f"up_file_{st.session_state.get('upload_key', 0)}"
     )
     
     # [🔄 화면 전체 초기화 버튼]
@@ -369,7 +368,7 @@ with tab1:
         for key in list(st.session_state.keys()):
             if key != "upload_key": 
                 del st.session_state[key]
-        st.session_state.upload_key += 1
+        st.session_state.upload_key = st.session_state.get('upload_key', 0) + 1
         st.session_state.analyzed = False 
         st.session_state.df_raw = None
         st.query_params.clear() 
@@ -377,30 +376,26 @@ with tab1:
 
     # --- 데이터 로드 및 시트 동기화 로직 ---
     if up_file:
-        # 파일이 처음 올라왔거나, 아직 데이터프레임이 생성되지 않았을 때 실행
         if st.session_state.get('df_raw') is None:
             try:
                 # 1. 파일 읽기
                 df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
-                df.columns = [str(c).strip() for c in df.columns] # 컬럼명 공백 제거
+                df.columns = [str(c).strip() for c in df.columns] 
                 
-                # 2. ⭐ [핵심] 구글 시트에서 리오더 수량 가져오기 (날짜 칸 무시 로직 포함된 함수)
-                with st.spinner("🔄 구글 시트(발주기록)에서 리오더 수량을 실시간 매칭 중..."):
-                    # 여기서 우리가 고친 sync_reorder_from_sheet 함수를 실행합니다.
+                # 2. 구글 시트 리오더 수량 매칭
+                with st.spinner("🔄 구글 시트에서 리오더 수량을 실시간 매칭 중..."):
                     df = sync_reorder_from_sheet(df)
                 
-                # 3. 만약 리오더 수량 컬럼이 끝까지 안 생겼다면 0으로 채워줌
                 if "리오더 수량" not in df.columns: 
                     df["리오더 수량"] = 0
                 
                 df = df.fillna("") 
                 st.session_state.df_raw = df
-                # 성공 메시지는 sync_reorder_from_sheet 내부에서 띄워줌
                 
             except Exception as e:
                 st.error(f"파일 로드 오류: {e}")
 
-    # --- 2~3단계: 매핑 및 분석 설정 (데이터가 로드된 경우에만 표시) ---
+    # --- 2~3단계: 데이터가 로드된 경우에만 표시 (이 안으로 3단계를 넣어야 초기화가 먹힙니다) ---
     if st.session_state.get('df_raw') is not None:
         st.divider()
         
@@ -417,9 +412,7 @@ with tab1:
                 if any(k in column_name for k in keys): return i
             return 0
 
-        # 5개씩 2열로 배치
         c_left, c_right = st.columns(2)
-        
         with c_left:
             st.markdown("##### [ 기본 정보 ]")
             it = st.selectbox("📦 상품명", cols, index=auto_idx(['상품명']), key="sel_it")
@@ -433,49 +426,51 @@ with tab1:
             av = st.selectbox("✅ 가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
             stk = st.selectbox("📦 정상재고", cols, index=auto_idx(['정상재고']), key="sel_stk")
             
-            t3_target = "3일 발주합계"
-            t3_idx = cols.index(t3_target) if t3_target in cols else auto_idx(['3일'], exclude_keys=['1주', '7일', '품절'])
-            t3 = st.selectbox("🔥 3일 판매", cols, index=t3_idx, key="sel_t3")
-            
-            t7_target = "1주발주합계"
-            t7_idx = cols.index(t7_target) if t7_target in cols else auto_idx(['7일', '1주'], exclude_keys=['3일', '품절'])
-            t7 = st.selectbox("📅 7일 판매", cols, index=t7_idx, key="sel_t7")
-            
+            t3 = st.selectbox("🔥 3일 판매", cols, index=auto_idx(['3일'], exclude_keys=['1주', '7일', '품절']), key="sel_t3")
+            t7 = st.selectbox("📅 7일 판매", cols, index=auto_idx(['7일', '1주'], exclude_keys=['3일', '품절']), key="sel_t7")
             reg = st.selectbox("📆 상품 등록일", cols, index=auto_idx(['등록일', '등록일자', '최초등록']), key="sel_reg")
 
-      # --- 3단계: 데이터 분석 설정 ---
-    st.subheader("🚀 3단계: 데이터 분석 설정")
-    s1, s2 = st.columns(2)
-    with s1:
-        lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
-    with s2:
-        ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
+        # --- 3단계: 데이터 분석 설정 (⭐ 위치 수정: df_raw가 있을 때만 실행됨) ---
+        st.divider()
+        st.subheader("🚀 3단계: 데이터 분석 설정")
+        s1, s2 = st.columns(2)
+        with s1:
+            lt_val = st.number_input("⏳ 리드타임 (일)", value=7, key="inp_lt")
+        with s2:
+            ss_val = st.number_input("🛡️ 안전재고 (일)", value=3, key="inp_ss")
 
-    if st.button("📊 데이터 분석 시작", use_container_width=True, type="primary"):
-        st.session_state.p = {
-            'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 
-            'st': stk, 'av': av, 't3': t3, 't7': t7, 'reg': reg,
-            'lt': lt_val, 'ss': ss_val
-        }
-        
-        # [수정 포인트] 시트에서 가져온 '리오더 수량'이 포함된 원본 데이터를 복사합니다.
-        df_final = st.session_state.df_raw.copy()
-        
-        # 등록일 날짜 형식 변환
-        if reg in df_final.columns:
-            df_final[reg] = pd.to_datetime(df_final[reg], errors='coerce')
-        
-        # ⭐ 중요: 리오더 수량이 숫자인지 확인하고 빈칸은 0으로 채웁니다.
-        if "리오더 수량" in df_final.columns:
-            df_final["리오더 수량"] = pd.to_numeric(df_final["리오더 수량"], errors='coerce').fillna(0)
-        else:
-            df_final["리오더 수량"] = 0
+        # 버튼 배치 (분석 시작 / 화면 초기화)
+        b1, b2 = st.columns([3, 1])
+        with b1:
+            if st.button("📊 데이터 분석 시작", use_container_width=True, type="primary"):
+                st.session_state.p = {
+                    'so': so, 'vn': vn, 'vi': vi, 'it': it, 'op': op, 
+                    'st': stk, 'av': av, 't3': t3, 't7': t7, 'reg': reg,
+                    'lt': lt_val, 'ss': ss_val
+                }
+                
+                df_final = st.session_state.df_raw.copy()
+                if reg in df_final.columns:
+                    df_final[reg] = pd.to_datetime(df_final[reg], errors='coerce')
+                
+                df_final["리오더 수량"] = pd.to_numeric(df_final.get("리오더 수량", 0), errors='coerce').fillna(0)
 
-        # 수정된 데이터를 세션에 다시 저장하고 화면을 새로고침합니다.
-        st.session_state.df_raw = df_final 
-        st.session_state.analyzed = True   
-        st.rerun()
-
+                st.session_state.df_raw = df_final 
+                st.session_state.analyzed = True   
+                st.rerun()
+        
+        with b2:
+            # 🧹 [수정 핵심] 3단계 내부에서 작동하는 개별 초기화 버튼
+            if st.button("🧹 화면 초기화", use_container_width=True):
+                # 분석 관련 세션만 타겟팅해서 삭제
+                target_keys = ['analyzed', 'p', 'df_raw', 'v6_data', 'v7_data']
+                for k in target_keys:
+                    if k in st.session_state:
+                        del st.session_state[k]
+                
+                # 업로드 키 변경으로 파일 업로더 초기화
+                st.session_state.upload_key = st.session_state.get('upload_key', 0) + 1
+                st.rerun()
 
 
 # ------------------------------------------------------------------
