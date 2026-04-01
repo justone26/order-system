@@ -586,19 +586,19 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     
 
 # ------------------------------------------------------------------
-# [5단계: 최종 발주 요약] - 가용재고 열 추가 및 버튼 가로 확장 완결판
+# [5단계: 최종 발주 요약] - 4단계 명칭(가용재고, 리오더잔량 등)으로 통일 버전
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📋 5단계: 최종 발주 리스트 요약")
 
-    # [1] 최신 리오더 잔량 다시 로드 (4단계와 동일한 로직 사용)
+    # [1] 최신 리오더 잔량 다시 로드
     reorder_map_v5, _ = get_realtime_data_v4(datetime.now(KST).date())
 
     # [2] 데이터 준비
     df_v5 = df_work[~df_work[s_out].astype(str).str.contains('품절', na=False)].copy()
     
-    # 4단계와 매칭을 위한 정제된 키(clean_key) 생성
+    # 4단계와 매칭을 위한 정제된 키(clean_key) 확인 및 생성
     import unicodedata
     import re
     def get_clean_key_v5(r):
@@ -614,10 +614,11 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     
     df_v5['추가발주입력'] = df_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
     
-    # 비고(메모) 컬럼 안전하게 생성
+    # 메모(비고) 컬럼 안전하게 생성
     if '비고' not in df_v5.columns:
         df_v5['비고'] = ""
 
+    # 상태표시 로직
     df_v5['상태표시'] = df_v5['권장수량'].apply(lambda x: "🚨 긴급" if x > 0 else "✅ 정상")
 
     # 필터/검색 UI
@@ -631,24 +632,25 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     if m5_f == "🚨 고위험/주의":
         df_v5_v = df_v5_v[df_v5_v['권장수량'] > 0]
     
-    # [3] 에디터 설정 (가용재고를 기존잔량 앞으로 배치)
+    # [3] 에디터 설정 (4단계 명칭과 100% 동일하게 매핑)
+    # 왼쪽이 코드상 이름 : 오른쪽이 화면에 보일 이름
     v_map = {
         "상태표시": "상태", 
         item: "상품명", 
         opt: "옵션", 
         v_it: "공급처상품명", 
-        avl: "가용재고",      # ⭐ 추가된 위치
-        "리오더 총합": "기존잔량", 
-        "추가발주입력": "이번발주", 
-        "권장수량": "추가필요", 
-        "비고": "메모"
+        avl: "가용재고",      # 4단계 명칭 통일
+        "리오더 총합": "리오더잔량", # 4단계 명칭 통일
+        "추가발주입력": "추가발주", # 사장님 요청 명칭
+        "권장수량": "발주권장",     # 4단계 명칭 통일
+        "비고": "메모"            # 사장님 요청 명칭
     }
     
     # 데이터프레임에 실제 존재하는 열만 추출 (KeyError 방지)
     available_cols = [c for c in v_map.keys() if c in df_v5_v.columns]
 
     with st.form("v5_form"):
-        # 표 출력 및 설정
+        # 표 출력
         df_ed = df_v5_v[available_cols].rename(columns=v_map)
         st.data_editor(
             df_ed, 
@@ -657,20 +659,22 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             key="v5_edit",
             column_config={
                 "가용재고": st.column_config.NumberColumn("가용재고", format="%d"),
-                "기존잔량": st.column_config.NumberColumn("기존잔량", format="%d"),
-                "이번발주": st.column_config.NumberColumn("이번발주", min_value=0),
-                "추가필요": st.column_config.NumberColumn("추가필요", format="%d")
+                "리오더잔량": st.column_config.NumberColumn("리오더잔량", format="%d"),
+                "추가발주": st.column_config.NumberColumn("추가발주", min_value=0),
+                "발주권장": st.column_config.NumberColumn("발주권장", format="%d"),
+                "메모": st.column_config.TextColumn("메모")
             },
-            disabled=[c for c in v_map.values() if c not in ["이번발주", "메모"]]
+            # 수정 가능 구역 설정 (추가발주와 메모만 수정 가능)
+            disabled=[c for c in v_map.values() if c not in ["추가발주", "메모"]]
         )
         
-        # 가로로 꽉 찬 버튼 1
+        # 버튼 가로로 꽉 차게 (use_container_width=True)
         if st.form_submit_button("✅ 1. 추가발주 및 메모 확정", use_container_width=True):
             edits = st.session_state["v5_edit"].get("edited_rows", {})
             for r_idx, val in edits.items():
                 idx = df_v5_v.index[int(r_idx)]
-                if "이번발주" in val: 
-                    st.session_state.add_order_dict[idx] = int(val["이번발주"])
+                if "추가발주" in val: 
+                    st.session_state.add_order_dict[idx] = int(val["추가발주"])
                 if "메모" in val: 
                     st.session_state.df_raw.at[idx, "비고"] = str(val["메모"])
             st.success("확정되었습니다!"); time.sleep(0.5); st.rerun()
@@ -726,7 +730,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         else:
             st.button("📥 3. 다운로드할 데이터 없음", disabled=True, use_container_width=True)
 
-            
+
 
 # ------------------------------------------------------------------
 # [6단계: 전체 히스토리 관리] - 4/5단계 변경 시트 구조 반영 버전
