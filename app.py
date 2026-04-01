@@ -597,38 +597,42 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 except Exception as e: 
                     st.error(f"❌ 저장 실패: {e}")
 
-    # [3. CSV 다운로드] - 사장님이 찾으시던 엑셀용 소스!
+    # [3. CSV 다운로드] - 버튼 고정 노출 버전
     with c_down:
         # 권장발주 + 추가발주 합산 계산
         df_v5['최종합계'] = df_v5.get('권장발주', 0) + df_v5['추가발주수량']
         csv_target = df_v5[df_v5['최종합계'] > 0].copy()
         
+        # 출력할 컬럼 설정 (데이터가 없어도 헤더는 나오게 준비)
+        down_cols = [vendor, item, option, v_item, '최종합계']
+        existing_cols = [c for c in down_cols if c in csv_target.columns]
+        
         if not csv_target.empty:
-            # 출력할 컬럼 순서 정렬
-            down_cols = [vendor, item, option, v_item, '최종합계']
-            existing_cols = [c for c in down_cols if c in csv_target.columns]
-            
+            # 1. 발주 수량이 있을 때: 정상 데이터 생성
             csv_res = csv_target[existing_cols].rename(columns={
-                vendor: "공급처", 
-                item: "상품명", 
-                option: "옵션", 
-                v_item: "공급처상품명", 
-                "최종합계": "발주수량"
+                vendor: "공급처", item: "상품명", option: "옵션", v_item: "공급처상품명", "최종합계": "발주수량"
             })
-            
-            # 한글 깨짐 방지를 위한 utf-8-sig 인코딩
-            csv_data = csv_res.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            
-            st.download_button(
-                label="📥 최종 발주서 CSV 다운로드 (엑셀용)",
-                data=csv_data,
-                file_name=f"발주서_{d5_d.strftime('%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+            button_label = "📥 최종 발주서 CSV 다운로드"
+            is_disabled = False
         else:
-            st.info("💡 발주할 수량이 없어 다운로드가 비활성화되었습니다.")
+            # 2. 발주 수량이 없을 때: 헤더만 있는 빈 데이터 생성 (버전 유지용)
+            # 빈 데이터프레임 생성
+            csv_res = pd.DataFrame(columns=["공급처", "상품명", "옵션", "공급처상품명", "발주수량"])
+            button_label = "📥 다운로드 (발주 수량 없음)"
+            is_disabled = True # 버튼을 비활성화(클릭 안됨) 상태로 노출하거나, False로 두면 빈 파일이 받아집니다.
 
+        # 한글 깨짐 방지 인코딩
+        csv_data = csv_res.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        
+        # 버튼 고정 노출 (disabled 옵션으로 제어)
+        st.download_button(
+            label=button_label,
+            data=csv_data,
+            file_name=f"발주서_{d5_d.strftime('%m%d')}_빈파일.csv" if csv_target.empty else f"발주서_{d5_d.strftime('%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            disabled=is_disabled  # 수량이 없으면 버튼은 보이지만 클릭은 안 되게 설정
+        )
 
 
 
