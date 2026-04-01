@@ -481,7 +481,7 @@ with tab1:
 
 
 # ------------------------------------------------------------------
-# [4단계: 데이터 편집 및 재고 관리] - 저장 안정성 강화 버전
+# [4단계: 데이터 편집 및 재고 관리] - 초과 입고 제로화 적용 버전
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
@@ -514,10 +514,17 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         return n + o
 
     df_work['clean_key'] = df_work.apply(get_clean_key_v4, axis=1)
+    
+    # 1. 리오더 잔량 계산
     df_work["리오더 총합"] = df_work['clean_key'].map(reorder_map).fillna(0).astype(int)
+    
+    # ⭐ [핵심 추가] 리오더 잔량이 마이너스인 경우 0으로 제로화 (초과 입고 처리)
+    df_work["리오더 총합"] = df_work["리오더 총합"].clip(lower=0)
+    
     df_work["과거입고데이터"] = df_work['clean_key'].map(history_map).fillna(0).astype(int)
     df_work["리오더 입고"] = 0 
     
+    # 2. 일판매 및 발주권장 계산 (제로화된 리오더 총합 기준)
     df_work['일판매'] = df_work.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
     df_work['발주권장'] = ((df_work['일판매'] * (lt + ss)) - (df_work[avl] + df_work['리오더 총합'])).clip(lower=0).astype(int)
 
@@ -528,16 +535,15 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
     df_disp = df_f.rename(columns={s_out: "상태", vnd: "공급처", item: "상품명", opt: "옵션", v_it: "공급처상품명", stk: "정상재고", avl: "가용재고", t3: "3일발주"})
     
-    # ⭐ 중요: 폼 내부 에디터 설정
-    with st.form("v4_storage_form", clear_on_submit=True): # 저장 후 입력값 초기화
+    # 폼 내부 에디터 설정
+    with st.form("v4_storage_form", clear_on_submit=True):
         target_cols = ["상태", "공급처", "상품명", "옵션", "공급처상품명", "정상재고", "가용재고", "리오더 총합", "리오더 입고", "과거입고데이터", "3일발주", "일판매", "발주권장"]
         
-        # 에디터의 key를 고유하게 설정
         v4_ed = st.data_editor(
             df_disp[target_cols], 
             use_container_width=True, 
             hide_index=True, 
-            key="v4_main_editor", # 이 key가 중요합니다
+            key="v4_main_editor", 
             column_config={
                 "리오더 총합": st.column_config.NumberColumn("📦 리오더잔량"),
                 "리오더 입고": st.column_config.NumberColumn("📥 입고차감", min_value=0),
@@ -549,7 +555,6 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         submit_btn = st.form_submit_button("💾 입고 정보 저장 및 리오더 차감", use_container_width=True)
         
         if submit_btn:
-            # 에디터에서 수정된 내용 직접 추출
             edits = st.session_state.get("v4_main_editor", {}).get("edited_rows", {})
             
             if edits:
@@ -562,7 +567,6 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     for r_idx, val in edits.items():
                         qty = int(val.get("리오더 입고", 0))
                         if qty > 0:
-                            # 실제 데이터 매칭
                             row = df_disp.iloc[int(r_idx)]
                             
                             # 1. 발주기록 차감 (G열에 -수량, I열에 입고차감)
@@ -578,7 +582,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                     
                     if saved_count > 0:
                         st.success(f"✅ {saved_count}건 저장 완료! (시트 반영됨)")
-                        st.cache_data.clear() # 데이터 갱신
+                        st.cache_data.clear() 
                         time.sleep(1)
                         st.rerun()
                     else:
@@ -808,7 +812,7 @@ if st.session_state.get('analyzed'):
             )
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 최종 잔량 상황판] - 메모 자동 보정 버전
+# [7단계: 실시간 리오더 최종 잔량 상황판] - 제로화 및 메모 보정 통합
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -827,17 +831,17 @@ if st.session_state.get('analyzed'):
             df_v7 = pd.DataFrame(all_v7[1:])
             df_v7.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "가용재고", "기존리오더", "추가발주", "발주권장", "메모", "업체명"][:len(df_v7.columns)]
             
-            # 수치 변환
+            # 1. 수치 변환
             df_v7["기존리오더"] = pd.to_numeric(df_v7["기존리오더"], errors='coerce').fillna(0).astype(int)
             df_v7["추가발주"] = pd.to_numeric(df_v7["추가발주"], errors='coerce').fillna(0).astype(int)
+            # 수치상 최종 잔량 계산
             df_v7["최종잔량"] = df_v7["기존리오더"] + df_v7["추가발주"]
             df_v7["날짜_순수"] = df_v7["발주시간"].str.slice(0, 10)
 
-            # ⭐ [핵심 로직] 메모 보정: "입고차감"만 적힌 경우 수량을 붙여줌
+            # 2. 메모 보정: "입고차감"만 적힌 경우 수량을 붙여줌
             def fix_memo(row):
                 m = str(row['메모']).strip()
                 q = row['추가발주']
-                # G열(추가발주)이 음수이고 메모가 "입고차감"인 경우 숫자를 붙여줌
                 if q < 0 and m == "입고차감":
                     return f"{q}개 입고차감"
                 return m
@@ -863,24 +867,30 @@ if st.session_state.get('analyzed'):
             if q_v7: df_f = df_f[df_f["상품명"].str.contains(q_v7, case=False) | df_f["옵션"].str.contains(q_v7, case=False)]
 
             if not df_f.empty:
-                # 전광판 합산
+                # 3. 상세 리스트 그룹화 및 합산
+                df_final = df_f.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
+                    "발주시간": "max", 
+                    "최종잔량": "sum",
+                    "메모": lambda x: " / ".join(dict.fromkeys(filter(None, x.astype(str))))
+                })
+
+                # ⭐ [핵심 추가] 최종 합산 잔량이 마이너스이면 0으로 제로화
+                df_final["최종잔량"] = df_final["최종잔량"].clip(lower=0)
+                
+                # 잔량이 0보다 큰 것들 위주로 정렬 (입고 완료된 건은 숨기고 싶으면 아래 주석 해제)
+                # df_final = df_final[df_final["최종잔량"] > 0]
+                df_final = df_final.sort_values(["발주시간", "업체명"], ascending=[False, True])
+
+                # 4. 전광판 합산 (제로화된 수량 기준)
                 st.write("### 📊 업체별 미입고 현황")
-                df_v_sum = df_f.groupby("업체명")["최종잔량"].sum().reset_index().sort_values("최종잔량", ascending=False)
-                df_v_sum = df_v_sum[df_v_sum["최종잔량"] > 0]
+                df_v_sum = df_final.groupby("업체명")["최종잔량"].sum().reset_index().sort_values("최종잔량", ascending=False)
+                df_v_sum = df_v_sum[df_v_sum["최종잔량"] > 0] # 합계가 0인 업체는 표시 제외
+                
                 v_cols = st.columns(4)
                 for i, r in enumerate(df_v_sum.itertuples()):
                     with v_cols[i % 4]: st.metric(label=r.업체명, value=f"{int(r.최종잔량):,} 개")
                 
-                # 상세 리스트 합산
                 st.write("#### 📋 상세 리스트")
-                df_final = df_f.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
-                    "발주시간": "max", 
-                    "최종잔량": "sum",
-                    # 중복 메모 제거 및 연결
-                    "메모": lambda x: " / ".join(dict.fromkeys(filter(None, x.astype(str))))
-                })
-                df_final = df_final[df_final["최종잔량"] > 0].sort_values(["발주시간", "업체명"], ascending=[False, True])
-
                 st.dataframe(df_final, use_container_width=True, hide_index=True,
                     column_config={
                         "발주시간": st.column_config.TextColumn("🕒 최종발주"),
