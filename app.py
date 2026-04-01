@@ -121,39 +121,40 @@ def get_incoming_history():
         return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
         
 
-# [0] 공통 함수 (수정본)
 def get_realtime_data_v4(target_date):
     try:
         import unicodedata
         import re
         
-        # 특수문자, 공백 싹 제거하는 함수
+        # ⭐ 수정: 특수문자를 지우지 않고 '공백'만 제거합니다.
+        # 이렇게 해야 [저스트원] (M) 같은 글자가 깨지지 않고 매칭됩니다.
         def super_clean(t):
+            if not t: return ""
             t = unicodedata.normalize('NFC', str(t))
-            return re.sub(r'[^a-zA-Z0-9가-힣]', '', t).upper()
+            return t.replace(" ", "").upper().strip() # 공백 제거 + 대문자 통일
 
         sh = get_sheet()
         
-        # 1. 발주기록 시트 읽기
+        # 1. 발주기록 시트 읽기 (리오더 잔량용)
         ws_v7 = sh.worksheet("발주기록")
         d7 = ws_v7.get_all_values()
         r_map = {}
         if len(d7) > 1:
             for row in d7[1:]:
                 try:
-                    # ⭐ 언더바 없이 합칩니다 (4단계 화면 소스와 일치시킴)
+                    # 상품명(row[1]) + 옵션(row[2]) 합치기
                     key = super_clean(row[1]) + super_clean(row[2])
                     
                     def to_i(v):
                         try: return int(float(str(v).replace(",", "").strip()))
                         except: return 0
                     
-                    total_qty = to_i(row[5]) + to_i(row[6]) # F열(기존) + G열(추가)
+                    total_qty = to_i(row[5]) + to_i(row[6]) 
                     if total_qty != 0:
                         r_map[key] = r_map.get(key, 0) + total_qty
                 except: continue
 
-        # 2. 입고기록 시트 읽기
+        # 2. 입고기록 시트 읽기 (과거입고데이터용)
         ws_h = sh.worksheet("입고기록")
         dh = ws_h.get_all_values()
         h_map = {}
@@ -163,21 +164,19 @@ def get_realtime_data_v4(target_date):
         if len(dh) > 1:
             for row_h in dh[1:]:
                 try:
-                    # 시트의 날짜에 target_date(YYYY-MM-DD)가 포함되어 있는지 확인
+                    # 날짜 체크 (시트 날짜에 선택한 날짜가 포함되어 있는지)
                     if t_str in str(row_h[0]):
-                        # ⭐ 여기도 언더바 제거!
+                        # ⭐ 여기도 똑같이 공백만 제거해서 키 생성
                         h_key = super_clean(row_h[1]) + super_clean(row_h[2])
                         
-                        qty_str = str(row_h[3]).replace(",", "").strip()
-                        qty = int(float(qty_str)) if qty_str else 0
+                        qty_val = str(row_h[3]).replace(",", "").strip()
+                        qty = int(float(qty_val)) if qty_val else 0
                         h_map[h_key] = h_map.get(h_key, 0) + qty
                 except: continue
                 
         return r_map, h_map
     except Exception as e:
-        # 에러 발생 시 로그 확인용 (필요시 st.write(e) 추가)
         return {}, {}
-
 
 def sync_reorder_from_sheet(df_uploaded):
     try:
