@@ -52,18 +52,19 @@ def sync_reorder_from_sheet(df_uploaded):
         reorder_map = {}
         for row in all_data[1:]:
             try:
-                # 1. 시트 데이터 정리 (B:상품명, C:옵션)
-                # 공백 제거 및 대문자 변환으로 매칭률 극대화
+                # 1. 시트 데이터 정리 (B열:상품명, C열:옵션)
+                # 모든 공백을 제거하고 대문자로 통일하여 매칭률을 높입니다.
                 s_name = str(row[1]).strip().replace(" ", "").upper()
                 s_opt = str(row[2]).strip().replace(" ", "").upper()
                 
                 if not s_name: continue
                 
-                # 2. 수량 계산 (F:기존리오더, G:추가발주)
+                # 2. 수량 계산 (F열:기존리오더, G열:추가발주)
                 def clean_val(v):
                     try: return int(float(str(v).replace(",", "")))
                     except: return 0
                 
+                # 사진 장부 구조대로 6번째(index 5), 7번째(index 6) 칸을 더합니다.
                 total_qty = clean_val(row[5]) + clean_val(row[6])
                 
                 if total_qty > 0:
@@ -83,14 +84,14 @@ def sync_reorder_from_sheet(df_uploaded):
 
         df_uploaded['리오더 수량'] = df_uploaded.apply(get_val, axis=1)
         
-        # 성공 메시지 알림 (토스트 형식)
+        # 성공 메시지 알림 (우측 하단 토스트)
         if len(reorder_map) > 0:
-            st.toast("✅ 구글 시트 리오더 데이터 연동 완료!")
+            st.toast("✅ 구글 시트 리오더 데이터 연동 성공!")
             
         return df_uploaded
 
     except Exception as e:
-        # 🚨 에러 발생 시 따옴표 문제 없도록 일반 결합 방식 사용
+        # 🚨 에러 발생 시 따옴표 문제가 없도록 안전한 문자열 결합 방식 사용
         st.warning("데이터 확인 중 알림: " + str(e))
         return df_uploaded
 
@@ -171,7 +172,8 @@ def sync_reorder_from_sheet(df_uploaded):
         return df_uploaded
 
     except Exception as e:
-        st.error(f"🔥 [치명적 오류
+        st.error(f"🔥 [치명적 오류] 시스템 에러 발생: {e}")
+        return df_uploaded
         
 
 # --- 시트 연결 테스트 모드 (필요할 때만 아래 줄들의 #을 지워서 사용하세요) ---
