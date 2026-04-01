@@ -472,7 +472,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 "상품명": st.column_config.TextColumn(width=250),
                 "리오더 총합": st.column_config.NumberColumn("리오더 총합", disabled=True, help="시트 합계 (수정불가)"),
                 "과거 입고": st.column_config.NumberColumn(f"{selected_date.strftime('%m/%d')} 입고", disabled=True),
-                "리오더 입고": st.column_config.NumberColumn("새로 입고입력", min_value=0),
+                "리오더 입고": st.column_config.NumberColumn("리오더입고수량", min_value=0),
                 "3일판매": st.column_config.NumberColumn("3일판매", disabled=True),
                 "일판매": st.column_config.NumberColumn("일판매", disabled=True),
                 "권장수량": st.column_config.NumberColumn("권장수량", disabled=True)
