@@ -481,39 +481,32 @@ with tab1:
 
 
 # ------------------------------------------------------------------
-# [4단계: 데이터 편집 및 재고 관리]
+# [4단계: 데이터 편집 및 재고 관리] - 저장 안정성 강화 버전
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📊 4단계: 데이터 편집 및 재고 관리")
 
-    # [0] 시트 연결 확인
     sh = get_sheet()
-    if sh is None:
-        st.error("❗ 구글 시트 연결 실패")
-        st.stop()
-
-    # [1] 설정값 로드
     p = st.session_state.p
     s_out, item, opt = p['so'], p['it'], p['op']
     vnd, v_it = p['vn'], p['vi']
     stk, avl, t3, t7 = p['st'], p['av'], p['t3'], p['t7']
     lt, ss = p['lt'], p['ss']
 
-    # [2] UI 구성
+    # UI 필터
     c1, c2, c3 = st.columns([1, 2, 1])
-    with c1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_f")
-    with c2: s_query = st.text_input("🔍 상품 검색", key="v4_s")
-    with c3: s_date = st.date_input("🗓️ 입고 조회 날짜", datetime.now(KST).date(), key="v4_d")
+    with c1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "정상만", "품절만"], index=1, key="v4_filter_mode")
+    with c2: s_query = st.text_input("🔍 상품 검색", key="v4_search_query")
+    with c3: s_date = st.date_input("🗓️ 입고 조회 날짜", datetime.now(KST).date(), key="v4_in_date")
 
-    # [3] 데이터 매핑 및 계산
+    # 데이터 준비
     reorder_map, history_map = get_realtime_data_v4(s_date)
     df_work = st.session_state.df_raw.copy()
 
     for col in [stk, avl, t3, t7]:
         df_work[col] = pd.to_numeric(df_work[col], errors='coerce').fillna(0).astype(int)
 
-    # 매핑용 클린 키 생성
     def get_clean_key_v4(r):
         import unicodedata, re
         n = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[item]))).upper().strip()
@@ -528,7 +521,6 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_work['일판매'] = df_work.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
     df_work['발주권장'] = ((df_work['일판매'] * (lt + ss)) - (df_work[avl] + df_work['리오더 총합'])).clip(lower=0).astype(int)
 
-    # [4] 필터링
     is_so = df_work[s_out].astype(str).str.contains('품절', na=False)
     df_f = df_work[~is_so] if f_mode == "정상만" else (df_work[is_so] if f_mode == "품절만" else df_work)
     if s_query:
@@ -536,32 +528,65 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
     df_disp = df_f.rename(columns={s_out: "상태", vnd: "공급처", item: "상품명", opt: "옵션", v_it: "공급처상품명", stk: "정상재고", avl: "가용재고", t3: "3일발주"})
     
-    # [5] 에디터 및 저장
-    with st.form("v4_form"):
+    # ⭐ 중요: 폼 내부 에디터 설정
+    with st.form("v4_storage_form", clear_on_submit=True): # 저장 후 입력값 초기화
         target_cols = ["상태", "공급처", "상품명", "옵션", "공급처상품명", "정상재고", "가용재고", "리오더 총합", "리오더 입고", "과거입고데이터", "3일발주", "일판매", "발주권장"]
-        v4_ed = st.data_editor(df_disp[target_cols], use_container_width=True, hide_index=True, key="v4_editor",
+        
+        # 에디터의 key를 고유하게 설정
+        v4_ed = st.data_editor(
+            df_disp[target_cols], 
+            use_container_width=True, 
+            hide_index=True, 
+            key="v4_main_editor", # 이 key가 중요합니다
             column_config={
                 "리오더 총합": st.column_config.NumberColumn("📦 리오더잔량"),
                 "리오더 입고": st.column_config.NumberColumn("📥 입고차감", min_value=0),
                 "과거입고데이터": st.column_config.NumberColumn("📜 과거입고")
-            }, disabled=[c for c in target_cols if c != "리오더 입고"])
+            }, 
+            disabled=[c for c in target_cols if c != "리오더 입고"]
+        )
         
-        if st.form_submit_button("💾 입고 정보 저장 및 리오더 차감", use_container_width=True):
-            edits = st.session_state["v4_editor"].get("edited_rows", {})
+        submit_btn = st.form_submit_button("💾 입고 정보 저장 및 리오더 차감", use_container_width=True)
+        
+        if submit_btn:
+            # 에디터에서 수정된 내용 직접 추출
+            edits = st.session_state.get("v4_main_editor", {}).get("edited_rows", {})
+            
             if edits:
-                v7_sh = sh.worksheet("발주기록")
-                h_sh = sh.worksheet("입고기록")
-                t_date = s_date.strftime('%Y-%m-%d')
-                for r_idx, val in edits.items():
-                    qty = int(val.get("리오더 입고", 0))
-                    if qty > 0:
-                        row = df_disp.iloc[int(r_idx)]
-                        v7_sh.append_row([datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'), str(row["상품명"]), str(row["옵션"]), str(row.get("공급처상품명", "")), 0, 0, -qty, 0, f"-{qty}개 입고차감", str(row.get("공급처", "미지정"))])
-                        h_sh.append_row([t_date, str(row["상품명"]), str(row["옵션"]), qty])
-                st.success("✅ 입고 처리가 완료되었습니다!")
-                st.cache_data.clear()
-                time.sleep(1)
-                st.rerun()
+                try:
+                    v7_sh = sh.worksheet("발주기록")
+                    h_sh = sh.worksheet("입고기록")
+                    t_date = s_date.strftime('%Y-%m-%d')
+                    
+                    saved_count = 0
+                    for r_idx, val in edits.items():
+                        qty = int(val.get("리오더 입고", 0))
+                        if qty > 0:
+                            # 실제 데이터 매칭
+                            row = df_disp.iloc[int(r_idx)]
+                            
+                            # 1. 발주기록 차감 (G열에 -수량, I열에 입고차감)
+                            v7_sh.append_row([
+                                datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'), 
+                                str(row["상품명"]), str(row["옵션"]), str(row.get("공급처상품명", "")), 
+                                0, 0, -qty, 0, "입고차감", str(row.get("공급처", "미지정"))
+                            ])
+                            
+                            # 2. 입고기록 저장
+                            h_sh.append_row([t_date, str(row["상품명"]), str(row["옵션"]), qty])
+                            saved_count += 1
+                    
+                    if saved_count > 0:
+                        st.success(f"✅ {saved_count}건 저장 완료! (시트 반영됨)")
+                        st.cache_data.clear() # 데이터 갱신
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("입력된 수량이 0입니다.")
+                except Exception as e:
+                    st.error(f"❌ 저장 중 오류 발생: {e}")
+            else:
+                st.warning("⚠️ 수정된 내용이 없습니다. 수량을 입력한 뒤 버튼을 눌러주세요.")
 
 
 
