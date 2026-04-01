@@ -565,7 +565,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             disabled=[c for c in target_cols if c != "리오더 입고"]
         )
         
-        iif st.form_submit_button("💾 입고 정보 저장 및 리오더 차감", use_container_width=True):
+        if st.form_submit_button("💾 입고 정보 저장 및 리오더 차감", use_container_width=True):
             # 세션 스테이트의 에디터 변경사항 확인
             edits = st.session_state["v4_editor"].get("edited_rows", {})
             
