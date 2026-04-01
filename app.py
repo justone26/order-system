@@ -3,205 +3,103 @@ import pandas as pd
 import time
 import io
 import streamlit.components.v1 as components
+import numpy as np # 숫자 계산용 추가
 
-# 🚨 [수정] pytz를 삭제하고 파이썬 기본 기능만 사용 (설치 에러 완벽 방지)
+# 🚨 [수정] pytz를 삭제하고 파이썬 기본 기능만 사용
 from datetime import datetime, timedelta, timezone
 
-# 1. 한국 시간(KST) 및 오늘 날짜 설정 (pytz 없이도 정확함)
+# 1. 한국 시간(KST) 및 오늘 날짜 설정
 KST = timezone(timedelta(hours=9)) 
 current_today = datetime.now(KST).date()
 
-# 2. (선택사항) 만약 코드 하단에서 pytz를 꼭 써야 하는 상황이라면 
-# 아래 try-except 구문을 써서 설치 안 됐을 때를 대비하세요.
-try:
-    import pytz
-    KST_PYTZ = pytz.timezone('Asia/Seoul')
-except ImportError:
-    # pytz가 없으면 위에서 만든 기본 KST를 사용함
-    pass
-
-
 # --- [세션 상태 초기화] ---
-
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
-
 if 'analyzed' not in st.session_state: st.session_state.analyzed = False
-
 if 'p' not in st.session_state: st.session_state.p = {}
-
 if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
-
 if 'upload_key' not in st.session_state: st.session_state.upload_key = 0
 
-
-
-# --- [2. 새로고침 방지 경고창 스크립트] ---
-
-# 이 코드가 실행되면 사용자가 F5를 누를 때 "정말 나갈 거냐"고 물어봅니다.
-
+# --- [2. 새로고침 방지 스크립트] ---
 components.html(
-
     """
-
     <script>
-
     window.onbeforeunload = function() {
-
         return "데이터 분석 중입니다. 새로고침하면 작업 내용이 사라질 수 있습니다.";
-
     };
-
     </script>
-
     """,
-
-    height=0, # 화면에는 안 보이게 높이를 0으로 설정
-
+    height=0,
 )
-
 
 st.set_page_config(layout="wide", page_title="저스트원 재고관리 v4.0")
 
 # --- [공통 함수: 구글 시트 연동] ---
-
 def get_sheet():
-
     try:
-
         from oauth2client.service_account import ServiceAccountCredentials
-
         import gspread
-
         creds_dict = dict(st.secrets["gcp_service_account"])
-
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-
         client = gspread.authorize(creds)
-
+        # 사장님 시트 ID 유지
         return client.open_by_key("1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg")
-
-    except:
-
+    except Exception as e:
+        st.error(f"❌ 구글 시트 연결 실패: {e}")
         return None
 
-
-
-# [필수 함수] 구글 시트 입고 기록 가져오기
-
-def get_incoming_history():
-
+# --- [핵심 함수: 리오더 잔량 실시간 통합 계산] ---
+# 사장님 시트 사진의 F열(기존리오더) + G열(추가발주)을 정확히 합산합니다.
+def get_realtime_reorder_summary():
     try:
-
-        sheet = get_sheet() 
-
-        ws = sheet.worksheet("입고기록")
-
-        data = ws.get_all_records()
-
-        if data:
-
-            df_h = pd.DataFrame(data)
-
-            df_h['상품명'] = df_h['상품명'].astype(str).str.strip()
-
-            df_h['옵션'] = df_h['옵션'].astype(str).str.strip()
-
-            summary = df_h.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
-
-            summary.rename(columns={'수량': '과거리오더 입고'}, inplace=True)
-
-            return summary
-
-        return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
-
-    except:
-
-        return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
-
-
-# [추가 함수] 구글 시트1에서 기존 '리오더 수량' 컬럼만 가져오기
-def sync_reorder_from_sheet(df_uploaded):
-    try:
-        # 1. 시트1 열기
         sh = get_sheet()
-        ws = sh.worksheet("시트1")
-        all_data = ws.get_all_records()
+        if not sh: return {}
         
-        if all_data:
-            df_sheet = pd.DataFrame(all_data)
-            
-            # 2. 필수 컬럼 확인 (상품명, 옵션, 리오더 수량)
-            if "상품명" in df_sheet.columns and "옵션" in df_sheet.columns and "리오더 수량" in df_sheet.columns:
-                # 시트에서 필요한 것만 추출하여 정리
-                df_ref = df_sheet[['상품명', '옵션', '리오더 수량']].copy()
-                df_ref['상품명'] = df_ref['상품명'].astype(str).str.strip()
-                df_ref['옵션'] = df_ref['옵션'].astype(str).str.strip()
-                df_ref['리오더 수량'] = pd.to_numeric(df_ref['리오더 수량'], errors='coerce').fillna(0).astype(int)
-                
-                # 3. 현재 업로드된 데이터(df_uploaded)와 병합
-                # 엑셀의 기존 '리오더 수량'은 무시하고 시트의 최신값을 가져옵니다.
-                if "리오더 수량" in df_uploaded.columns:
-                    df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
-                
-                df_final = pd.merge(df_uploaded, df_ref, on=['상품명', '옵션'], how='left')
-                df_final['리오더 수량'] = df_final['리오더 수량'].fillna(0).astype(int)
-                
-                return df_final
-        return df_uploaded
-    except Exception as e:
-        st.error(f"⚠️ 시트에서 리오더 수량을 동기화하는 중 오류: {e}")
-        return df_uploaded
-
-
-
-# ------------------------------------------------------------------
-# [4~5단계 보강] 시트에서 기존 미입고 잔량을 계산해 불러오는 함수
-# ------------------------------------------------------------------
-def get_existing_reorder_dict():
-    """발주기록 시트를 읽어 상품/옵션별 현재 미입고 잔량을 딕셔너리로 반환"""
-    try:
-        ws = get_sheet().worksheet("발주기록")
+        ws = sh.worksheet("발주기록")
         all_data = ws.get_all_values()
+        
         if len(all_data) <= 1: return {}
         
-        df_history = pd.DataFrame(all_data[1:], columns=[c.strip() for c in all_data[0]])
-        qty_col = '추가발주' if '추가발주' in df_history.columns else ('추가' if '추가' in df_history.columns else df_history.columns[5])
+        # 헤더 공백 제거 및 데이터프레임화
+        df_h = pd.DataFrame(all_data[1:], columns=[c.strip() for c in all_data[0]])
         
-        # 숫자 변환 및 합산
-        df_history[qty_col] = pd.to_numeric(df_history[qty_col], errors='coerce').fillna(0).astype(int)
+        # ⭐ 사장님 시트 사진(A~J) 구조 기준 열 매핑
+        # 상품명(B=1), 옵션(C=2), 기존리오더(F=5), 추가발주(G=6)
+        col_f = '기존리오더' if '기존리오더' in df_h.columns else df_h.columns[5]
+        col_g = '추가발주' if '추가발주' in df_h.columns else df_h.columns[6]
         
-        # 상품명+옵션을 키로 하여 잔량 합계 계산
-        summary = df_history.groupby(['상품명', '옵션'])[qty_col].sum().to_dict()
-        return summary
+        # 전처리: 텍스트 공백 제거 및 숫자 변환
+        df_h['상품명'] = df_h['상품명'].astype(str).str.strip()
+        df_h['옵션'] = df_h['옵션'].astype(str).str.strip()
+        
+        df_h[col_f] = pd.to_numeric(df_h[col_f], errors='coerce').fillna(0)
+        df_h[col_g] = pd.to_numeric(df_h[col_g], errors='coerce').fillna(0)
+        
+        # 합계 계산
+        df_h['실잔량'] = df_h[col_f] + df_h[col_g]
+        
+        # 상품명+옵션별로 그룹화하여 딕셔너리 반환
+        return df_h.groupby(['상품명', '옵션'])['실잔량'].sum().to_dict()
     except:
         return {}
 
-# ------------------------------------------------------------------
-# [공통 로직] 실시간 시트 잔량 계산 함수 (이걸 상단에 한 번만 선언하세요)
-# ------------------------------------------------------------------
-def get_realtime_reorder():
+# --- [보조 함수: 입고 기록 합계] ---
+def get_incoming_history():
     try:
-        ws = get_sheet().worksheet("발주기록")
-        data = ws.get_all_values()
-        if len(data) <= 1: return {}
+        sh = get_sheet() 
+        ws = sh.worksheet("입고기록")
+        data = ws.get_all_records()
+        if not data: return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
         
-        df_history = pd.DataFrame(data[1:], columns=[c.strip() for c in data[0]])
-        # 1. 수량 컬럼 유연하게 찾기
-        q_col = '추가발주' if '추가발주' in df_history.columns else ('추가' if '추가' in df_history.columns else df_history.columns[5])
+        df_h = pd.DataFrame(data)
+        df_h['상품명'] = df_h['상품명'].astype(str).str.strip()
+        df_h['옵션'] = df_h['옵션'].astype(str).str.strip()
         
-        # 2. 숫자 변환 (전처리)
-        df_history[q_col] = pd.to_numeric(df_history[q_col], errors='coerce').fillna(0)
-        
-        # 3. '기존리order' 컬럼이 있다면 그것까지 합산 (사장님 장부 구조 반영)
-        if '기존리order' in df_history.columns:
-            df_history[q_col] += pd.to_numeric(df_history['기존리order'], errors='coerce').fillna(0)
-            
-        # 4. 상품명+옵션별로 현재 '진짜 잔량' 합계 반환
-        return df_history.groupby(['상품명', '옵션'])[q_col].sum().to_dict()
+        summary = df_h.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+        summary.rename(columns={'수량': '과거리오더 입고'}, inplace=True)
+        return summary
     except:
-        return {}
+        return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
 
 
 
