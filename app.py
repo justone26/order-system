@@ -804,116 +804,82 @@ if st.session_state.get('analyzed'):
             )
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 최종 잔량 상황판] - API 부하 방지(Caching) 적용
+# [7단계: 실시간 리오더 최종 잔량 상황판] - 컬럼명 무관 강제 매핑 버전
 # ------------------------------------------------------------------
-
-# ⭐ [최적화 함수] 구글 시트 조회를 1분간 캐싱하여 429 에러를 방지합니다.
-@st.cache_data(ttl=60)
-def get_v7_remote_data():
-    try:
-        ws = get_sheet().worksheet("발주기록")
-        return ws.get_all_values()
-    except Exception as e:
-        return str(e) # 에러 발생 시 메시지 반환
-
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
 
     try:
-        # [1. 데이터 로드 - 캐싱 적용]
-        all_v7 = get_v7_remote_data()
+        # [1] 데이터 로드 (캐시 없이 실시간으로 시도)
+        ws_v7 = get_sheet().worksheet("발주기록")
+        all_v7 = ws_v7.get_all_values()
         
-        # API 오류 처리
-        if isinstance(all_v7, str):
-            if "429" in all_v7:
-                st.error("🚨 구글 접속량이 너무 많습니다. 1분만 기다렸다가 '데이터 동기화' 버튼을 눌러주세요.")
-                st.stop()
-            else:
-                st.error(f"📡 데이터를 불러오지 못했습니다: {all_v7}")
-                st.stop()
-
-        if all_v7 and len(all_v7) > 1:
+        if len(all_v7) > 1:
+            # 데이터프레임 생성 (제목 줄 제외)
             df_raw_v7 = pd.DataFrame(all_v7[1:])
             
-            # ⭐ 10개 컬럼 구조 강제 지정 (Length Mismatch 방지)
-            df_raw_v7.columns = [
-                "발주시간", "상품명", "옵션", "공급처상품명", 
-                "가용재고", "리오더잔량", "추가발주", "발주권장", "메모", "업체명"
-            ]
+            # ⭐ 핵심: 컬럼명을 시트에서 가져오지 않고 코드에서 강제로 부여 (Mismatch 방지)
+            # 5단계 저장 순서: 발주시간(0), 상품명(1), 옵션(2), 공급처상품명(3), 가용(4), 리오더잔량(5), 추가발주(6), 권장(7), 메모(8), 업체명(9)
+            forced_cols = ["발주시간", "상품명", "옵션", "공급처상품명", "가용", "리잔량", "수량", "권장", "메모", "업체명"]
             
+            # 현재 불러온 데이터의 칸 수에 맞춰서 이름을 붙여줍니다.
+            df_raw_v7.columns = forced_cols[:len(df_raw_v7.columns)]
+            
+            # [2] 전처리: 수량(6번 칸)을 숫자로 변환
+            df_raw_v7["수량"] = pd.to_numeric(df_raw_v7["수량"], errors='coerce').fillna(0).astype(int)
             df_raw_v7["업체명"] = df_raw_v7["업체명"].astype(str).str.strip()
-            df_raw_v7["추가발주"] = pd.to_numeric(df_raw_v7["추가발주"], errors='coerce').fillna(0).astype(int)
-            df_raw_v7["날짜"] = df_raw_v7["발주시간"].astype(str).str.slice(2, 10) 
-
-            # [2. 상단 필터 영역]
-            f1, f2, f3, f4 = st.columns([1.2, 0.8, 1.5, 1.5])
+            
+            # [3] 필터 및 검색 UI
+            f1, f2, f3 = st.columns([1.5, 1.5, 1])
             with f1:
-                default_start = (datetime.now(KST) - timedelta(days=60)).date() 
-                d_range_v7 = st.date_input("🗓️ 1. 기간 선택", value=(default_start, datetime.now(KST).date()), key="v7_range")
+                q_v7 = st.text_input("🔍 상품명 또는 옵션 검색", key="v7_search_q")
             with f2:
-                st.write(""); st.write("")
-                # ⭐ 동기화 버튼 클릭 시에만 캐시를 삭제하고 새로 가져옵니다.
-                if st.button("📈 2. 데이터 동기화", use_container_width=True, type="primary"):
-                    st.cache_data.clear() 
-                    st.rerun()
-            with f3:
-                q_v7 = st.text_input("🔍 3. 상품/옵션 검색", key="v7_search_q")
-            with f4:
                 v_list = sorted(df_raw_v7["업체명"].unique().tolist())
-                v_choice = st.selectbox("🏭 4. 업체 선택", ["전체 업체"] + v_list, key="v7_vendor_sel")
+                v_choice = st.selectbox("🏭 업체 선택", ["전체 업체"] + v_list, key="v7_vendor_sel")
+            with f3:
+                st.write(""); st.write("")
+                if st.button("🔄 데이터 새로고침", use_container_width=True):
+                    st.rerun()
 
-            # --- [필터링 및 집계] ---
-            # 날짜 범위 처리
-            if isinstance(d_range_v7, (list, tuple)) and len(d_range_v7) == 2:
-                s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
-            else:
-                s_d = d_range_v7[0].strftime('%Y-%m-%d') if isinstance(d_range_v7, (list, tuple)) else d_range_v7.strftime('%Y-%m-%d')
-                e_d = datetime.now(KST).strftime('%Y-%m-%d')
-
-            df_f = df_raw_v7[(df_raw_v7["발주시간"].str.slice(0,10) >= s_d) & (df_raw_v7["발주시간"].str.slice(0,10) <= e_d)].copy()
+            # [4] 필터링 적용
+            df_f = df_raw_v7[df_raw_v7["수량"] != 0].copy() # 수량이 있는 것만
             
             if v_choice != "전체 업체":
                 df_f = df_f[df_f["업체명"] == v_choice]
             if q_v7:
                 df_f = df_f[df_f["상품명"].str.contains(q_v7, case=False) | df_f["옵션"].str.contains(q_v7, case=False)]
 
+            # [5] 최종 출력 (집계)
             if not df_f.empty:
-                group_cols = ["날짜", "업체명", "상품명", "옵션", "공급처상품명"]
-                df_display = df_f.groupby(group_cols, as_index=False).agg({
-                    "추가발주": "sum",
+                # 날짜 보기 좋게 자르기 (2026-04-01 -> 04-01)
+                df_f["날짜"] = df_f["발주시간"].str.slice(5, 10)
+                
+                # 중복 항목 합산 및 메모 통합
+                df_final = df_f.groupby(["날짜", "업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
+                    "수량": "sum",
                     "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
-                }).rename(columns={"추가발주": "잔량"})
+                })
 
-                df_display = df_display[df_display["잔량"] > 0].sort_values("날짜", ascending=False)
+                # 합계 표시
+                total_qty = df_final["수량"].sum()
+                st.info(f"📊 현재 조건의 미입고 총 합계: **{total_qty:,}개**")
 
-                # [3. 업체별 요약 카드]
-                df_v_sum = df_display.groupby("업체명")["잔량"].sum().reset_index().sort_values("잔량", ascending=False)
-                st.write(f"#### 🏭 업체별 미입고 상황 (총 {df_v_sum['잔량'].sum():,}개)")
-                v_cols = st.columns(4)
-                for i, r in df_v_sum.reset_index(drop=True).iterrows():
-                    with v_cols[i % 4]:
-                        st.metric(label=r["업체명"], value=f"{r['잔량']:,}개")
-                st.divider()
-
-                # [4. 상세 리스트]
-                st.write(f"#### 📋 상세 미입고 리스트")
-                view_cols = ["날짜", "업체명", "상품명", "옵션", "공급처상품명", "잔량", "메모"]
+                # 테이블 출력 (너비 최적화)
                 st.dataframe(
-                    df_display[view_cols], 
-                    use_container_width=True, 
+                    df_final.sort_values(["날짜", "업체명"], ascending=[False, True]),
+                    use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "날짜": st.column_config.TextColumn(width=80),         
-                        "업체명": st.column_config.TextColumn(width=100),       
-                        "잔량": st.column_config.NumberColumn(format="%d", width=60), 
-                        "메모": st.column_config.TextColumn(width=400)          
+                        "날짜": st.column_config.TextColumn("📅", width=50),
+                        "수량": st.column_config.NumberColumn("🔢 잔량", format="%d", width=60),
+                        "메모": st.column_config.TextColumn("📝 비고", width=300)
                     }
                 )
             else:
-                st.info("🔎 해당 조건에 맞는 미입고 데이터가 없습니다.")
+                st.warning("⚠️ 표시할 미입고 데이터가 없습니다. (수량이 0이거나 필터 조건에 없음)")
         else:
-            st.info("💡 발주 데이터가 없습니다.")
-            
+            st.error("📡 '발주기록' 시트에 데이터가 없습니다. 5단계에서 저장을 먼저 진행해 주세요.")
+
     except Exception as e:
-        st.error(f"📡 화면 최적화 오류: {e}")
+        st.error(f"❌ 7단계 로드 중 치명적 오류: {e}")
