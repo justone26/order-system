@@ -132,6 +132,70 @@ def get_realtime_reorder():
         return {}
 
 
+
+def sync_reorder_from_sheet(df_uploaded):
+    try:
+        sh = get_sheet()
+        if not sh: 
+            st.error("❌ [진단] 구글 시트 연결 자체가 안 됩니다. API 키나 시트 ID를 확인하세요.")
+            return df_uploaded
+        
+        # 1. 탭 이름 확인
+        try:
+            ws = sh.worksheet("발주기록")
+        except:
+            st.error("❌ [진단] '발주기록'이라는 이름의 탭을 찾을 수 없습니다. 탭 이름에 공백이 있는지 확인하세요.")
+            return df_uploaded
+
+        all_data = ws.get_all_values()
+        if len(all_data) <= 1: 
+            st.warning("⚠️ [진단] 시트에 제목 외에 데이터가 한 줄도 없습니다.")
+            return df_uploaded
+        
+        # 2. 헤더 및 열 개수 확인
+        header = all_data[0]
+        if len(header) < 7:
+            st.error(f"❌ [진단] 시트의 열 개수가 부족합니다. (현재 {len(header)}개, 최소 7개 필요)")
+            return df_uploaded
+
+        # 3. 매칭 데이터 생성
+        reorder_map = {}
+        for i, row in enumerate(all_data[1:]):
+            # 상품명(B), 옵션(C), 기존리오더(F), 추가발주(G)
+            name = str(row[1]).strip().replace(" ", "").upper()
+            opt = str(row[2]).strip().replace(" ", "").upper()
+            
+            def to_int(v):
+                try: return int(float(str(v).replace(",", "")))
+                except: return 0
+            
+            qty = to_int(row[5]) + to_int(row[6])
+            if qty > 0:
+                key = f"{name}_{opt}"
+                reorder_map[key] = reorder_map.get(key, 0) + qty
+
+        # 4. 결과 보고
+        if not reorder_map:
+            st.info("ℹ️ [진단] 시트에서 수량이 0보다 큰 상품을 하나도 찾지 못했습니다. F, G열을 확인하세요.")
+        else:
+            st.success(f"✅ [진단] 시트에서 총 {len(reorder_map)}개의 리오더 품목을 읽어왔습니다.")
+
+        # 5. 업로드 파일과 매칭
+        if "리오더 수량" in df_uploaded.columns:
+            df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
+
+        def match_val(r):
+            u_key = (str(r['상품명']).strip().replace(" ", "") + "_" + 
+                     str(r['옵션']).strip().replace(" ", "")).upper()
+            return reorder_map.get(u_key, 0)
+
+        df_uploaded['리오더 수량'] = df_uploaded.apply(match_val, axis=1)
+        return df_uploaded
+
+    except Exception as e:
+        st.error(f"🔥 [치명적 오류
+        
+
 # --- 시트 연결 테스트 모드 (필요할 때만 아래 줄들의 #을 지워서 사용하세요) ---
 
 # st.sidebar.subheader("🔍 시트 연결 상태 점검")
