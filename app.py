@@ -44,11 +44,10 @@ def get_sheet():
     except Exception as e:
         return None
 
-# --- [핵심 수정: 에러 났던 함수 이름을 그대로 유지함] ---
+# --- [핵심 수정: 시트 데이터 강제 매칭 함수] ---
 def sync_reorder_from_sheet(df_uploaded):
     """ 
-    하단 코드에서 호출하는 이름 그대로 유지! 
-    발주기록 시트의 F열(기존리오더) + G열(추가발주)을 합산하여 업로드된 데이터에 붙여줍니다.
+    구글 시트 '발주기록'에서 데이터를 가져와 업로드된 엑셀에 붙여주는 함수
     """
     try:
         sh = get_sheet()
@@ -59,34 +58,40 @@ def sync_reorder_from_sheet(df_uploaded):
         
         if len(all_data) <= 1: return df_uploaded
         
-        # 1. 시트 데이터 정리 (공백 제거)
+        # 1. 시트 데이터 로드 및 전처리 (공백 완벽 제거)
         df_sheet = pd.DataFrame(all_data[1:], columns=[c.strip() for c in all_data[0]])
         
-        # 2. 사진 기준 컬럼 매칭 (F:기존리오더, G:추가발주)
-        col_f = '기존리오더' if '기존리오더' in df_sheet.columns else df_sheet.columns[5]
-        col_g = '추가발주' if '추가발주' in df_sheet.columns else df_sheet.columns[6]
+        # 2. 열 위치 강제 고정 (F:기존리오더, G:추가발주)
+        c_f = df_sheet.columns[5]
+        c_g = df_sheet.columns[6]
         
-        # 3. 데이터 전처리
-        df_sheet['상품명'] = df_sheet['상품명'].astype(str).str.strip()
-        df_sheet['옵션'] = df_sheet['옵션'].astype(str).str.strip()
-        df_sheet[col_f] = pd.to_numeric(df_sheet[col_f], errors='coerce').fillna(0)
-        df_sheet[col_g] = pd.to_numeric(df_sheet[col_g], errors='coerce').fillna(0)
+        # 3. 매칭을 위한 표준화 키 생성 (공백제거 + 대문자)
+        def make_std_key(name, opt):
+            return (str(name).strip().replace(" ", "") + "_" + str(opt).strip().replace(" ", "")).upper()
+
+        df_sheet['match_key'] = df_sheet.apply(lambda r: make_std_key(r['상품명'], r['옵션']), axis=1)
         
-        # 4. 상품별 합계 계산 (F + G)
-        df_sheet['리오더수량_합계'] = df_sheet[col_f] + df_sheet[col_g]
-        df_ref = df_sheet.groupby(['상품명', '옵션'])['리오더수량_합계'].sum().reset_index()
+        # 4. 숫자 변환 및 합산
+        df_sheet[c_f] = pd.to_numeric(df_sheet[c_f], errors='coerce').fillna(0)
+        df_sheet[c_g] = pd.to_numeric(df_sheet[c_g], errors='coerce').fillna(0)
+        df_sheet['total_sum'] = df_sheet[c_f] + df_sheet[c_g]
         
-        # 5. 기존 업로드 데이터와 병합
+        # 5. 딕셔너리로 변환 (중복 상품 합산 처리)
+        reorder_map = df_sheet.groupby('match_key')['total_sum'].sum().to_dict()
+        
+        # 6. 업로드된 파일에도 매칭 키 적용 후 데이터 삽입
+        df_uploaded['match_key'] = df_uploaded.apply(lambda r: make_std_key(r['상품명'], r['옵션']), axis=1)
+        
         if "리오더 수량" in df_uploaded.columns:
             df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
             
-        df_final = pd.merge(df_uploaded, df_ref, on=['상품명', '옵션'], how='left')
-        df_final = df_final.rename(columns={'리오더수량_합계': '리오더 수량'})
-        df_final['리오더 수량'] = df_final['리오더 수량'].fillna(0).astype(int)
+        df_uploaded['리오더 수량'] = df_uploaded['match_key'].map(reorder_map).fillna(0).astype(int)
         
-        return df_final
+        # 사용한 임시 키 삭제
+        return df_uploaded.drop(columns=['match_key'])
+        
     except Exception as e:
-        st.error(f"⚠️ 리오더 동기화 중 오류: {e}")
+        st.error(f"⚠️ 리오더 동기화 실패: {e}")
         return df_uploaded
 
 # --- [기타 보조 함수들] ---
@@ -97,25 +102,34 @@ def get_incoming_history():
         data = ws.get_all_records()
         if not data: return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
         df_h = pd.DataFrame(data)
-        df_h['상품명'] = df_h['상품명'].astype(str).str.strip(); df_h['옵션'] = df_h['옵션'].astype(str).str.strip()
+        df_h['상품명'] = df_h['상품명'].astype(str).str.strip()
+        df_h['옵션'] = df_h['옵션'].astype(str).str.strip()
         summary = df_h.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
         summary.rename(columns={'수량': '과거리오더 입고'}, inplace=True)
         return summary
-    except: return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
+    except: 
+        return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
 
 def get_realtime_reorder():
-    """ 실시간 딕셔너리 반환용 (기존 코드 호환용) """
+    """ 하단 로직 호환용 실시간 데이터 반환 """
     try:
         sh = get_sheet()
         ws = sh.worksheet("발주기록")
         data = ws.get_all_values()
         if len(data) <= 1: return {}
         df = pd.DataFrame(data[1:], columns=[c.strip() for c in data[0]])
-        c_f = df.columns[5]; c_g = df.columns[6]
-        df['total'] = pd.to_numeric(df[c_f], errors='coerce').fillna(0) + pd.to_numeric(df[c_g], errors='coerce').fillna(0)
-        return df.groupby(['상품명', '옵션'])['total'].sum().to_dict()
-    except: return {}
-
+        c_f, c_g = df.columns[5], df.columns[6]
+        
+        # 상품명+옵션 표준화 매칭
+        df['key'] = (df['상품명'].astype(str).str.strip().replace(" ", "") + "_" + 
+                     df['옵션'].astype(str).str.strip().replace(" ", "")).upper()
+        
+        df['total'] = pd.to_numeric(df[c_f], errors='coerce').fillna(0) + \
+                      pd.to_numeric(df[c_g], errors='coerce').fillna(0)
+        
+        return df.groupby('key')['total'].sum().to_dict()
+    except: 
+        return {}
 
 
 # --- 시트 연결 테스트 모드 (필요할 때만 아래 줄들의 #을 지워서 사용하세요) ---
