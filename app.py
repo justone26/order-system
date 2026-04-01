@@ -155,6 +155,32 @@ def sync_reorder_from_sheet(df_uploaded):
         return df_uploaded
 
 
+
+# ------------------------------------------------------------------
+# [4~5단계 보강] 시트에서 기존 미입고 잔량을 계산해 불러오는 함수
+# ------------------------------------------------------------------
+def get_existing_reorder_dict():
+    """발주기록 시트를 읽어 상품/옵션별 현재 미입고 잔량을 딕셔너리로 반환"""
+    try:
+        ws = get_sheet().worksheet("발주기록")
+        all_data = ws.get_all_values()
+        if len(all_data) <= 1: return {}
+        
+        df_history = pd.DataFrame(all_data[1:], columns=[c.strip() for c in all_data[0]])
+        qty_col = '추가발주' if '추가발주' in df_history.columns else ('추가' if '추가' in df_history.columns else df_history.columns[5])
+        
+        # 숫자 변환 및 합산
+        df_history[qty_col] = pd.to_numeric(df_history[qty_col], errors='coerce').fillna(0).astype(int)
+        
+        # 상품명+옵션을 키로 하여 잔량 합계 계산
+        summary = df_history.groupby(['상품명', '옵션'])[qty_col].sum().to_dict()
+        return summary
+    except:
+        return {}
+
+
+
+
 # --- 시트 연결 테스트 모드 (필요할 때만 아래 줄들의 #을 지워서 사용하세요) ---
 
 # st.sidebar.subheader("🔍 시트 연결 상태 점검")
