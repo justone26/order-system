@@ -804,74 +804,75 @@ if st.session_state.get('analyzed'):
             )
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 최종 잔량 상황판] - 공급처상품명 & 날짜검색 추가 버전
+# [7단계: 실시간 리오더 최종 잔량 상황판] - 레이아웃 및 전광판 최적화
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
 
     try:
-        # [1] 데이터 로드 (API 부하 방지를 위해 간결하게 호출)
+        # [1] 데이터 로드
         ws_v7 = get_sheet().worksheet("발주기록")
         all_v7 = ws_v7.get_all_values()
         
         if len(all_v7) > 1:
             df_raw_v7 = pd.DataFrame(all_v7[1:])
-            
-            # 10개 컬럼 매핑 (순서 엄수)
             col_names = ["발주시간", "상품명", "옵션", "공급처상품명", "가용재고", "기존리오더", "추가발주", "발주권장", "메모", "업체명"]
             df_raw_v7.columns = col_names[:len(df_raw_v7.columns)]
             
-            # 숫자 변환 및 공백 제거
+            # 데이터 전처리
             df_raw_v7["기존리오더"] = pd.to_numeric(df_raw_v7["기존리오더"], errors='coerce').fillna(0).astype(int)
             df_raw_v7["추가발주"] = pd.to_numeric(df_raw_v7["추가발주"], errors='coerce').fillna(0).astype(int)
             df_raw_v7["최종잔량"] = df_raw_v7["기존리오더"] + df_raw_v7["추가발주"]
             df_raw_v7["업체명"] = df_raw_v7["업체명"].astype(str).str.strip()
-            # 날짜 필터링용 날짜만 추출 (YYYY-MM-DD)
             df_raw_v7["날짜_순수"] = df_raw_v7["발주시간"].str.slice(0, 10)
 
-            # [2] 상단 필터 영역 (날짜 검색 추가)
-            f1, f2, f3, f4 = st.columns([1.2, 1.2, 1.2, 0.8])
+            # [2] 상단 필터 영역 (사장님 요청 순서: 기간 -> 업데이트 -> 검색 -> 업체)
+            f1, f2, f3, f4 = st.columns([1.2, 0.6, 1.5, 1.2])
             with f1:
-                # ⭐ 누락됐던 날짜 범위 검색 추가
                 default_start = (datetime.now(KST) - timedelta(days=30)).date()
-                d_range = st.date_input("🗓️ 기간 선택", value=(default_start, datetime.now(KST).date()), key="v7_date_range")
+                d_range = st.date_input("🗓️ 기간 선택", value=(default_start, datetime.now(KST).date()), key="v7_d_range")
             with f2:
-                v_list = sorted(df_raw_v7["업체명"].unique().tolist())
-                v_choice = st.selectbox("🏭 업체 필터", ["전체 업체"] + v_list, key="v7_v_filter")
+                st.write(""); st.write("") # 라벨 높이 맞춤
+                if st.button("🔄 업데이트", use_container_width=True, type="primary"):
+                    st.cache_data.clear()
+                    st.rerun()
             with f3:
-                q_v7 = st.text_input("🔍 상품/옵션 검색", key="v7_s_filter")
+                q_v7 = st.text_input("🔍 상품명/옵션 검색", placeholder="검색어를 입력하세요", key="v7_q_search")
             with f4:
-                st.write(""); st.write("")
-                if st.button("🔄 새로고침", use_container_width=True): st.rerun()
+                v_list = sorted(df_raw_v7["업체명"].unique().tolist())
+                v_choice = st.selectbox("🏭 업체 필터", ["전체 업체"] + v_list, key="v7_v_select")
 
             # [3] 필터링 적용
-            df_f = df_raw_v7[df_raw_v7["최종잔량"] > 0].copy() # 잔량이 남은 것만
-            
-            # 날짜 필터 적용
+            df_f = df_raw_v7[df_raw_v7["최종잔량"] > 0].copy()
             if isinstance(d_range, (list, tuple)) and len(d_range) == 2:
-                s_d, e_d = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
-                df_f = df_f[(df_f["날짜_순수"] >= s_d) & (df_f["날짜_순수"] <= e_d)]
-            
+                df_f = df_f[(df_f["날짜_순수"] >= d_range[0].strftime('%Y-%m-%d')) & (df_f["날짜_순수"] <= d_range[1].strftime('%Y-%m-%d'))]
             if v_choice != "전체 업체":
                 df_f = df_f[df_f["업체명"] == v_choice]
             if q_v7:
                 df_f = df_f[df_f["상품명"].str.contains(q_v7, case=False) | df_f["옵션"].str.contains(q_v7, case=False)]
 
-            # [4] 집계 및 데이터 정리
+            # [4] ⭐ 업체명 미입고 잔량 전광판 (Metrics)
             if not df_f.empty:
-                # 같은 상품/옵션은 최신 기록 기준으로 요약
+                st.write("### 📊 업체별 미입고 현황")
+                # 업체별 합산
+                df_v_sum = df_f.groupby("업체명")["최종잔량"].sum().reset_index().sort_values("최종잔량", ascending=False)
+                
+                # 4열로 전광판 배치
+                v_cols = st.columns(4)
+                for i, r in df_v_sum.iterrows():
+                    with v_cols[i % 4]:
+                        st.metric(label=r["업체명"], value=f"{r['최종잔량']:,} 개")
+                st.divider()
+
+                # [5] 상세 내역 테이블
+                st.write("#### 📋 상세 리스트")
                 df_final = df_f.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
                     "발주시간": "max",
                     "최종잔량": "last",
                     "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
                 }).sort_values(["발주시간", "업체명"], ascending=[False, True])
 
-                # 요약 수치
-                total_sum = df_final["최종잔량"].sum()
-                st.success(f"📊 선택 기간 내 미입고 총 잔량: **{total_sum:,}개**")
-
-                # [5] 데이터 테이블 출력 (순서: 날짜, 업체, 상품명, 옵션, 공급처상품명, 잔량, 메모)
                 st.dataframe(
                     df_final[["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "최종잔량", "메모"]],
                     use_container_width=True,
@@ -879,9 +880,7 @@ if st.session_state.get('analyzed'):
                     column_config={
                         "발주시간": st.column_config.TextColumn("🕒 발주시간", width=120),
                         "업체명": st.column_config.TextColumn("🏭", width=90),
-                        "상품명": st.column_config.TextColumn("상품명", width=180),
-                        "옵션": st.column_config.TextColumn("옵션", width=120),
-                        "공급처상품명": st.column_config.TextColumn("📦 공급처명", width=150), # ⭐ 추가됨
+                        "공급처상품명": st.column_config.TextColumn("📦 공급처명", width=150),
                         "최종잔량": st.column_config.NumberColumn("🔢 잔량", format="%d", width=70),
                         "메모": st.column_config.TextColumn("📝 비고", width=300)
                     }
@@ -892,4 +891,4 @@ if st.session_state.get('analyzed'):
             st.error("📡 '발주기록' 시트에 데이터가 없습니다.")
 
     except Exception as e:
-        st.error(f"❌ 7단계 화면 정리 오류: {e}")
+        st.error(f"❌ 7단계 레이아웃 수정 오류: {e}")
