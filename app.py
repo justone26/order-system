@@ -774,24 +774,36 @@ if st.session_state.get('analyzed'):
 
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 누적 상황판] - 8개 컬럼 구조 완벽 대응
+# [7단계: 실시간 리오더 누적 상황판] - 강제 컬럼 재지정 버전
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("🚀 7단계: 실시간 리오더 누적 및 상황판")
 
     try:
-        # [데이터 실시간 로드]
+        # [데이터 실시간 로드] - 캐시 없이 새로 가져오기 위해 직접 접근
         ws_v7 = get_sheet().worksheet("발주기록")
         all_v7 = ws_v7.get_all_values()
         
         if len(all_v7) > 1:
-            df_raw_v7 = pd.DataFrame(all_v7[1:])
+            # 첫 줄(헤더)을 제외한 데이터만 가져옴
+            raw_data = all_v7[1:]
+            df_raw_v7 = pd.DataFrame(raw_data)
             
-            # 🚨 에러 해결 포인트: 기존 10개에서 8개 컬럼명으로 수정
-            # 5단계 저장 순서: 발주시간, 상품명, 옵션, 공급처상품명, 기존리order, 추가발주, 메모, 업체명
-            df_raw_v7.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "기존리order", "추가발주", "메모", "업체명"]
+            # 🚨 [강제 해결 포인트] 
+            # 현재 시트에 저장된 실제 열 개수가 몇 개인지 확인하고 그에 맞춰 이름을 붙입니다.
+            actual_col_count = df_raw_v7.shape[1]
             
+            if actual_col_count == 8:
+                # 우리가 5단계에서 바꾼 8개 컬럼 구조일 때
+                df_raw_v7.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "기존리order", "추가발주", "메모", "업체명"]
+            elif actual_col_count == 10:
+                # 만약 옛날 데이터가 섞여서 10개로 나올 때 (임시 대응)
+                df_raw_v7.columns = ["발주시간", "상품명", "옵션", "공급처상품명", "가용", "기존", "추가발주", "권장", "메모", "업체명"]
+            else:
+                # 그 외의 경우 에러 방지를 위해 자동 이름 부여
+                df_raw_v7.columns = [f"컬럼_{i}" for i in range(actual_col_count)]
+
             # 숫자 변환 및 날짜 추출
             df_raw_v7["추가발주"] = pd.to_numeric(df_raw_v7["추가발주"], errors='coerce').fillna(0).astype(int)
             df_raw_v7["날짜"] = df_raw_v7["발주시간"].astype(str).str.slice(0, 10)
@@ -801,42 +813,36 @@ if st.session_state.get('analyzed'):
             df_today_stats = df_raw_v7[df_raw_v7["날짜"] == today_str]
 
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("📅 오늘 기준 날짜", today_str)
-            c2.metric("📦 오늘 발주 상품수", f"{df_today_stats['상품명'].nunique()}종")
-            c3.metric("🏭 오늘 발주 업체수", f"{df_today_stats['업체명'].nunique()}곳")
+            c1.metric("📅 오늘 날짜", today_str)
+            c2.metric("📦 오늘 상품수", f"{df_today_stats['상품명'].nunique()}종")
+            c3.metric("🏭 오늘 업체수", f"{df_today_stats['업체명'].nunique()}곳")
             c4.metric("🔢 오늘 총 추가발주", f"{int(df_today_stats['추가발주'].sum())}개")
             st.divider()
 
-            # [필터 레이아웃] 
+            # [필터 레이아웃]
             f1, f2, f3, f4 = st.columns([1.2, 0.8, 1.5, 1.5])
-            
             with f1:
-                d_range_v7 = st.date_input("🗓️ 1. 기간 선택", value=(today, today), key="v7_range")
+                d_range_v7 = st.date_input("🗓️ 1. 기간 선택", value=(datetime.now(KST).date(), datetime.now(KST).date()), key="v7_range")
             with f2:
                 st.write(""); st.write("") 
-                if st.button("📈 2. 데이터 갱신", use_container_width=True, type="primary"):
+                if st.button("📈 2. 데이터 새로고침", use_container_width=True, type="primary"):
                     st.rerun()
             with f3:
-                q_v7 = st.text_input("🔍 3. 상품명/옵션 검색", key="v7_search_q")
+                q_v7 = st.text_input("🔍 3. 검색 (상품/옵션)", key="v7_search_q")
             with f4:
                 v_list = sorted(df_raw_v7["업체명"].unique().tolist())
                 v_choice = st.selectbox("🏭 4. 업체 선택", ["전체 업체"] + v_list, key="v7_vendor_sel")
 
-            # --- [지능형 날짜 필터링] ---
-            curr_today = datetime.now(KST).strftime('%Y-%m-%d')
+            # --- [날짜 필터링] ---
             if isinstance(d_range_v7, (list, tuple)) and len(d_range_v7) == 2:
                 s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), d_range_v7[1].strftime('%Y-%m-%d')
-                v7_display_range = f"🗓️ {s_d} ~ {e_d}"
-            elif isinstance(d_range_v7, (list, tuple)) and len(d_range_v7) == 1:
-                s_d, e_d = d_range_v7[0].strftime('%Y-%m-%d'), curr_today
-                v7_display_range = f"🗓️ {s_d} ~ {e_d} (오늘까지)"
             else:
-                s_d, e_d = "0000-00-00", "9999-99-99"
-                v7_display_range = "🗓️ 전체 기간"
+                s_d = d_range_v7[0].strftime('%Y-%m-%d') if isinstance(d_range_v7, (list, tuple)) else d_range_v7.strftime('%Y-%m-%d')
+                e_d = datetime.now(KST).strftime('%Y-%m-%d')
 
-            df_filtered = df_raw_v7[(df_raw_v7["날짜"] >= s_d) & (df_raw_v7["날짜"] <= e_d)]
+            df_filtered = df_raw_v7[(df_raw_v7["날짜"] >= s_d) & (df_raw_v7["날짜"] <= e_d)].copy()
 
-            # 검색 필터 적용
+            # 상세 필터
             if q_v7:
                 df_filtered = df_filtered[df_filtered["상품명"].astype(str).str.contains(q_v7, case=False) | 
                                          df_filtered["옵션"].astype(str).str.contains(q_v7, case=False)]
@@ -844,21 +850,21 @@ if st.session_state.get('analyzed'):
                 df_filtered = df_filtered[df_filtered["업체명"] == v_choice]
 
             # 데이터 집계
-            df_final = df_filtered.groupby(["날짜", "업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
-                "추가발주": "sum",
-                "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
-            })
-
-            if not df_final.empty:
-                st.write(f"#### {v7_display_range} 실시간 집계 내역")
-                # 표시 순서: 날짜 -> 업체명 -> 상품명 -> 옵션 -> 공급처상품명 -> 추가발주 -> 메모
-                display_order = ["날짜", "업체명", "상품명", "옵션", "공급처상품명", "추가발주", "메모"]
-                st.dataframe(df_final[display_order], use_container_width=True, hide_index=True)
+            if not df_filtered.empty:
+                df_final = df_filtered.groupby(["날짜", "업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({
+                    "추가발주": "sum",
+                    "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))
+                })
+                
+                st.write(f"#### 🗓️ {s_d} ~ {e_d} 집계 내역")
+                st.dataframe(df_final, use_container_width=True, hide_index=True)
             else:
-                st.info("🔎 해당 조건에 맞는 데이터가 없습니다.")
+                st.info("🔎 조건에 맞는 데이터가 없습니다.")
 
         else:
             st.info("💡 저장된 발주 데이터가 없습니다.")
             
     except Exception as e:
-        st.error(f"📡 실시간 상황판 로딩 오류: {e}")
+        # 에러 발생 시 구체적인 원인을 파악하기 위해 로그 출력
+        st.error(f"📡 상황판 로딩 중 오류가 발생했습니다.")
+        st.info(f"상세 에러 내용: {e}")
