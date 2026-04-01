@@ -1,12 +1,12 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import time
 import io
 import streamlit.components.v1 as components
-import numpy as np
-
-# 🚨 한국 시간 및 오늘 날짜 설정
 from datetime import datetime, timedelta, timezone
+
+# 🚨 한국 시간 설정
 KST = timezone(timedelta(hours=9)) 
 current_today = datetime.now(KST).date()
 
@@ -17,17 +17,8 @@ if 'p' not in st.session_state: st.session_state.p = {}
 if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
 if 'upload_key' not in st.session_state: st.session_state.upload_key = 0
 
-# --- [새로고침 방지 스크립트] ---
-components.html(
-    """
-    <script>
-    window.onbeforeunload = function() {
-        return "데이터 분석 중입니다. 새로고침하면 작업 내용이 사라질 수 있습니다.";
-    };
-    </script>
-    """,
-    height=0,
-)
+# --- [새로고침 방지] ---
+components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
 
 st.set_page_config(layout="wide", page_title="저스트원 재고관리 v4.0")
 
@@ -41,60 +32,70 @@ def get_sheet():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         return client.open_by_key("1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg")
-    except Exception as e:
+    except:
         return None
 
-# --- [핵심 수정: 시트 데이터 강제 매칭 함수] ---
+# --- [핵심: 리오더 동기화 및 진단 함수] ---
 def sync_reorder_from_sheet(df_uploaded):
-    """ 
-    구글 시트 '발주기록'에서 데이터를 가져와 업로드된 엑셀에 붙여주는 함수
-    """
     try:
         sh = get_sheet()
-        if not sh: return df_uploaded
+        if not sh: 
+            st.error("❌ [진단] 구글 시트 연결 실패. Secrets 설정을 확인하세요.")
+            return df_uploaded
         
-        ws = sh.worksheet("발주기록")
-        all_data = ws.get_all_values()
-        
-        if len(all_data) <= 1: return df_uploaded
-        
-        # 1. 시트 데이터 로드 및 전처리 (공백 완벽 제거)
-        df_sheet = pd.DataFrame(all_data[1:], columns=[c.strip() for c in all_data[0]])
-        
-        # 2. 열 위치 강제 고정 (F:기존리오더, G:추가발주)
-        c_f = df_sheet.columns[5]
-        c_g = df_sheet.columns[6]
-        
-        # 3. 매칭을 위한 표준화 키 생성 (공백제거 + 대문자)
-        def make_std_key(name, opt):
-            return (str(name).strip().replace(" ", "") + "_" + str(opt).strip().replace(" ", "")).upper()
+        try:
+            ws = sh.worksheet("발주기록")
+        except:
+            st.error("❌ [진단] '발주기록' 탭을 찾을 수 없습니다.")
+            return df_uploaded
 
-        df_sheet['match_key'] = df_sheet.apply(lambda r: make_std_key(r['상품명'], r['옵션']), axis=1)
+        all_data = ws.get_all_values()
+        if len(all_data) <= 1: 
+            st.warning("⚠️ [진단] 시트에 데이터가 없습니다.")
+            return df_uploaded
         
-        # 4. 숫자 변환 및 합산
-        df_sheet[c_f] = pd.to_numeric(df_sheet[c_f], errors='coerce').fillna(0)
-        df_sheet[c_g] = pd.to_numeric(df_sheet[c_g], errors='coerce').fillna(0)
-        df_sheet['total_sum'] = df_sheet[c_f] + df_sheet[c_g]
-        
-        # 5. 딕셔너리로 변환 (중복 상품 합산 처리)
-        reorder_map = df_sheet.groupby('match_key')['total_sum'].sum().to_dict()
-        
-        # 6. 업로드된 파일에도 매칭 키 적용 후 데이터 삽입
-        df_uploaded['match_key'] = df_uploaded.apply(lambda r: make_std_key(r['상품명'], r['옵션']), axis=1)
-        
+        # 매칭 데이터 생성 (B:상품명, C:옵션, F:기존, G:추가)
+        reorder_map = {}
+        for row in all_data[1:]:
+            try:
+                name = str(row[1]).strip().replace(" ", "").upper()
+                opt = str(row[2]).strip().replace(" ", "").upper()
+                
+                def to_i(v):
+                    try: return int(float(str(v).replace(",", "")))
+                    except: return 0
+                
+                qty = to_i(row[5]) + to_i(row[6])
+                if qty > 0:
+                    key = f"{name}_{opt}"
+                    reorder_map[key] = reorder_map.get(key, 0) + qty
+            except:
+                continue
+
+        # 진단 메시지 출력
+        if not reorder_map:
+            st.info("ℹ️ [진단] 수량이 있는 품목을 찾지 못했습니다. F, G열을 확인하세요.")
+        else:
+            st.success(f"✅ [진단] 시트에서 {len(reorder_map)}개 품목 로드 완료!")
+
+        # 매칭 로직
         if "리오더 수량" in df_uploaded.columns:
             df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
-            
-        df_uploaded['리오더 수량'] = df_uploaded['match_key'].map(reorder_map).fillna(0).astype(int)
-        
-        # 사용한 임시 키 삭제
-        return df_uploaded.drop(columns=['match_key'])
-        
-    except Exception as e:
-        st.error(f"⚠️ 리오더 동기화 실패: {e}")
+
+        def do_match(r):
+            u_key = (str(r['상품명']).strip().replace(" ", "") + "_" + 
+                     str(r['옵션']).strip().replace(" ", "")).upper()
+            return reorder_map.get(u_key, 0)
+
+        df_uploaded['리오더 수량'] = df_uploaded.apply(do_match, axis=1)
         return df_uploaded
 
-# --- [기타 보조 함수들] ---
+    except Exception as e:
+        # 🚨 따옴표 에러 수정 완료!
+        st.error(f"🔥 [치명적 오류] 시스템 에러: {str(e)}")
+        return df_uploaded
+
+# --- [보조 함수] ---
 def get_incoming_history():
     try:
         sh = get_sheet() 
@@ -107,29 +108,7 @@ def get_incoming_history():
         summary = df_h.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
         summary.rename(columns={'수량': '과거리오더 입고'}, inplace=True)
         return summary
-    except: 
-        return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
-
-def get_realtime_reorder():
-    """ 하단 로직 호환용 실시간 데이터 반환 """
-    try:
-        sh = get_sheet()
-        ws = sh.worksheet("발주기록")
-        data = ws.get_all_values()
-        if len(data) <= 1: return {}
-        df = pd.DataFrame(data[1:], columns=[c.strip() for c in data[0]])
-        c_f, c_g = df.columns[5], df.columns[6]
-        
-        # 상품명+옵션 표준화 매칭
-        df['key'] = (df['상품명'].astype(str).str.strip().replace(" ", "") + "_" + 
-                     df['옵션'].astype(str).str.strip().replace(" ", "")).upper()
-        
-        df['total'] = pd.to_numeric(df[c_f], errors='coerce').fillna(0) + \
-                      pd.to_numeric(df[c_g], errors='coerce').fillna(0)
-        
-        return df.groupby('key')['total'].sum().to_dict()
-    except: 
-        return {}
+    except: return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
 
 
 
