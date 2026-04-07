@@ -595,49 +595,53 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ------------------------------------------------------------------
-# [5단계: 최종 발주 요약] - 실시간 잔량 동기화 및 KeyError 완벽 해결 버전
+# [5단계: 최종 발주 요약] - 기존 리오더 + 추가발주 합산 및 KeyError 완벽 해결
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📋 5단계: 최종 발주 리스트 요약")
 
     # [1] 데이터 로드 및 필수 열(clean_key) 생성
-    # 4단계 입고 실시간 반영을 위해 리오더 맵을 새로 읽어옵니다.
+    # 실시간 잔량(4단계 입고 반영분)을 가져옵니다.
     reorder_map_v5, _ = get_realtime_data_v4(datetime.now(KST).date())
     
-    # 원본 데이터를 복사하여 사용 (KeyError 방지를 위해 clean_key 재생성)
+    # 원본 복사 (KeyError 방지)
     df_v5 = st.session_state.df_raw.copy()
 
     def get_clean_key_v5(r):
         import unicodedata, re
-        # 전역변수 p['it'], p['op'] 사용
         n = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[item]))).upper().strip()
         o = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[opt]))).upper().strip()
         return n + o
 
-    # 데이터 전처리: clean_key 생성 및 수치 변환
+    # 데이터 전처리 및 수치화
     df_v5['clean_key'] = df_v5.apply(get_clean_key_v5, axis=1)
-    
     for col in [stk, avl, t3, t7]:
         df_v5[col] = pd.to_numeric(df_v5[col], errors='coerce').fillna(0).astype(int)
 
     # 품절 제외
     df_v5 = df_v5[~df_v5[s_out].astype(str).str.contains('품절', na=False)]
     
-    # 메모/추가발주 보관용 딕셔너리 확인
+    # 세션 상태 확인
     if '메모' not in df_v5.columns: df_v5['메모'] = ""
     if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
 
-    # ⭐ [핵심] 리오더 잔량 계산 및 제로화 (초과 입고 시 0으로 고정)
-    df_v5["리오더 총합"] = df_v5['clean_key'].map(reorder_map_v5).fillna(0).astype(int)
-    df_v5["리오더 총합"] = df_v5["리오더 총합"].clip(lower=0) 
+    # ---------------------------------------------------------
+    # ⭐ 핵심 로직: 기존 리오더와 추가 발주의 분리 및 합산
+    # ---------------------------------------------------------
+    # 1. 기존 리오더 잔량 (4단계까지 반영된 시트상의 수치)
+    df_v5["기존 리오더"] = df_v5['clean_key'].map(reorder_map_v5).fillna(0).astype(int).clip(lower=0)
 
-    # ⭐ [핵심] 발주권장 수량 재계산 (4단계와 로직 통일)
-    df_v5['일판매'] = df_v5.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
-    df_v5['발주권장'] = ((df_v5['일판매'] * (lt + ss)) - (df_v5[avl] + df_v5['리오더 총합'])).clip(lower=0).astype(int)
-    
-    # 사용자가 입력한 추가발주 값 매핑
+    # 2. 이번 회차 추가 발주 입력값 (사용자가 에디터에 넣은 값)
     df_v5['추가발주입력'] = df_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
+
+    # 3. 시각적 합계 (기존 + 추가) -> 7단계 전광판에 찍힐 최종 수치 미리보기
+    df_v5['총 리오더 합계'] = df_v5["기존 리오더"] + df_v5['추가발주입력']
+
+    # 4. 발주 권장 계산 (기존 리오더 잔량 기준)
+    df_v5['일판매'] = df_v5.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
+    df_v5['발주권장'] = ((df_v5['일판매'] * (lt + ss)) - (df_v5[avl] + df_v5["기존 리오더"])).clip(lower=0).astype(int)
+    
     df_v5['상태표시'] = df_v5['발주권장'].apply(lambda x: "🚨 긴급" if x > 0 else "✅ 정상")
 
     # [2] 검색 및 필터 UI
@@ -646,7 +650,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     with f2: s5_q = st.text_input("🔍 상품명/옵션 검색", key="v5_s")
     with f3: d5_d = st.date_input("🗓️ 발주 기록 날짜", datetime.now(KST).date(), key="v5_date")
 
-    # 필터링 적용
+    # 필터 적용
     df_v5_v = df_v5.copy()
     if s5_q:
         df_v5_v = df_v5_v[df_v5_v[item].astype(str).str.contains(s5_q, case=False) | df_v5_v[opt].astype(str).str.contains(s5_q, case=False)]
@@ -656,7 +660,8 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     # [3] 컬럼 매핑 및 데이터 에디터
     v_map = {
         "상태표시": "상태", item: "상품명", opt: "옵션", v_it: "공급처상품명",
-        avl: "가용재고", "리오더 총합": "리오더잔량", "추가발주입력": "추가발주", "발주권장": "발주권장", "메모": "메모"
+        avl: "가용재고", "기존 리오더": "기존잔량", "추가발주입력": "추가발주", 
+        "총 리오더 합계": "총합계", "발주권장": "발주권장", "메모": "메모"
     }
     actual_cols = [c for c in v_map.keys() if c in df_v5_v.columns]
 
@@ -665,21 +670,22 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         st.data_editor(
             df_ed, use_container_width=True, hide_index=True, key="v5_edit",
             column_config={
-                "추가발주": st.column_config.NumberColumn("➕ 추가발주", min_value=0),
-                "리오더잔량": st.column_config.NumberColumn("📦 리오더잔량", format="%d"),
+                "추가발주": st.column_config.NumberColumn("➕ 추가발주", min_value=0, help="새로 발주할 수량을 입력하세요."),
+                "기존잔량": st.column_config.NumberColumn("📦 기존잔량", format="%d", help="이미 발주되어 입고 대기 중인 수량입니다."),
+                "총합계": st.column_config.NumberColumn("📊 총합계", format="%d", help="기존잔량 + 추가발주 수량입니다."),
                 "발주권장": st.column_config.NumberColumn("🚨 발주권장", format="%d"),
                 "메모": st.column_config.TextColumn("📝 메모")
             },
             disabled=[c for c in v_map.values() if c not in ["추가발주", "메모"]]
         )
         
-        if st.form_submit_button("✅ 1. 추가발주 및 메모 확정 (저장 전 필수)", use_container_width=True):
+        if st.form_submit_button("✅ 1. 수량 확정 및 화면 갱신 (저장 전 필수)", use_container_width=True):
             edits = st.session_state["v5_edit"].get("edited_rows", {})
             for r_idx, val in edits.items():
                 idx = df_v5_v.index[int(r_idx)]
                 if "추가발주" in val: st.session_state.add_order_dict[idx] = int(val["추가발주"])
                 if "메모" in val: st.session_state.df_raw.at[idx, "메모"] = str(val["메모"])
-            st.success("✅ 확정되었습니다! 구글 시트 저장을 진행해 주세요."); time.sleep(0.5); st.rerun()
+            st.success("수량이 확정되었습니다. '총합계'를 확인 후 구글 시트에 저장하세요."); time.sleep(0.5); st.rerun()
 
     # [4] 저장 및 다운로드 버튼
     c_save, c_down = st.columns(2)
@@ -696,7 +702,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                         row = [
                             now_s, str(st.session_state.df_raw.at[i, item]), str(st.session_state.df_raw.at[i, opt]), 
                             str(st.session_state.df_raw.at[i, v_it]), int(df_v5.at[i, avl]), 
-                            int(df_v5.at[i, '리오더 총합']), int(st.session_state.add_order_dict[i]), 
+                            int(df_v5.at[i, '기존 리오더']), int(st.session_state.add_order_dict[i]), 
                             int(df_v5.at[i, '발주권장']), str(memo_val), str(st.session_state.df_raw.at[i, vnd])
                         ]
                         rows.append(row)
