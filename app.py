@@ -52,6 +52,30 @@ def get_sheet():
         return None  # 연결 실패 시 None 반환 -> 여기서 'NoneType' 에러 발생
 
 
+
+def get_sheet():
+    # 구글 시트 접근 권한 설정
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    
+    try:
+        # 1. Streamlit Secrets에서 인증 정보 가져오기
+        creds = ServiceAccountCredentials.from_json_keyfile_info(st.secrets["gcp_service_account"], scope)
+        client = gspread.authorize(creds)
+        
+        # 2. 구글 시트 열기 (사장님 시트 이름으로 수정 필수!)
+        # 예: client.open("재고관리_발주서")
+        return client.open("여기에_구글_시트_이름_정확히_입력") 
+        
+    except Exception as e:
+        st.error(f"📡 시트 연결 실패: {e}")
+        return None
+
+
 # --- [핵심: 리오더 동기화 및 진단] ---
 def sync_reorder_from_sheet(df_uploaded):
     try:
