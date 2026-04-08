@@ -334,7 +334,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     
     df_v5[['알림표기', 'sort_order']] = df_v5.apply(lambda x: pd.Series(set_status_logic(x)), axis=1)
 
-    # [3] 필터 UI - ⭐ index=1 설정을 통해 "🚨 긴급발주 상품"을 첫 로딩 기본값으로!
+    # [3] 필터 UI - ⭐ index=1 설정을 통해 "🚨 긴급발주!
     f1, f2 = st.columns([1, 2])
     with f1: 
         m5_f = st.selectbox(
