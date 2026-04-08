@@ -138,40 +138,75 @@ with tab1:
             df = sync_reorder_from_sheet(df)
             st.session_state.df_raw = df.fillna("")
 
-    # --- 2~3단계 ---
-    if st.session_state.df_raw is not None:
-        st.divider()
-        st.subheader("📋 2단계: 매핑 및 분석")
-        cols = st.session_state.df_raw.columns.tolist()
-        
-        def auto_idx(keys, exclude=None):
-            for i, c in enumerate(cols):
-                if exclude and any(e in str(c) for e in exclude): continue
-                if any(k in str(c) for k in keys): return i
-            return 0
+# ------------------------------------------------------------------
+# [2단계: 컬럼 매핑 정보 설정] - 순수 매핑만 담당
+# ------------------------------------------------------------------
+if st.session_state.df_raw is not None:
+    st.divider()
+    st.subheader("⚙️ 2단계: 엑셀 컬럼 매핑")
+    
+    cols = st.session_state.df_raw.columns.tolist()
+    
+    with st.expander("📌 컬럼 매핑 설정 (클릭하여 펼치기)", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            s_out = st.selectbox("🚦 판매상태 (품절확인용)", cols, index=0)
+            vnd = st.selectbox("🏢 공급처(업체명)", cols, index=1)
+            item = st.selectbox("📦 상품명", cols, index=2)
+        with c2:
+            opt = st.selectbox("🎨 옵션명", cols, index=3)
+            v_it = st.selectbox("🆔 공급처 상품명/코드", cols, index=4)
+            stk = st.selectbox("🏠 정상재고", cols, index=5)
+        with c3:
+            avl = st.selectbox("✅ 가용재고", cols, index=6)
+            t3 = st.selectbox("🔥 3일 발주합계", cols, index=len(cols)-2)
+            t7 = st.selectbox("📊 7일 발주합계", cols, index=len(cols)-1)
 
-        cl, cr = st.columns(2)
-        with cl:
-            it = st.selectbox("📦 상품명", cols, index=auto_idx(['상품명']), key="sel_it")
-            op = st.selectbox("🎨 옵션", cols, index=auto_idx(['옵션']), key="sel_op")
-            vn = st.selectbox("🏭 공급처", cols, index=auto_idx(['공급처']), key="sel_vn")
-            vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(['공급처상품명']), key="sel_vi")
-            so = st.selectbox("🚫 품절 여부", cols, index=auto_idx(['품절']), key="sel_so")
-        with cr:
-            av = st.selectbox("✅ 가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
-            stk = st.selectbox("📦 정상재고", cols, index=auto_idx(['정상재고']), key="sel_stk")
-            t3 = st.selectbox("🔥 3일 판매", cols, index=auto_idx(['3일'], exclude=['7일']), key="sel_t3")
-            t7 = st.selectbox("📅 7일 판매", cols, index=auto_idx(['7일'], exclude=['3일']), key="sel_t7")
-            reg = st.selectbox("📆 등록일", cols, index=auto_idx(['등록일']), key="sel_reg")
+        st.session_state.p = {
+            'so': s_out, 'vn': vnd, 'it': item, 'op': opt, 'vi': v_it,
+            'st': stk, 'av': avl, 't3': t3, 't7': t7,
+            'lt': 3, 'ss': 2  # 기본 리드타임/안전재고 설정
+        }
 
-        s1, s2 = st.columns(2)
-        lt = s1.number_input("⏳ 리드타임", value=7)
-        ss = s2.number_input("🛡️ 안전재고", value=3)
+# ------------------------------------------------------------------
+# [3단계: 데이터 분석 및 전처리] - 실제 계산 및 '품절' 문자 제거
+# ------------------------------------------------------------------
+if st.session_state.get('p'):
+    st.divider()
+    st.subheader("📈 3단계: 데이터 분석 및 발주 권장 계산")
+    
+    if st.button("🚀 데이터 분석 실행", use_container_width=True, type="primary"):
+        with st.spinner("데이터를 정제하고 권장 수량을 계산 중입니다..."):
+            df = st.session_state.df_raw.copy()
+            p = st.session_state.p
 
-        if st.button("📊 데이터 분석 시작", use_container_width=True, type="primary"):
-            st.session_state.p = {'it':it, 'op':op, 'vn':vn, 'vi':vi, 'so':so, 'av':av, 'st':stk, 't3':t3, 't7':t7, 'reg':reg, 'lt':lt, 'ss':ss}
+            # [핵심] 숫자 컬럼 강제 변환 (품절 등 문자열은 0으로 처리)
+            num_cols = [p['st'], p['av'], p['t3'], p['t7']]
+            for col in num_cols:
+                # 숫자가 아닌 값(품절 등)은 NaN으로 만든 뒤 0으로 채움
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+
+            # 일판매 및 권장수량 기초 계산
+            # 7일 판매량이 있으면 7일 기준, 없으면 3일 기준
+            df['일판매량'] = df.apply(lambda r: round(r[p['t7']]/7, 2) if r[p['t7']] > 0 else round(r[p['t3']]/3, 2), axis=1)
+            
+            # 매칭용 클린키 생성
+            df['clean_key'] = df.apply(lambda r: super_clean(str(r[p['it']])) + super_clean(str(r[p['op']])), axis=1)
+            
+            # 분석 완료 상태 저장
+            st.session_state.df_raw = df
             st.session_state.analyzed = True
-            st.rerun()
+            st.success("✅ 분석이 완료되었습니다! 아래 단계에서 입고 및 발주를 진행하세요.")
+
+    # 분석이 완료된 후 요약 지표 노출
+    if st.session_state.get('analyzed'):
+        c1, c2, c3 = st.columns(3)
+        total_items = len(st.session_state.df_raw)
+        sold_out_count = len(st.session_state.df_raw[st.session_state.df_raw[p['so']].astype(str).str.contains("품절")])
+        c1.metric("📦 전체 상품수", f"{total_items}개")
+        c2.metric("🚫 품절 상품수", f"{sold_out_count}개")
+        c3.metric("💰 분석 상태", "완료 (정상)")
+
 
 # ------------------------------------------------------------------
 # [4단계: 데이터 편집 및 재고 관리] - 초과 입고 제로화 및 차감 기록
