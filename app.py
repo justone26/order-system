@@ -7,7 +7,6 @@ import re  # 정규표현식 (문자열 치환용)
 import unicodedata
 import streamlit.components.v1 as components
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta, timezone
 
 # 🚨 한국 시간 설정
@@ -26,60 +25,17 @@ components.html("<script>window.onbeforeunload = function() { return '변경사�
 
 st.set_page_config(layout="wide", page_title="저스트원 재고관리 v4.0")
 
-# --- [공통 함수: 구글 시트 연동] ---
+# --- [공통 함수: 구글 시트 연동 - 최신 통합 버전] ---
 def get_sheet():
     try:
-        from oauth2client.service_account import ServiceAccountCredentials
-        import gspread
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
+        # oauth2client 대신 gspread 내장 인증 방식 사용 (속도 및 안정성 향상)
+        client = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+        
+        # 사장님이 주신 시트 Key로 직접 연결
         return client.open_by_key("1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg")
-    except:
-        return None
-
-
-def get_sheet():
-    try:
-        # secrets에서 인증 정보 로드
-        creds = ServiceAccountCredentials.from_json_keyfile_info(st.secrets["gcp_service_account"], scope)
-        client = gspread.authorize(creds)
-        # 🚨 여기서 시트 이름이 정확해야 합니다!
-        return client.open("사장님_구글_시트_이름") 
     except Exception as e:
-        st.error(f"시트 연결 실패: {e}")
-        return None  # 연결 실패 시 None 반환 -> 여기서 'NoneType' 에러 발생
-
-
-
-def get_sheet():
-    # 1. 권한 범위 설정
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive.file",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    
-    try:
-        # 2. 인증 정보 가져오기 (함수명 확인: from_json_keyfile_dict)
-        # st.secrets["gcp_service_account"]가 딕셔너리 형태여야 합니다.
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(
-            st.secrets["gcp_service_account"], 
-            scope
-        )
-        client = gspread.authorize(creds)
-        
-        # 3. 구글 시트 열기 (실제 시트 이름으로 정확히 수정하세요!)
-        # 예: return client.open("내발주관리시트")
-        return client.open("여기에_구글_시트_이름_입력") 
-        
-    except Exception as e:
-        # 여기서 에러 메시지를 상세히 출력해서 원인을 잡습니다.
-        st.error(f"📡 시트 연결 실패 상세: {e}")
+        st.error(f"📡 시트 연결 실패: {e}")
         return None
-
 
 # --- [핵심: 리오더 동기화 및 진단] ---
 def sync_reorder_from_sheet(df_uploaded):
@@ -96,134 +52,7 @@ def sync_reorder_from_sheet(df_uploaded):
             st.warning("⚠️ '발주기록' 시트에 데이터가 없습니다.")
             return df_uploaded
             
-        reorder_map = {}
-        # 시트 데이터 루프 (B:상품명, C:옵션, F:기존, G:추가)
-        for row in all_data[1:]:
-            try:
-                # 1. 시트 데이터 표준화 (공백 제거, 대문자)
-                s_name = str(row[1]).strip().replace(" ", "").upper()
-                s_opt = str(row[2]).strip().replace(" ", "").upper()
-                
-                if not s_name: continue
-                
-                # 2. 숫자 변환 (쉼표 제거 및 에러 방지)
-                def clean_num(v):
-                    try:
-                        return int(float(str(v).replace(",", "").strip()))
-                    except:
-                        return 0
-                
-                # F열(index 5) + G열(index 6) 합산
-                qty = clean_num(row[5]) + clean_num(row[6])
-                
-                if qty > 0:
-                    key = s_name + "_" + s_opt
-                    reorder_map[key] = reorder_map.get(key, 0) + qty
-            except:
-                continue
-
-        # 3. 진단 메시지 출력
-        if not reorder_map:
-            st.info("ℹ️ 시트에서 수량이 입력된 상품을 찾지 못했습니다. (F, G열 확인)")
-        else:
-            st.success("✅ 시트에서 총 " + str(len(reorder_map)) + "건의 리오더 품목을 로드했습니다.")
-
-        # 4. 업로드 파일 매칭
-        if "리오더 수량" in df_uploaded.columns:
-            df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
-
-        def get_final_qty(r):
-            # 업로드 파일의 상품명/옵션도 공백 제거 후 비교
-            u_key = (str(r['상품명']).strip().replace(" ", "") + "_" + 
-                     str(r['옵션']).strip().replace(" ", "")).upper()
-            return reorder_map.get(u_key, 0)
-
-        df_uploaded['리오더 수량'] = df_uploaded.apply(get_final_qty, axis=1)
-        
-        return df_uploaded
-
-    except Exception as e:
-        # 🚨 f-string 오류 방지를 위해 일반 결합 사용
-        st.error("시스템 오류 발생: " + str(e))
-        return df_uploaded
-
-# --- [보조 함수] ---
-def get_incoming_history():
-    try:
-        sh = get_sheet() 
-        ws = sh.worksheet("입고기록")
-        data = ws.get_all_records()
-        if not data: return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
-        df_h = pd.DataFrame(data)
-        df_h.columns = [c.strip() for c in df_h.columns]
-        df_h['상품명'] = df_h['상품명'].astype(str).str.strip()
-        df_h['옵션'] = df_h['옵션'].astype(str).str.strip()
-        summary = df_h.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
-        summary.rename(columns={'수량': '과거리오더 입고'}, inplace=True)
-        return summary
-    except: 
-        return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
-        
-
-def get_realtime_data_v4(target_date):
-    try:
-        import unicodedata
-        import re
-        
-        # ⭐ 모든 공백과 특수문자를 제거하여 순수 글자만 남기는 함수
-        def super_clean_v4(t):
-            if not t: return ""
-            t = unicodedata.normalize('NFC', str(t))
-            # 한글, 영문, 숫자만 남기고 싹 제거
-            return re.sub(r'[^a-zA-Z0-9가-힣]', '', t).upper().strip()
-
-        sh = get_sheet()
-        
-        # 1. 발주기록 매핑 (리오더 잔량)
-        ws_v7 = sh.worksheet("발주기록")
-        d7 = ws_v7.get_all_values()
-        r_map = {}
-        if len(d7) > 1:
-            for row in d7[1:]:
-                try:
-                    # ⭐ [상품명 + 옵션] 순서로 합침
-                    key = super_clean_v4(row[1]) + super_clean_v4(row[2])
-                    val = int(float(str(row[5]).replace(",", ""))) if row[5] else 0
-                    add = int(float(str(row[6]).replace(",", ""))) if row[6] else 0
-                    if (val + add) != 0:
-                        r_map[key] = r_map.get(key, 0) + (val + add)
-                except: continue
-
-        # 2. 입고기록 매핑 (과거 입고)
-        ws_h = sh.worksheet("입고기록")
-        dh = ws_h.get_all_values()
-        h_map = {}
-        t_str = target_date.strftime('%Y-%m-%d')
-        
-        if len(dh) > 1:
-            for row_h in dh[1:]:
-                try:
-                    # 날짜 비교 (시간 무관하게 날짜만 포함되면 OK)
-                    if t_str in str(row_h[0]):
-                        # ⭐ 동일하게 [상품명 + 옵션] 합침
-                        h_key = super_clean_v4(row_h[1]) + super_clean_v4(row_h[2])
-                        qty = int(float(str(row_h[3]).replace(",", "")))
-                        h_map[h_key] = h_map.get(h_key, 0) + qty
-                except: continue
-                
-        return r_map, h_map
-    except Exception as e:
-        return {}, {}
-
-def sync_reorder_from_sheet(df_uploaded):
-    try:
-        sh = get_sheet()
-        if not sh: return df_uploaded
-        ws = sh.worksheet("발주기록")
-        all_data = ws.get_all_values()
-        if len(all_data) <= 1: return df_uploaded
-            
-        # 1. 헤더 위치 자동 찾기 (날짜 칸이 어디 있든 상관없음)
+        # 1. 헤더 위치 자동 찾기
         header = [str(h).strip().replace(" ", "") for h in all_data[0]]
         idx_name = next((i for i, h in enumerate(header) if "상품명" in h), 1)
         idx_opt = next((i for i, h in enumerate(header) if "옵션" in h), 2)
@@ -231,15 +60,12 @@ def sync_reorder_from_sheet(df_uploaded):
         idx_g = next((i for i, h in enumerate(header) if "추가" in h), 6)
 
         reorder_map = {}
-        import unicodedata
-        import re
-
-        # 2. 시트 데이터 정리 (특수문자 싹 제거하고 알맹이 글자만 추출)
+        # 2. 시트 데이터 정리 (특수문자 제거 후 알맹이 글자만 추출)
         for row in all_data[1:]:
             try:
                 def super_clean(t):
                     t = unicodedata.normalize('NFC', str(t))
-                    return re.sub(r'[^a-zA-Z0-9가-힣]', '', t).upper()
+                    return re.sub(r'[^a-zA-Z0-9가-힣]', '', t).upper().strip()
 
                 s_name = super_clean(row[idx_name])
                 s_opt = super_clean(row[idx_opt])
@@ -253,19 +79,17 @@ def sync_reorder_from_sheet(df_uploaded):
                 if qty > 0:
                     key = s_name + "_" + s_opt
                     reorder_map[key] = reorder_map.get(key, 0) + qty
-            except:
-                continue
+            except: continue
 
-        # 3. 업로드된 엑셀과 매칭 (글자가 포함만 되어도 매칭)
+        # 3. 업로드된 파일 매칭
         if "리오더 수량" in df_uploaded.columns:
             df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
 
         def final_match(r):
-            u_name = re.sub(r'[^a-zA-Z0-9가-힣]', '', str(r['상품명'])).upper()
-            u_opt = re.sub(r'[^a-zA-Z0-9가-힣]', '', str(r['옵션'])).upper()
+            u_name = re.sub(r'[^a-zA-Z0-9가-힣]', '', str(r['상품명'])).upper().strip()
+            u_opt = re.sub(r'[^a-zA-Z0-9가-힣]', '', str(r['옵션'])).upper().strip()
             u_key = u_name + "_" + u_opt
             
-            # 1순위: 완벽 일치 / 2순위: 포함 관계 확인
             if u_key in reorder_map: return reorder_map[u_key]
             for k, v in reorder_map.items():
                 if u_name in k and u_opt in k: return v
@@ -273,55 +97,77 @@ def sync_reorder_from_sheet(df_uploaded):
 
         df_uploaded['리오더 수량'] = df_uploaded.apply(final_match, axis=1)
         
-        # 결과 리포트
         matched_cnt = (df_uploaded['리오더 수량'] > 0).sum()
         if matched_cnt > 0:
-            st.success(f"✅ 날짜 칸 무시 성공! {matched_cnt}건의 수량을 매칭했습니다.")
+            st.success(f"✅ 시트에서 총 {len(reorder_map)}건 로드, {matched_cnt}건 매칭 완료!")
         else:
-            st.warning("⚠️ 시트에서 101개를 읽었으나 엑셀과 이름이 달라 매칭 실패했습니다.")
+            st.warning("⚠️ 시트 데이터를 읽었으나 엑셀과 매칭되는 품목이 없습니다.")
             
-        return df_uploaded
-    except Exception as e:
-        st.error(f"매칭 오류: {str(e)}")
-        return df_uploaded
-
-        # 3. 매칭 데이터 생성
-        reorder_map = {}
-        for i, row in enumerate(all_data[1:]):
-            # 상품명(B), 옵션(C), 기존리오더(F), 추가발주(G)
-            name = str(row[1]).strip().replace(" ", "").upper()
-            opt = str(row[2]).strip().replace(" ", "").upper()
-            
-            def to_int(v):
-                try: return int(float(str(v).replace(",", "")))
-                except: return 0
-            
-            qty = to_int(row[5]) + to_int(row[6])
-            if qty > 0:
-                key = f"{name}_{opt}"
-                reorder_map[key] = reorder_map.get(key, 0) + qty
-
-        # 4. 결과 보고
-        if not reorder_map:
-            st.info("ℹ️ [진단] 시트에서 수량이 0보다 큰 상품을 하나도 찾지 못했습니다. F, G열을 확인하세요.")
-        else:
-            st.success(f"✅ [진단] 시트에서 총 {len(reorder_map)}개의 리오더 품목을 읽어왔습니다.")
-
-        # 5. 업로드 파일과 매칭
-        if "리오더 수량" in df_uploaded.columns:
-            df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
-
-        def match_val(r):
-            u_key = (str(r['상품명']).strip().replace(" ", "") + "_" + 
-                     str(r['옵션']).strip().replace(" ", "")).upper()
-            return reorder_map.get(u_key, 0)
-
-        df_uploaded['리오더 수량'] = df_uploaded.apply(match_val, axis=1)
         return df_uploaded
 
     except Exception as e:
-        st.error(f"🔥 [치명적 오류] 시스템 에러 발생: {e}")
+        st.error(f"시스템 오류 발생: {e}")
         return df_uploaded
+
+# --- [보조 함수: 입고 및 실시간 데이터] ---
+def get_incoming_history():
+    try:
+        sh = get_sheet() 
+        if not sh: return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
+        ws = sh.worksheet("입고기록")
+        data = ws.get_all_records()
+        if not data: return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
+        df_h = pd.DataFrame(data)
+        df_h.columns = [c.strip() for c in df_h.columns]
+        summary = df_h.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+        summary.rename(columns={'수량': '과거리오더 입고'}, inplace=True)
+        return summary
+    except: 
+        return pd.DataFrame(columns=['상품명', '옵션', '과거리오더 입고'])
+
+def get_realtime_data_v4(target_date):
+    try:
+        sh = get_sheet()
+        if not sh: return {}, {}
+        
+        def super_clean_v4(t):
+            t = unicodedata.normalize('NFC', str(t))
+            return re.sub(r'[^a-zA-Z0-9가-힣]', '', t).upper().strip()
+
+        # 1. 발주기록 매핑
+        ws_v7 = sh.worksheet("발주기록")
+        d7 = ws_v7.get_all_values()
+        r_map = {}
+        if len(d7) > 1:
+            for row in d7[1:]:
+                try:
+                    key = super_clean_v4(row[1]) + super_clean_v4(row[2])
+                    val = int(float(str(row[5]).replace(",", ""))) if row[5] else 0
+                    add = int(float(str(row[6]).replace(",", ""))) if row[6] else 0
+                    if (val + add) != 0:
+                        r_map[key] = r_map.get(key, 0) + (val + add)
+                except: continue
+
+        # 2. 입고기록 매핑
+        ws_h = sh.worksheet("입고기록")
+        dh = ws_h.get_all_values()
+        h_map = {}
+        t_str = target_date.strftime('%Y-%m-%d')
+        if len(dh) > 1:
+            for row_h in dh[1:]:
+                try:
+                    if t_str in str(row_h[0]):
+                        h_key = super_clean_v4(row_h[1]) + super_clean_v4(row_h[2])
+                        qty = int(float(str(row_h[3]).replace(",", "")))
+                        h_map[h_key] = h_map.get(h_key, 0) + qty
+                except: continue
+        return r_map, h_map
+    except:
+        return {}, {}
+
+# --- 이후 메인 로직 (UI 구성 및 실행 코드) ---
+# st.title("저스트원 재고관리 시스템")
+# ... 나머지 UI 코드 ...
         
 
 # --- 시트 연결 테스트 모드 (필요할 때만 아래 줄들의 #을 지워서 사용하세요) ---
