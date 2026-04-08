@@ -298,38 +298,38 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
                 
 # ==================================================================
-# [5단계: 최종 발주 요약 및 저장]
+# [5단계: 최종 발주 요약 및 저장] - 지정된 순서 적용
 # ==================================================================
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📋 5단계: 최종 발주 리스트 요약")
-    st.info("💡 추가발주 수량과 메모를 입력한 후 [1. 수량 및 메모 확정] -> [2. 구글 시트 저장] 순으로 진행하세요.")
 
-    # [1] 실시간 기존 리오더 잔량 로드
+    # [1] 데이터 준비 및 실시간 잔량 매핑
     reorder_map_v5, _ = get_realtime_data_v4(datetime.now(KST).date())
     df_v5 = st.session_state.df_raw.copy()
 
-    # 숫자 변환 및 키 생성
+    # 데이터 정제 (숫자 변환 및 키 생성)
     for col in [stk, avl, t3, t7]:
-        df_v5[col] = pd.to_numeric(df_v5[col], errors='coerce').fillna(0).astype(int)
+        if col in df_v5.columns:
+            df_v5[col] = pd.to_numeric(df_v5[col], errors='coerce').fillna(0).astype(int)
 
     def get_clean_key_v5(r):
         import unicodedata, re
-        n = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[item]))).upper().strip()
-        o = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[opt]))).upper().strip()
+        n = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r.get(item, "")))).upper().strip()
+        o = re.sub(r'[^a-zA-Z0-9가-힣] ', '', unicodedata.normalize('NFC', str(r.get(opt, "")))).upper().strip()
         return n + o
     df_v5['clean_key'] = df_v5.apply(get_clean_key_v5, axis=1)
     
-    # [2] 계산 열 구성
-    df_v5["기존리오더"] = df_v5['clean_key'].map(reorder_map_v5).fillna(0).astype(int)
+    # [2] 계산 열 생성 (화면 표시용)
+    df_v5["리오더잔량"] = df_v5['clean_key'].map(reorder_map_v5).fillna(0).astype(int)
     df_v5['추가발주입력'] = df_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
-    df_v5['총합계'] = df_v5["기존리오더"] + df_v5['추가발주입력']
-    df_v5['권장발주'] = (df_v5[t7] - df_v5[avl]).apply(lambda x: x if x > 0 else 0)
+    df_v5['총합계'] = df_v5["리오더잔량"] + df_v5['추가발주입력']
+    df_v5['권장발주'] = (df_v5[t7] - df_v5[avl]).apply(lambda x: x if x > 0 else 0) if (t7 in df_v5.columns and avl in df_v5.columns) else 0
 
-    # 상단 필터
+    # 상단 필터 UI
     f1, f2 = st.columns([1, 2])
-    with f1: m5_f = st.selectbox("🚦 상태 필터", ["✅ 전체보기", "🚨 추가발주 입력됨"], key="v5_filter_opt")
-    with f2: s5_q = st.text_input("🔍 상품명/옵션 검색", key="v5_search_input")
+    with f1: m5_f = st.selectbox("🚦 상태 필터", ["✅ 전체보기", "🚨 추가발주 입력됨"], key="v5_status_filter")
+    with f2: s5_q = st.text_input("🔍 상품명/옵션 검색", key="v5_search_bar")
 
     df_v5_v = df_v5.copy()
     if s5_q:
@@ -337,58 +337,79 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     if m5_f == "🚨 추가발주 입력됨": 
         df_v5_v = df_v5_v[df_v5_v['추가발주입력'] > 0]
 
-    # [3] 데이터 에디터 (입력 화면)
-    with st.form("v5_final_order_form"):
-        v_map = {item: "상품명", opt: "옵션", avl: "가용재고", "기존리오더": "기존리오더", "추가발주입력": "추가발주", "총합계": "총합계", "권장발주": "권장발주", "메모": "메모"}
-        actual_cols = [item, opt, avl, "기존리오더", "추가발주입력", "총합계", "권장발주", "메모"]
+    # --- [3. 에디터 폼: 사장님 지정 순서 적용] ---
+    with st.form("v5_ordered_form"):
+        # 열 순서 매핑 (사장님 요청 순서)
+        # 상태 -> 공급처 -> 상품명 -> 옵션 -> 공급처상품명 -> 가용재고 -> 리오더잔량 -> 추가발주 -> 총합계 -> 권장발주 -> 메모
+        v_map = {
+            vnd: "공급처", item: "상품명", opt: "옵션", v_it: "공급처상품명",
+            avl: "가용재고", "리오더잔량": "리오더잔량", "추가발주입력": "추가발주",
+            "총합계": "총합계", "권장발주": "권장발주", "메모": "메모"
+        }
         
-        df_ed = df_v5_v[actual_cols].rename(columns=v_map)
+        # 없는 열 자동 생성 (KeyError 방지)
+        target_order = [vnd, item, opt, v_it, avl, "리오더잔량", "추가발주입력", "총합계", "권장발주", "메모"]
+        for c in target_order:
+            if c not in df_v5_v.columns:
+                df_v5_v[c] = "" if c == "메모" else 0
+
+        df_ed = df_v5_v[target_order].rename(columns=v_map)
+        
         st.data_editor(
-            df_ed, use_container_width=True, hide_index=True, key="v5_main_editor",
+            df_ed, use_container_width=True, hide_index=True, key="v5_editor_final",
             column_config={
                 "추가발주": st.column_config.NumberColumn("➕ 추가발주", min_value=0),
-                "기존리오더": st.column_config.NumberColumn("📦 기존", disabled=True),
+                "리오더잔량": st.column_config.NumberColumn("📦 잔량", disabled=True),
                 "총합계": st.column_config.NumberColumn("📊 합계", disabled=True),
                 "권장발주": st.column_config.NumberColumn("💡 권장", disabled=True),
-                "메모": st.column_config.TextColumn("📝 메모")
+                "메모": st.column_config.TextColumn("📝 메모", width="medium")
             }
         )
+        
         if st.form_submit_button("✅ 1. 수량 및 메모 확정", use_container_width=True):
-            edits = st.session_state.v5_main_editor.get("edited_rows", {})
+            edits = st.session_state.v5_editor_final.get("edited_rows", {})
             for r_idx, val in edits.items():
                 idx = df_v5_v.index[int(r_idx)]
                 if "추가발주" in val: st.session_state.add_order_dict[idx] = int(val["추가발주"])
                 if "메모" in val: st.session_state.df_raw.at[idx, "메모"] = str(val["메모"])
             st.rerun()
 
-    # [4] 저장 및 다운로드 버튼
-    c_save, c_down = st.columns(2)
-    with c_save:
-        if st.button("💾 2. 구글 시트 분산 저장", use_container_width=True, type="primary"):
-            final_add_dict = st.session_state.add_order_dict
-            if any(v > 0 for v in final_add_dict.values()):
-                try:
-                    sh = get_sheet()
-                    ws_order = sh.worksheet("발주기록")
-                    ws_hist = sh.worksheet("history")
-                    now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-                    
-                    save_rows = []
-                    for idx, add_qty in final_add_dict.items():
-                        if add_qty > 0:
-                            save_rows.append([
-                                now_s, str(df_v5.at[idx, item]), str(df_v5.at[idx, opt]), 
-                                str(df_v5.at[idx, v_it]), int(df_v5.at[idx, avl]), 
-                                int(df_v5.at[idx, "기존리오더"]), int(add_qty), 0, 
-                                str(df_v5.at[idx, "메모"]).strip(), str(df_v5.at[idx, vnd])
-                            ])
-                    if save_rows:
-                        ws_order.append_rows(save_rows)
-                        ws_hist.append_rows(save_rows)
-                        st.success(f"✅ {len(save_rows)}건 저장 완료!")
-                        st.session_state.add_order_dict = {}; st.cache_data.clear()
-                        time.sleep(1); st.rerun()
-                except Exception as e: st.error(f"저장 실패: {e}")
+    # [4] 저장 버튼 (히스토리 저장 시에도 이 순서 참고)
+    if st.button("💾 2. 구글 시트 분산 저장", use_container_width=True, type="primary"):
+        final_add_dict = st.session_state.add_order_dict
+        if any(v > 0 for v in final_add_dict.values()):
+            try:
+                sh = get_sheet()
+                ws_order = sh.worksheet("발주기록")
+                ws_hist = sh.worksheet("history")
+                now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
+                
+                save_rows = []
+                for idx, add_qty in final_add_dict.items():
+                    if add_qty > 0:
+                        # 시트 저장 (날짜 포함 순서대로)
+                        save_rows.append([
+                            now_s,                             # 날짜 (A)
+                            str(df_v5.at[idx, item]),          # 상품명 (B)
+                            str(df_v5.at[idx, opt]),           # 옵션 (C)
+                            str(df_v5.at[idx, v_it]),          # 공급처상품명 (D)
+                            int(df_v5.at[idx, avl]),           # 가용재고 (E)
+                            int(df_v5.at[idx, "리오더잔량"]),    # 리오더잔량 (F)
+                            int(add_qty),                      # 추가발주 (G)
+                            0,                                 # 입고차감(H)
+                            str(df_v5.at[idx, "메모"]).strip(), # 메모 (I)
+                            str(df_v5.at[idx, vnd])            # 업체명 (J)
+                        ])
+                
+                if save_rows:
+                    ws_order.append_rows(save_rows)
+                    ws_hist.append_rows(save_rows)
+                    st.success(f"✅ {len(save_rows)}건 저장 완료!")
+                    st.session_state.add_order_dict = {}
+                    st.cache_data.clear()
+                    time.sleep(1); st.rerun()
+            except Exception as e:
+                st.error(f"저장 실패: {e}")
 
     with c_down:
         # CSV 다운로드 로직
