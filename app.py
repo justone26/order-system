@@ -20,7 +20,7 @@ if 'upload_key' not in st.session_state: st.session_state.upload_key = 0
 # 새로고침 방지
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
 
-# --- [공통 보조 함수] ---
+# --- [공통 보조 함수: 사장님 필수 로직] ---
 def get_sheet():
     try:
         client = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
@@ -35,48 +35,61 @@ def super_clean(t):
     return re.sub(r'[^a-zA-Z0-9가-힣]', '', t).upper().strip()
 
 def to_i(v):
-    try: 
-        return int(float(str(v).replace(",", "").strip()))
-    except: 
-        return 0
+    try: return int(float(str(v).replace(",", "").strip()))
+    except: return 0
 
-# --- [핵심: 리오더 동기화 - 기존(F) + 추가(G) 합산] ---
-def sync_reorder_from_sheet(df_uploaded):
+# [에러 해결] 실시간 데이터 호출 함수 복구
+def get_realtime_data_v4(target_date):
     try:
         sh = get_sheet()
-        if not sh: return df_uploaded
+        if not sh: return {}, {}
         
-        ws = sh.worksheet("발주기록")
-        all_data = ws.get_all_values()
-        if len(all_data) <= 1: return df_uploaded
-            
-        header = [str(h).strip().replace(" ", "") for h in all_data[0]]
-        idx_name = next((i for i, h in enumerate(header) if "상품명" in h), 1)
-        idx_opt = next((i for i, h in enumerate(header) if "옵션" in h), 2)
-        idx_f = next((i for i, h in enumerate(header) if "기존" in h), 5) 
-        idx_g = next((i for i, h in enumerate(header) if "추가" in h), 6) 
+        # 1. 발주기록 매핑 (리오더 + 추가리오더 합산)
+        ws_v = sh.worksheet("발주기록")
+        d_v = ws_v.get_all_values()
+        r_map = {}
+        if len(d_v) > 1:
+            for row in d_v[1:]:
+                try:
+                    # 상품명(1) + 옵션(2) 키 생성
+                    key = super_clean(row[1]) + super_clean(row[2])
+                    val = to_i(row[5]) # 기존
+                    add = to_i(row[6]) # 추가
+                    if (val + add) != 0:
+                        r_map[key] = r_map.get(key, 0) + (val + add)
+                except: continue
 
-        reorder_map = {}
-        for row in all_data[1:]:
-            s_name = super_clean(row[idx_name])
-            s_opt = super_clean(row[idx_opt])
-            if not s_name: continue
-            
-            # F열(기존) + G열(추가) 합산
-            qty = to_i(row[idx_f]) + to_i(row[idx_g])
-            if qty != 0:
-                key = s_name + "_" + s_opt
-                reorder_map[key] = reorder_map.get(key, 0) + qty
+        # 2. 입고기록 매핑 (해당 날짜 입고량)
+        ws_h = sh.worksheet("입고기록")
+        d_h = ws_h.get_all_values()
+        h_map = {}
+        t_str = target_date.strftime('%Y-%m-%d')
+        if len(d_h) > 1:
+            for row_h in d_h[1:]:
+                try:
+                    if t_str in str(row_h[0]):
+                        h_key = super_clean(row_h[1]) + super_clean(row_h[2])
+                        h_map[h_key] = h_map.get(h_key, 0) + to_i(row_h[3])
+                except: continue
+        return r_map, h_map
+    except:
+        return {}, {}
 
+def sync_reorder_from_sheet(df_uploaded):
+    # 이 함수는 get_realtime_data_v4를 사용하여 리오더 수량을 df에 합쳐줍니다.
+    try:
+        current_today = datetime.now(KST).date()
+        r_map, _ = get_realtime_data_v4(current_today)
+        
         if "리오더 수량" in df_uploaded.columns:
             df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
 
         def final_match(r):
-            u_key = super_clean(r.get('상품명', '')) + "_" + super_clean(r.get('옵션', ''))
-            return reorder_map.get(u_key, 0)
+            u_key = super_clean(r.get('상품명', '')) + super_clean(r.get('옵션', ''))
+            return r_map.get(u_key, 0)
 
         df_uploaded['리오더 수량'] = df_uploaded.apply(final_match, axis=1)
-        st.success(f"✅ 리오더 수량(기존+추가) 매칭 완료!")
+        st.success(f"✅ 리오더 합산 완료 (시트 데이터 {len(r_map)}건 로드)")
         return df_uploaded
     except Exception as e:
         st.error(f"동기화 오류: {e}")
@@ -87,7 +100,6 @@ st.title("📦 저스트원 통합 재고 관리 v4.0")
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
 with tab1:
-    # 1단계: 데이터 업로드
     st.subheader("📁 1단계: 데이터 업로드")
     up_file = st.file_uploader("파일 업로드", type=['xlsx', 'xls', 'csv'], key=f"up_{st.session_state.upload_key}")
 
@@ -101,14 +113,13 @@ with tab1:
         try:
             df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
             df.columns = [str(c).strip() for c in df.columns]
-            with st.spinner("🔄 구글 시트 데이터 불러오는 중..."):
+            with st.spinner("🔄 구글 시트 데이터(기존+추가) 불러오는 중..."):
                 df = sync_reorder_from_sheet(df)
             st.session_state.df_raw = df.fillna("")
             st.rerun()
         except Exception as e:
             st.error(f"파일 로드 오류: {e}")
 
-    # 2단계 & 3단계
     if st.session_state.df_raw is not None:
         st.divider()
         st.subheader("📋 2단계: 매핑 항목 확인")
@@ -121,19 +132,17 @@ with tab1:
                 if any(k in col_n for k in keys): return i
             return 0
 
-        c_left, c_right = st.columns(2)
-        with c_left:
-            st.markdown("##### [ 기본 정보 ]")
+        c1, c2 = st.columns(2)
+        with c1:
             it = st.selectbox("📦 상품명", cols, index=auto_idx(['상품명']), key="sel_it")
             op = st.selectbox("🎨 옵션", cols, index=auto_idx(['옵션']), key="sel_op")
             vn = st.selectbox("🏭 공급처", cols, index=auto_idx(['공급처']), key="sel_vn")
-            vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(['공급처상품명', '공급처상품']), key="sel_vi") # 복구완료
+            vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(['공급처상품명', '공급처상품']), key="sel_vi")
             so = st.selectbox("🚫 품절여부", cols, index=auto_idx(['품절']), key="sel_so")
-        with c_right:
-            st.markdown("##### [ 수량 및 날짜 ]")
+        with c2:
             av = st.selectbox("✅ 가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
             stk = st.selectbox("📦 정상재고", cols, index=auto_idx(['정상재고']), key="sel_stk")
-            t3 = st.selectbox("🔥 3일 판매", cols, index=auto_idx(['3일'], exclude_keys=['7일', '품절']), key="sel_t3") # 복구완료
+            t3 = st.selectbox("🔥 3일 판매", cols, index=auto_idx(['3일'], exclude_keys=['7일', '품절']), key="sel_t3")
             t7 = st.selectbox("📅 7일 판매", cols, index=auto_idx(['7일', '1주'], exclude_keys=['3일']), key="sel_t7")
             reg = st.selectbox("📆 등록일", cols, index=auto_idx(['등록일']), key="sel_reg")
 
@@ -149,20 +158,12 @@ with tab1:
                 'av': av, 'st': stk, 't3': t3, 't7': t7, 'reg': reg,
                 'lt': lt_val, 'ss': ss_val
             }
-            # 데이터 타입 정리
             df_final = st.session_state.df_raw.copy()
             for col in [t3, t7, '리오더 수량']:
                 df_final[col] = pd.to_numeric(df_final.get(col, 0), errors='coerce').fillna(0)
             
             st.session_state.df_raw = df_final
             st.session_state.analyzed = True
-            st.success("✅ 분석 완료! 4단계로 이동하세요.")
-            st.rerun()
-
-        if st.button("🧹 화면 초기화", use_container_width=False):
-            for k in ['analyzed', 'p', 'df_raw']:
-                if k in st.session_state: del st.session_state[k]
-            st.session_state.upload_key += 1
             st.rerun()
 
 
