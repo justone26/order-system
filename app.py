@@ -636,24 +636,26 @@ if st.session_state.get('analyzed'):
             df_final = df_final[(df_final[date_col].dt.date >= search_date[0]) & (df_final[date_col].dt.date <= search_date[1])]
 
         # --- [최종 화면 출력] ---
+       # [7단계 출력부 컬럼 순서 및 구성 수정]
         if not df_final.empty:
-            # 사장님 요청 순서: 날짜 => 업체명 => 상품명 => 옵션 => 공급처상품명 => 미입고잔량 => 총리오더수량 => 입고수량 => 메모
-            display_cols = ["날짜", "업체명", "상품명", "옵션", "공급처상품명", "미입고잔량", "총리오더수량", "입고수량", "메모"]
-            
-            st.write(f"### 📊 검색 결과: {len(df_final)}건 (전체 미입고 잔량: {int(df_final['미입고잔량'].sum()):,}개)")
-            
-            st.dataframe(
-                df_final.sort_values("날짜", ascending=False),
-                use_container_width=True,
-                hide_index=True,
-                column_order=display_cols,
-                column_config={
-                    "미입고잔량": st.column_config.NumberColumn("🔢 미입고잔량", format="%d", help="아직 안들어온 수량"),
-                    "총리오더수량": st.column_config.NumberColumn("➕ 총 리오더", format="%d"),
-                    "입고수량": st.column_config.NumberColumn("✅ 입고수량", format="%d"),
-                    "메모": st.column_config.TextColumn("📝 메모", width="medium")
-                }
-            )
+        # 사장님 요청 순서로 재배치
+            display_cols = [
+        "날짜", "업체명", "상품명", "옵션", "공급처상품명", 
+        "총리오더수량", "입고수량", "미입고잔량", "메모"
+    ]
+    
+    st.dataframe(
+        df_final.sort_values("날짜", ascending=False),
+        use_container_width=True,
+        hide_index=True,
+        column_order=display_cols,
+        column_config={
+            "총리오더수량": st.column_config.NumberColumn("📦 총 리오더", format="%d"),
+            "입고수량": st.column_config.NumberColumn("✅ 입고수량", format="%d"),
+            "미입고잔량": st.column_config.NumberColumn("🔢 미입고잔량", format="%d", help="아직 안 들어온 수량"),
+            "메모": st.column_config.TextColumn("📝 메모", width="medium")
+        }
+    )
             
             # 엑셀 다운로드
             output = io.BytesIO()
