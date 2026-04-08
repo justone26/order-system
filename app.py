@@ -302,7 +302,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
-    st.subheader("📋 5단계: 최종 발주 요약 (🚨 긴급 항목 우선 로딩)")
+    st.subheader("📋 5단계: 최종 발주 요약 (🚨 긴급 항목)")
 
     # [1] 데이터 준비 및 숫자 변환
     df_v5 = st.session_state.df_raw.copy()
