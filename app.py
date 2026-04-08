@@ -37,6 +37,19 @@ def get_sheet():
     except:
         return None
 
+
+def get_sheet():
+    try:
+        # secrets에서 인증 정보 로드
+        creds = ServiceAccountCredentials.from_json_keyfile_info(st.secrets["gcp_service_account"], scope)
+        client = gspread.authorize(creds)
+        # 🚨 여기서 시트 이름이 정확해야 합니다!
+        return client.open("사장님_구글_시트_이름") 
+    except Exception as e:
+        st.error(f"시트 연결 실패: {e}")
+        return None  # 연결 실패 시 None 반환 -> 여기서 'NoneType' 에러 발생
+
+
 # --- [핵심: 리오더 동기화 및 진단] ---
 def sync_reorder_from_sheet(df_uploaded):
     try:
