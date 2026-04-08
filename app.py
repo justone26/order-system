@@ -595,14 +595,16 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ------------------------------------------------------------------
-# [5단계: 최종 발주 요약] - 기존 리오더 + 추가발주 합산 및 수치 중복저장 방지
+# [5단계: 최종 발주 요약] - 기존 리오더 + 추가발주 합산 및 수치 중복저장 완벽 차단
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📋 5단계: 최종 발주 리스트 요약")
 
-    # [1] 데이터 로드 (4단계 입고 차감이 반영된 실시간 잔량)
+    # [1] 실시간 데이터 로드 (4단계 입고/차감 기록이 모두 합산된 최신 잔량)
+    # get_realtime_data_v4 함수는 시트의 G열(추가발주/차감)을 모두 sum한 결과를 가져옵니다.
     reorder_map_v5, _ = get_realtime_data_v4(datetime.now(KST).date())
+    
     df_v5 = st.session_state.df_raw.copy()
 
     def get_clean_key_v5(r):
@@ -618,19 +620,20 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     # 품절 제외
     df_v5 = df_v5[~df_v5[s_out].astype(str).str.contains('품절', na=False)]
     
+    # 메모 및 추가발주 임시 저장소 확인
     if '메모' not in df_v5.columns: df_v5['메모'] = ""
     if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
 
     # ---------------------------------------------------------
-    # ⭐ 수치 계산 로직 (중요)
+    # ⭐ 수치 계산 로직 (수치 튀는 현상 방지 핵심)
     # ---------------------------------------------------------
-    # 1. 시트에서 불러온 현재 잔량 (예: 9개)
+    # 1. 시트 합계 결과 (예: 23개)
     df_v5["기존 리오더"] = df_v5['clean_key'].map(reorder_map_v5).fillna(0).astype(int).clip(lower=0)
 
-    # 2. 사장님이 에디터에 새로 타이핑한 숫자 (예: 5개)
+    # 2. 사장님이 에디터에 새로 입력한 수량 (예: 5개)
     df_v5['추가발주입력'] = df_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
 
-    # 3. 화면 표시용 합계 (예: 9 + 5 = 14개) -> 시트에 저장되지 않음!
+    # 3. 화면 표시용 합계 (예: 23 + 5 = 28개) -> 확인용일 뿐, 이 숫자를 저장하면 안 됨!
     df_v5['총 리오더 합계'] = df_v5["기존 리오더"] + df_v5['추가발주입력']
 
     # 4. 발주 권장 계산
@@ -638,7 +641,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_v5['발주권장'] = ((df_v5['일판매'] * (lt + ss)) - (df_v5[avl] + df_v5["기존 리오더"])).clip(lower=0).astype(int)
     df_v5['상태표시'] = df_v5['발주권장'].apply(lambda x: "🚨 긴급" if x > 0 else "✅ 정상")
 
-    # [2] 필터 UI
+    # [2] 검색 및 필터 UI
     f1, f2, f3 = st.columns([1.5, 2, 1])
     with f1: m5_f = st.selectbox("🚦 상태 필터", ["🚨 고위험/주의", "✅ 전체정상"], key="v5_f")
     with f2: s5_q = st.text_input("🔍 상품명/옵션 검색", key="v5_s")
@@ -665,7 +668,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
             column_config={
                 "추가발주": st.column_config.NumberColumn("➕ 추가발주", min_value=0),
                 "기존잔량": st.column_config.NumberColumn("📦 기존잔량", format="%d"),
-                "총합계": st.column_config.NumberColumn("📊 총합계", format="%d", help="기존잔량+추가발주 수치입니다."),
+                "총합계": st.column_config.NumberColumn("📊 총합계", format="%d", help="기존잔량 + 추가발주 결과입니다."),
                 "발주권장": st.column_config.NumberColumn("🚨 발주권장", format="%d"),
             },
             disabled=[c for c in v_map.values() if c not in ["추가발주", "메모"]]
@@ -679,46 +682,61 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 if "메모" in val: st.session_state.df_raw.at[idx, "메모"] = str(val["메모"])
             st.rerun()
 
-    # [4] 저장 및 다운로드 (⭐ 수치 오류 방지 핵심 구간)
+    # [4] 저장 및 다운로드 (⭐ 수치 중복 차단 핵심 로직)
     c_save, c_down = st.columns(2)
     with c_save:
         if st.button("💾 2. 구글 시트 최종 저장", use_container_width=True, type="primary"):
+            # 입력된 수량이 있는 항목만 필터링
             v_ids = [k for k, v in st.session_state.add_order_dict.items() if v > 0]
+            
             if v_ids:
                 try:
                     ws_log = get_sheet().worksheet("발주기록")
                     now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
                     rows = []
+                    
                     for i in v_ids:
-                        # -------------------------------------------------------
-                        # ⚠️ 절대 '총합계'를 저장하면 안 됩니다! 
-                        # 오직 사장님이 입력한 '추가발주입력(5개)'만 저장해야 합니다.
-                        # -------------------------------------------------------
+                        # 중요: 시트에는 오직 사장님이 새로 입력한 '5'만 저장되어야 함.
+                        # '28(합계)'를 저장하면 나중에 23+28=51이 됩니다.
                         pure_add_qty = int(st.session_state.add_order_dict[i])
+                        
                         memo_val = st.session_state.df_raw.at[i, '메모'] if '메모' in st.session_state.df_raw.columns else ""
                         
                         row = [
-                            now_s, str(st.session_state.df_raw.at[i, item]), str(st.session_state.df_raw.at[i, opt]), 
-                            str(st.session_state.df_raw.at[i, v_it]), int(df_v5.at[i, avl]), 
-                            int(df_v5.at[i, '기존 리오더']), # 기존잔량 (참고용)
-                            pure_add_qty,                 # ⭐ 추가발주 (실제 합산용 수치! 여기에 5가 들어가야 함)
-                            int(df_v5.at[i, '발주권장']), str(memo_val), str(st.session_state.df_raw.at[i, vnd])
+                            now_s, 
+                            str(st.session_state.df_raw.at[i, item]), 
+                            str(st.session_state.df_raw.at[i, opt]), 
+                            str(st.session_state.df_raw.at[i, v_it]), 
+                            int(df_v5.at[i, avl]), 
+                            int(df_v5.at[i, '기존 리오더']), # F열: 기존잔량 (참고용)
+                            pure_add_qty,                 # G열: 추가발주 (⭐ 실제 합산용! 합계가 아닌 입력값만 저장)
+                            int(df_v5.at[i, '발주권장']), 
+                            str(memo_val), 
+                            str(st.session_state.df_raw.at[i, vnd])
                         ]
                         rows.append(row)
+                    
                     ws_log.append_rows(rows)
-                    st.session_state.add_order_dict = {} 
-                    st.success("✅ 구글 시트 저장 성공!"); st.cache_data.clear(); time.sleep(1); st.rerun()
+                    
+                    # ⭐ 중복 방지를 위한 초기화 프로세스
+                    st.session_state.add_order_dict = {} # 입력 딕셔너리 비우기
+                    st.cache_data.clear()              # 캐시 비워서 7단계가 시트 다시 읽게 함
+                    
+                    st.success(f"✅ {len(rows)}건 저장 완료! 7단계에서 28개로 확인될 겁니다."); time.sleep(1); st.rerun()
                 except Exception as e:
                     st.error(f"시트 저장 실패: {e}")
+            else:
+                st.warning("⚠️ 추가 발주 수량이 입력되지 않았습니다.")
 
     with c_down:
-        # 다운로드 로직은 동일
         v_ids_to_down = [k for k, v in st.session_state.add_order_dict.items() if v > 0]
         if v_ids_to_down:
             csv_t = df_v5[df_v5.index.isin(v_ids_to_down)].copy()
             csv_t['최종발주'] = csv_t.index.map(st.session_state.add_order_dict)
             res = csv_t[[vnd, item, opt, v_it, '최종발주']].rename(columns={vnd:"공급처", item:"상품명", opt:"옵션", v_it:"공급처상품명", "최종발주":"발주수량"})
             st.download_button("📥 3. 발주서(CSV) 다운로드", data=res.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'), file_name=f"발주서_{d5_d.strftime('%m%d')}.csv", mime="text/csv", use_container_width=True)
+
+
 
 
 # ------------------------------------------------------------------
