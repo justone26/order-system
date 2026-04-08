@@ -6,6 +6,8 @@ import io
 import re  # 정규표현식 (문자열 치환용)
 import unicodedata
 import streamlit.components.v1 as components
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta, timezone
 
 # 🚨 한국 시간 설정
