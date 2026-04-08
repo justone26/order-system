@@ -374,51 +374,75 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 if "메모" in val: st.session_state.df_raw.at[idx, "메모"] = str(val["메모"])
             st.rerun()
 
-    # [4] 저장 버튼 (히스토리 저장 시에도 이 순서 참고)
-    if st.button("💾 2. 구글 시트 분산 저장", use_container_width=True, type="primary"):
-        final_add_dict = st.session_state.add_order_dict
-        if any(v > 0 for v in final_add_dict.values()):
-            try:
-                sh = get_sheet()
-                ws_order = sh.worksheet("발주기록")
-                ws_hist = sh.worksheet("history")
-                now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-                
-                save_rows = []
-                for idx, add_qty in final_add_dict.items():
-                    if add_qty > 0:
-                        # 시트 저장 (날짜 포함 순서대로)
-                        save_rows.append([
-                            now_s,                             # 날짜 (A)
-                            str(df_v5.at[idx, item]),          # 상품명 (B)
-                            str(df_v5.at[idx, opt]),           # 옵션 (C)
-                            str(df_v5.at[idx, v_it]),          # 공급처상품명 (D)
-                            int(df_v5.at[idx, avl]),           # 가용재고 (E)
-                            int(df_v5.at[idx, "리오더잔량"]),    # 리오더잔량 (F)
-                            int(add_qty),                      # 추가발주 (G)
-                            0,                                 # 입고차감(H)
-                            str(df_v5.at[idx, "메모"]).strip(), # 메모 (I)
-                            str(df_v5.at[idx, vnd])            # 업체명 (J)
-                        ])
-                
-                if save_rows:
-                    ws_order.append_rows(save_rows)
-                    ws_hist.append_rows(save_rows)
-                    st.success(f"✅ {len(save_rows)}건 저장 완료!")
-                    st.session_state.add_order_dict = {}
-                    st.cache_data.clear()
-                    time.sleep(1); st.rerun()
-            except Exception as e:
-                st.error(f"저장 실패: {e}")
+   # --- [4. 저장 및 다운로드 버튼 (에러 방지)] ---
+    # 두 개의 열을 먼저 선언합니다.
+    c_save, c_down = st.columns(2)
+
+    with c_save:
+        # [2. 구글 시트 저장 버튼]
+        if st.button("💾 2. 구글 시트 분산 저장", use_container_width=True, type="primary"):
+            final_add_dict = st.session_state.add_order_dict
+            if any(v > 0 for v in final_add_dict.values()):
+                try:
+                    sh = get_sheet()
+                    ws_order = sh.worksheet("발주기록")
+                    ws_hist = sh.worksheet("history")
+                    now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
+                    
+                    save_rows = []
+                    for idx, add_qty in final_add_dict.items():
+                        if add_qty > 0:
+                            # 사장님 요청 순서대로 저장 데이터 구성
+                            save_rows.append([
+                                now_s,                             # 날짜 (A)
+                                str(df_v5.at[idx, item]),          # 상품명 (B)
+                                str(df_v5.at[idx, opt]),           # 옵션 (C)
+                                str(df_v5.at[idx, v_it]),          # 공급처상품명 (D)
+                                int(df_v5.at[idx, avl]),           # 가용재고 (E)
+                                int(df_v5.at[idx, "리오더잔량"]),    # 리오더잔량 (F)
+                                int(add_qty),                      # 추가발주 (G)
+                                0,                                 # 입고차감(H)
+                                str(df_v5.at[idx, "메모"]).strip(), # 메모 (I)
+                                str(df_v5.at[idx, vnd])            # 업체명 (J)
+                            ])
+                    
+                    if save_rows:
+                        ws_order.append_rows(save_rows)
+                        ws_hist.append_rows(save_rows)
+                        st.success(f"✅ {len(save_rows)}건 저장 완료!")
+                        st.session_state.add_order_dict = {} # 저장 후 초기화
+                        st.cache_data.clear() # 캐시 갱신
+                        time.sleep(1); st.rerun()
+                except Exception as e:
+                    st.error(f"저장 중 에러 발생: {e}")
+            else:
+                st.warning("⚠️ 추가 발주 수량이 입력된 항목이 없습니다.")
 
     with c_down:
-        # CSV 다운로드 로직
-        dl_idx = [k for k, v in st.session_state.add_order_dict.items() if v > 0]
-        if dl_idx:
-            df_dl = df_v5[df_v5.index.isin(dl_idx)].copy()
-            df_dl['수량'] = df_dl.index.map(st.session_state.add_order_dict)
-            st.download_button("📥 3. 발주서(CSV) 다운로드", df_dl[[vnd, item, opt, v_it, '수량']].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'), 
-                               file_name=f"발주서_{datetime.now(KST).strftime('%m%d_%H%M')}.csv", use_container_width=True)
+        # [3. 발주서 다운로드 버튼]
+        # 추가발주가 1개라도 있는 항목만 필터링해서 다운로드
+        download_list = [k for k, v in st.session_state.add_order_dict.items() if v > 0]
+        
+        if download_list:
+            df_down = df_v5[df_v5.index.isin(download_list)].copy()
+            df_down['최종발주수량'] = df_down.index.map(st.session_state.add_order_dict)
+            
+            # 발주서에 필요한 최소 정보만 포함
+            csv_data = df_down[[vnd, item, opt, v_it, '최종발주수량']].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            
+            st.download_button(
+                label="📥 3. 발주서(CSV) 다운로드",
+                data=csv_data,
+                file_name=f"발주서_{datetime.now(KST).strftime('%m%d_%H%M')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        else:
+            # 수량이 없을 때는 비활성화된 버튼처럼 보이게 함
+            st.button("📥 3. 발주서 다운로드 (내역없음)", disabled=True, use_container_width=True)
+
+
+
 
 
 # ==================================================================
