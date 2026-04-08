@@ -556,23 +556,23 @@ if st.session_state.get('analyzed'):
         
 
 # ------------------------------------------------------------------
-# [7단계: 데이터 긴급 복구 버전 - 미입고 잔량 강제 호출]
+# [7단계: 특정 업체 누락 방지 및 데이터 강제 복구 버전]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
-    st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판 (복구 모드)")
+    st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
 
-    @st.cache_data(ttl=10) # 빠른 확인을 위해 캐시를 10초로 줄임
-    def get_v7_emergency_data():
+    @st.cache_data(ttl=5) # 즉각적인 확인을 위해 캐시를 거의 없앰
+    def get_v7_perfect_data():
         try:
             sh = get_sheet()
-            # 1. 발주기록 시트
+            # 1. 발주기록 로드
             ws_o = sh.worksheet("발주기록")
             o_all = ws_o.get_all_values()
             o_h_idx = 1 if len(o_all) > 1 and "상품명" in o_all[1] else 0
             df_o = pd.DataFrame(o_all[o_h_idx+1:], columns=o_all[o_h_idx])
             
-            # 2. 입고기록 시트 (복사본 포함)
+            # 2. 입고기록 로드
             ws_r = sh.worksheet("입고기록")
             r_all = ws_r.get_all_values()
             r_h_idx = 1 if len(r_all) > 1 and "상품명" in r_all[1] else 0
@@ -581,55 +581,56 @@ if st.session_state.get('analyzed'):
             return df_o, df_r
         except: return pd.DataFrame(), pd.DataFrame()
 
-    df_o, df_r = get_v7_emergency_data()
+    df_o, df_r = get_v7_perfect_data()
 
     if not df_o.empty:
-        # 수량 컬럼 자동 찾기 (추가발주 또는 G열)
+        # 수량 컬럼 (G열: 추가발주)
         q_col = next((c for c in ["추가발주", "추가발주량", "수량"] if c in df_o.columns), df_o.columns[6])
         
-        # 전처리: 숫자 변환 및 공백 제거
+        # 숫자 변환 및 키 생성 (공백 제거하여 매칭 확률 업)
         for df in [df_o, df_r]:
             df[q_col] = pd.to_numeric(df[q_col], errors='coerce').fillna(0).astype(int)
             df['key'] = (df['상품명'].astype(str) + df['옵션'].astype(str)).str.replace(" ","").str.upper()
 
-        # [A] 진짜 발주 총량: 발주기록 시트의 '양수(+)'만 합산
-        df_order_final = df_o[df_o[q_col] > 0].groupby(['key', '업체명', '상품명', '옵션'], as_index=False).agg({
+        # [A] 발주 계산: '발주기록' 시트의 양수(+)값만 합산
+        # '퍼스트' 업체가 여기서 먼저 잡힙니다.
+        df_orders = df_o[df_o[q_col] > 0].groupby(['key', '업체명', '상품명', '옵션'], as_index=False).agg({
             q_col: 'sum',
-            '날짜': 'max'
+            df_o.columns[0]: 'max' # 날짜
         })
 
-        # [B] 진짜 입고량 계산 (핵심!)
-        # 입고기록 시트 데이터 중 '음수(-)'인 것만 골라내서 양수로 바꾼 뒤 합산
-        # (사장님이 복사하신 플러스 데이터는 여기서 0으로 처리되어 무시됩니다!)
-        df_r['real_in'] = df_r[q_col].apply(lambda x: abs(x) if x < 0 else 0)
-        receive_sum = df_r.groupby('key')['real_in'].sum()
+        # [B] 입고 계산: '입고기록' 시트에서 오직 음수(-)값만 입고로 인정!
+        # 사장님이 복사해서 넣은 플러스(+) 값은 'actual_in'이 0이 되어 무시됩니다.
+        df_r['actual_in'] = df_r[q_col].apply(lambda x: abs(x) if x < 0 else 0)
+        receive_sum = df_r.groupby('key')['actual_in'].sum()
 
-        # [C] 잔량 계산 (발주량 - 진짜 입고량)
-        df_order_final['잔량'] = df_order_final.apply(lambda x: x[q_col] - receive_sum.get(x['key'], 0), axis=1)
+        # [C] 잔량 계산 (발주 - 진짜입고)
+        df_orders['잔량'] = df_orders.apply(lambda x: x[q_col] - receive_sum.get(x['key'], 0), axis=1)
         
-        # 잔량이 0보다 큰 것만 필터링
-        df_display = df_order_final[df_order_final['잔량'] > 0].copy()
+        # 최종 표시 (잔량이 1개라도 남은 것)
+        df_final = df_orders[df_orders['잔량'] > 0].copy()
 
-        # --- 결과 출력 ---
+        # --- 출력부 ---
+        # 업체 필터에 '퍼스트'가 있는지 확인하기 위해 필터 추가
+        st.write(f"### 📊 전체 미입고: {df_final['잔량'].sum():,}개")
+        
+        target_v = st.multiselect("🏭 업체별 보기", options=sorted(df_final['업체명'].unique()), default=sorted(df_final['업체명'].unique()))
+        
+        df_display = df_final[df_final['업체명'].isin(target_v)]
+
         if not df_display.empty:
-            st.error(f"⚠️ 미입고 상품이 {len(df_display)}건 발견되었습니다!")
-            
-            # 업체별 요약 메트릭
+            # 업체별 요약 카드
             v_sum = df_display.groupby("업체명")["잔량"].sum().reset_index().sort_values("잔량", ascending=False)
-            v_cols = st.columns(4)
+            v_cols = st.columns(min(len(v_sum), 4))
             for i, r in enumerate(v_sum.itertuples()):
-                with v_cols[i%4]: st.metric(r.업체명, f"{int(r.잔량)}개")
+                with v_cols[i%4]:
+                    st.metric(label=r.업체명, value=f"{int(r.잔량)}개")
             
-            # 리스트 출력
             st.dataframe(
-                df_display.sort_values("날짜", ascending=False),
-                use_container_width=True, hide_index=True,
-                column_order=["날짜", "업체명", "상품명", "옵션", q_col, "잔량"],
-                column_config={
-                    "날짜": "🕒 발주날짜",
-                    q_col: "📦 총 발주",
-                    "잔량": st.column_config.NumberColumn("🔢 미입고 잔량", format="%d")
-                }
+                df_display.sort_values("잔량", ascending=False),
+                use_container_width=True,
+                hide_index=True,
+                column_config={"잔량": st.column_config.NumberColumn("🔢 미입고 잔량", format="%d")}
             )
         else:
-            st.success("✅ 현재 모든 발주건에 대해 매칭되는 '입고차감(-)' 내역이 확인되어 미입고가 없습니다.")
+            st.info("선택한 업체의 미입고 내역이 없거나 모두 입고되었습니다.")
