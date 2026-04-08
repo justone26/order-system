@@ -299,18 +299,16 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 
 
 # ------------------------------------------------------------------
-# [5단계: 최종 발주 요약] - 저장 로직 중복 방지 및 10개 컬럼 동기화
+# [5단계: 최종 발주 요약] - 실시간 합계 연동 및 저장 로직 안전화
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
     st.subheader("📋 5단계: 최종 발주 리스트 요약")
 
-    # [1] 실시간 잔량 로드 및 데이터 준비
-    # 실시간으로 시트에서 현재 리오더 잔량을 가져와 뻥튀기 방지
+    # [1] 데이터 및 실시간 리오더 잔량 로드
     reorder_map_v5, _ = get_realtime_data_v4(datetime.now(KST).date())
     df_v5 = st.session_state.df_raw.copy()
 
-    # 상품 식별 키 생성 함수 (NFC 정규화)
     def get_clean_key_v5(r):
         import unicodedata, re
         n = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r[item]))).upper().strip()
@@ -321,85 +319,89 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     for col in [stk, avl, t3, t7]:
         df_v5[col] = pd.to_numeric(df_v5[col], errors='coerce').fillna(0).astype(int)
 
-    # 품절 제외 및 메모/추가발주 딕셔너리 초기화
+    # 품절 제외
     df_v5 = df_v5[~df_v5[s_out].astype(str).str.contains('품절', na=False)]
     if '메모' not in df_v5.columns: df_v5['메모'] = ""
-    if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
-
-    # 수치 계산 (기존 리오더는 표시용으로만 사용)
-    df_v5["기존 리오더"] = df_v5['clean_key'].map(reorder_map_v5).fillna(0).astype(int)
-    # 초과입고 제로화 적용 (표시 상 마이너스 방지)
-    df_v5["기존 리오더"] = df_v5["기존 리오더"].clip(lower=0)
     
-    # 세션에 임시 저장된 추가발주 수량 매핑
-    df_v5['추가발주입력'] = df_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
-    df_v5['총 리오더 합계'] = df_v5["기존 리오더"] + df_v5['추가발주입력']
-
-    # 발주 권장 계산 (현재 잔량 기준)
-    df_v5['일판매'] = df_v5.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
-    df_v5['발주권장'] = ((df_v5['일판매'] * (lt + ss)) - (df_v5[avl] + df_v5["기존 리오더"])).clip(lower=0).astype(int)
-
-    # [2] 필터 영역
+    # 기초 수치 계산 (기존잔량)
+    df_v5["기존잔량"] = df_v5['clean_key'].map(reorder_map_v5).fillna(0).astype(int).clip(lower=0)
+    
+    # 세션 딕셔너리에 추가발주 값 유지 (없으면 0으로 초기화)
+    if 'add_order_dict' not in st.session_state:
+        st.session_state.add_order_dict = {idx: 0 for idx in df_v5.index}
+    
+    # [2] 필터 및 검색
     f1, f2 = st.columns([1, 2])
     with f1: m5_f = st.selectbox("🚦 상태 필터", ["✅ 전체보기", "🚨 발주필요"], key="v5_f")
     with f2: s5_q = st.text_input("🔍 검색", key="v5_s")
 
+    # 일판매 및 권장수량 실시간 계산
+    df_v5['일판매'] = df_v5.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
+    df_v5['발주권장'] = ((df_v5['일판매'] * (lt + ss)) - (df_v5[avl] + df_v5["기존잔량"])).clip(lower=0).astype(int)
+
+    # 필터 적용
     df_v5_v = df_v5.copy()
     if s5_q:
         df_v5_v = df_v5_v[df_v5_v[item].astype(str).str.contains(s5_q, case=False) | df_v5_v[opt].astype(str).str.contains(s5_q, case=False)]
     if m5_f == "🚨 발주필요": 
         df_v5_v = df_v5_v[df_v5_v['발주권장'] > 0]
+
+    # ⭐ 실시간 합계를 위해 세션 수량 매핑
+    df_v5_v['추가발주'] = df_v5_v.index.map(lambda i: st.session_state.add_order_dict.get(i, 0))
+    df_v5_v['최종합계'] = df_v5_v['기존잔량'] + df_v5_v['추가발주']
+
+    # [3] 에디터 영역 (실시간 반영을 위해 Form 제거)
+    st.info("💡 '추가발주' 칸에 숫자를 넣고 Enter를 누르면 '최종합계'가 즉시 계산됩니다.")
     
-    v_map = {
-        item: "상품명", opt: "옵션", avl: "가용재고", 
-        "기존 리오더": "기존잔량", "추가발주입력": "추가발주", "총 리오더 합계": "총합계", "메모": "메모"
-    }
-    actual_cols = [c for c in v_map.keys() if c in df_v5_v.columns]
+    disp_cols = [item, opt, avl, "기존잔량", "추가발주", "최종합계", "발주권장", "메모"]
+    v_map = {item: "상품명", opt: "옵션", avl: "가용재고"}
 
-    # [3] 에디터 및 수량 확정 (폼 사용)
-    with st.form("v5_form"):
-        df_ed = df_v5_v[actual_cols].rename(columns=v_map)
-        edited_df = st.data_editor(
-            df_ed, use_container_width=True, hide_index=True, key="v5_editor_final",
-            column_config={
-                "추가발주": st.column_config.NumberColumn("➕ 추가발주", min_value=0, help="이번에 새롭게 발주할 수량을 입력하세요."),
-                "기존잔량": st.column_config.NumberColumn("📦 기존잔량", disabled=True),
-                "총합계": st.column_config.NumberColumn("📊 최종예상", disabled=True),
-            }
-        )
-        
-        confirm_btn = st.form_submit_button("✅ 1. 입력 수량 확정 (저장 전 필수)", use_container_width=True)
-        
-        if confirm_btn:
-            for idx, row in edited_df.iterrows():
-                real_idx = df_v5_v.index[idx]
-                st.session_state.add_order_dict[real_idx] = int(row["추가발주"])
-                st.session_state.df_raw.at[real_idx, "메모"] = str(row["메모"])
-            st.success("수량이 확정되었습니다. '2. 구글 시트 최종 저장' 버튼을 누르면 시트에 반영됩니다.")
-            st.rerun()
+    edited_df = st.data_editor(
+        df_v5_v[disp_cols].rename(columns=v_map),
+        use_container_width=True,
+        hide_index=True,
+        key="v5_realtime_editor",
+        column_config={
+            "추가발주": st.column_config.NumberColumn("➕ 추가발주", min_value=0),
+            "최종합계": st.column_config.NumberColumn("📊 최종합계", disabled=True, help="기존잔량 + 추가발주"),
+            "기존잔량": st.column_config.NumberColumn("📦 기존잔량", disabled=True),
+            "발주권장": st.column_config.NumberColumn("💡 권장", disabled=True),
+        }
+    )
 
-    # [4] 저장 및 다운로드
-    st.write("")
+    # 에디터 수정사항을 세션 딕셔너리에 즉시 동기화
+    if "v5_realtime_editor" in st.session_state:
+        edits = st.session_state["v5_realtime_editor"].get("edited_rows", {})
+        if edits:
+            for r_idx_str, changes in edits.items():
+                r_idx = int(r_idx_str)
+                real_idx = df_v5_v.index[r_idx]
+                if "추가발주" in changes:
+                    st.session_state.add_order_dict[real_idx] = int(changes["추가발주"])
+                if "메모" in changes:
+                    st.session_state.df_raw.at[real_idx, "메모"] = str(changes["메모"])
+            st.rerun() # 합계 갱신을 위해 화면 새로고침
+
+    # [4] 저장 및 다운로드 버튼
+    st.divider()
     c_save, c_down = st.columns(2)
     
     with c_save:
-        if st.button("💾 2. 구글 시트 최종 저장", use_container_width=True, type="primary"):
+        if st.button("💾 구글 시트 최종 저장", use_container_width=True, type="primary"):
             rows_to_add = []
             now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
             
-            # 확정된 수량 중 0보다 큰 것들만 골라 시트에 기록
+            # 세션에 저장된 추가 수량이 있는 것만 필터링
             for idx, add_qty in st.session_state.add_order_dict.items():
                 if add_qty > 0:
-                    # ⭐ 따블 방지 핵심: 기존 리오더 열에는 0을 넣고, 추가발주 열에만 수량을 넣음
-                    # 이렇게 해야 7단계 상황판에서 (이전 합계) + (새로운 추가분) = (정확한 총합)이 됨
                     rows_to_add.append([
                         now_s, 
                         str(df_v5.at[idx, item]), 
                         str(df_v5.at[idx, opt]), 
                         str(df_v5.at[idx, v_it]), 
                         int(df_v5.at[idx, avl]), 
-                        0,               # F열(기존리오더): 중복 합산 방지를 위해 0으로 저장
-                        int(add_qty),    # G열(추가발주): 이번 순수 추가분만 저장
+                        0,               # ⭐ 따블 방지: 기존잔량 열은 0으로 기록
+                        int(add_qty),    # ⭐ 추가발주 열에만 순수 수량 기록
                         int(df_v5.at[idx, '발주권장']), 
                         str(df_v5.at[idx, "메모"]),
                         str(df_v5.at[idx, vnd])
@@ -409,39 +411,35 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 try:
                     ws_log = get_sheet().worksheet("발주기록")
                     ws_log.append_rows(rows_to_add)
-                    st.success(f"✅ {len(rows_to_add)}건 저장 완료! 수량이 정확하게 합산되었습니다.")
-                    # 저장 후 세션/캐시 비우기
+                    st.success(f"✅ {len(rows_to_add)}건 시트 저장 완료! 수량이 정확하게 합산됩니다.")
+                    # 저장 후 초기화
                     st.session_state.add_order_dict = {}
                     st.cache_data.clear()
                     time.sleep(1)
                     st.rerun()
                 except Exception as e:
-                    if "429" in str(e):
-                        st.error("🚨 구글 API 호출 한도 초과! 1분만 기다렸다가 다시 시도해주세요.")
-                    else:
-                        st.error(f"❌ 시트 저장 실패: {e}")
+                    st.error(f"❌ 시트 저장 실패: {e}")
             else:
-                st.warning("⚠️ 저장할 수량이 없습니다. 1번 확정 버튼을 먼저 눌러주세요.")
+                st.warning("⚠️ 저장할 추가 수량이 없습니다. 숫자를 먼저 입력해주세요.")
 
     with c_down:
-        # 다운로드용 데이터 준비
-        df_down = df_v5.copy()
-        df_down['최종발주수량'] = df_down.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
-        df_final_down = df_down[df_down['최종발주수량'] > 0].copy()
+        # 다운로드용 데이터 생성
+        df_v5['최종발주수량'] = df_v5.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
+        df_final_down = df_v5[df_v5['최종발주수량'] > 0].copy()
         
         if not df_final_down.empty:
             csv_data = df_final_down[[vnd, item, opt, v_it, '최종발주수량']].rename(columns={
                 vnd: "공급처", item: "상품명", opt: "옵션", v_it: "공급처상품명", "최종발주수량": "수량"
             })
             st.download_button(
-                label="📥 3. 발주서(CSV) 다운로드",
+                label="📥 발주서(CSV) 다운로드",
                 data=csv_data.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'),
                 file_name=f"발주서_{datetime.now(KST).strftime('%m%d_%H%M')}.csv",
                 mime="text/csv",
                 use_container_width=True
             )
         else:
-            st.button("📥 3. 다운로드 (입력값 없음)", disabled=True, use_container_width=True)
+            st.button("📥 다운로드 (데이터 없음)", disabled=True, use_container_width=True)
 
 
 
