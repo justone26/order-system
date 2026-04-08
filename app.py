@@ -456,12 +456,12 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
 
 # ------------------------------------------------------------------
-# [6단계: 전체 히스토리 관리] - KeyError 방어 및 안전 조회 버전
+# [6단계: 전체 히스토리 관리] - 시트명 'history' 매칭 및 메모 정돈 버전
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("📜 6단계: 추가 발주 히스토리 관리")
-    st.info("💡 [히스토리] 시트에서 실제 '추가 발주'가 발생했던 내역만 불러옵니다.")
+    st.info("💡 [history] 시트에서 실제 '추가 발주'가 발생했던 내역만 불러옵니다.")
 
     f1, f2, f3, f4 = st.columns([1.2, 0.8, 1.5, 1.5])
     
@@ -480,14 +480,19 @@ if st.session_state.get('analyzed'):
     if search_trigger:
         try:
             with st.spinner("📡 히스토리 데이터를 불러오는 중..."):
-                worksheet = get_sheet().worksheet("히스토리")
+                # ⭐ [수정포인트 1] 시트명을 "히스토리" -> "history"로 변경
+                worksheet = get_sheet().worksheet("history")
                 all_h = worksheet.get_all_values()
                 
                 if len(all_h) > 1:
                     df_all = pd.DataFrame(all_h[1:], columns=all_h[0])
                     
-                    # 날짜 필터링
+                    # 날짜 필터링 및 간소화 준비
                     df_all["날짜_만"] = df_all["발주시간"].astype(str).str.slice(0, 10)
+                    
+                    # ⭐ [수정포인트 2] 메모 내 날짜 간소화 (표시용 04/02 형식 생성)
+                    df_all["표시날짜"] = pd.to_datetime(df_all["발주시간"], errors='coerce').dt.strftime('%m/%d')
+                    
                     if isinstance(d_range, (list, tuple)) and len(d_range) == 2:
                         s_d, e_d = d_range[0].strftime('%Y-%m-%d'), d_range[1].strftime('%Y-%m-%d')
                     else:
@@ -500,7 +505,8 @@ if st.session_state.get('analyzed'):
                     st.session_state.v6_data = None
                     st.info("💡 해당 범위에 저장된 히스토리가 없습니다.")
         except Exception as e:
-            st.error(f"📡 데이터를 불러오지 못했습니다: {e}")
+            # ⭐ 이제 에러가 나면 "history" 시트 문제임을 명확히 알 수 있습니다.
+            st.error(f"📡 데이터를 불러오지 못했습니다 (시트명 확인): {e}")
 
     # [UI 및 데이터 표시]
     with f3: h_q = st.text_input("🔍 3. 상품명/옵션 검색", key="v6_search_q")
@@ -515,19 +521,18 @@ if st.session_state.get('analyzed'):
     if st.session_state.v6_data is not None and sel_session_label:
         df_display = st.session_state.v6_data.copy()
         
-        # ⭐ [안전장치 1] 시트에 실제 존재하는 컬럼인지 먼저 확인 후 숫자 변환
         actual_cols = df_display.columns.tolist()
+        # '추가발주'와 '추가발주량' 둘 다 대응할 수 있게 설정
         num_targets = ["가용재고", "기존리오더", "추가발주량", "추가발주", "발주권장"]
         
         for col in num_targets:
-            if col in actual_cols: # 컬럼이 있을 때만 변환해서 KeyError 방지
+            if col in actual_cols:
                 df_display[col] = pd.to_numeric(df_display[col], errors='coerce').fillna(0).astype(int)
 
         # [회차별/합산별 데이터 정리]
         if sel_session_label == "📊 선택 범위 전체 합산":
-            # 합산 시 사용할 안전한 agg 설정
-            agg_logic = {"발주시간": "max", "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))}
-            # 수량 컬럼이 존재하면 합산 항목에 추가
+            # 메모 합산 시 날짜를 붙여서 더 깔끔하게 표시
+            agg_logic = {"발주시간": "max", "메모": lambda x: " / ".join(dict.fromkeys(filter(None, x.astype(str))))}
             for c in ["추가발주량", "추가발주"]:
                 if c in actual_cols: agg_logic[c] = "sum"
             for c in ["가용재고", "발주권장"]:
@@ -548,13 +553,14 @@ if st.session_state.get('analyzed'):
         if not df_display.empty:
             st.write(f"#### {display_title}")
             
-            # ⭐ [안전장치 2] 보여줄 때도 존재하는 컬럼만 선별해서 출력
+            # 보여줄 컬럼 순서 (추가발주/추가발주량 둘 다 대응)
             preferred_order = ["발주시간", "업체명", "상품명", "옵션", "추가발주량", "추가발주", "메모"]
             final_view_cols = [c for c in preferred_order if c in df_display.columns]
             
+            # 표 출력
             st.dataframe(df_display[final_view_cols], use_container_width=True, hide_index=True)
             
-            # CSV 다운로드
+            # CSV 다운로드 (utf-8-sig로 한글 깨짐 방지)
             csv_data = df_display[final_view_cols].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button(
                 label=f"📥 {display_title} CSV 다운로드", 
