@@ -54,7 +54,7 @@ def get_sheet():
 
 
 def get_sheet():
-    # 구글 시트 접근 권한 설정
+    # 1. 권한 범위 설정
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/spreadsheets",
@@ -63,16 +63,21 @@ def get_sheet():
     ]
     
     try:
-        # 1. Streamlit Secrets에서 인증 정보 가져오기
-        creds = ServiceAccountCredentials.from_json_keyfile_info(st.secrets["gcp_service_account"], scope)
+        # 2. 인증 정보 가져오기 (함수명 확인: from_json_keyfile_dict)
+        # st.secrets["gcp_service_account"]가 딕셔너리 형태여야 합니다.
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            st.secrets["gcp_service_account"], 
+            scope
+        )
         client = gspread.authorize(creds)
         
-        # 2. 구글 시트 열기 (사장님 시트 이름으로 수정 필수!)
-        # 예: client.open("재고관리_발주서")
-        return client.open("여기에_구글_시트_이름_정확히_입력") 
+        # 3. 구글 시트 열기 (실제 시트 이름으로 정확히 수정하세요!)
+        # 예: return client.open("내발주관리시트")
+        return client.open("여기에_구글_시트_이름_입력") 
         
     except Exception as e:
-        st.error(f"📡 시트 연결 실패: {e}")
+        # 여기서 에러 메시지를 상세히 출력해서 원인을 잡습니다.
+        st.error(f"📡 시트 연결 실패 상세: {e}")
         return None
 
 
