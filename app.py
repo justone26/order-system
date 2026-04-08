@@ -556,25 +556,23 @@ if st.session_state.get('analyzed'):
         
 
 # ------------------------------------------------------------------
-# [7단계: 최종 통합 상황판 - 필터 복구 및 엑셀 다운로드]
+# [7단계: 메모 컬럼 누락 복구 및 상세 필터 버전]
 # ------------------------------------------------------------------
-import io  # 엑셀 다운로드용
+import io
 
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
 
-    @st.cache_data(ttl=5)
-    def get_v7_final_data():
+    @st.cache_data(ttl=600)
+    def get_v7_memo_fixed_data():
         try:
             sh = get_sheet()
-            # 1. 발주기록 로드
             ws_o = sh.worksheet("발주기록")
             o_all = ws_o.get_all_values()
             o_h_idx = 1 if len(o_all) > 1 and "상품명" in o_all[1] else 0
             df_o = pd.DataFrame(o_all[o_h_idx+1:], columns=o_all[o_h_idx])
             
-            # 2. 입고기록 로드
             ws_r = sh.worksheet("입고기록")
             r_all = ws_r.get_all_values()
             r_h_idx = 1 if len(r_all) > 1 and "상품명" in r_all[1] else 0
@@ -583,44 +581,44 @@ if st.session_state.get('analyzed'):
             return df_o, df_r
         except: return pd.DataFrame(), pd.DataFrame()
 
-    df_o_raw, df_r_raw = get_v7_final_data()
+    # --- [상단 레이아웃] ---
+    c1, c2, c3, c4 = st.columns([1.5, 0.8, 1.5, 1.5])
+    with c1: search_date = st.date_input("📅 날짜 범위", value=[])
+    with c2: 
+        st.write(" ")
+        if st.button("🔄 업데이트", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+    with c3: search_prod = st.text_input("📦 상품명 검색", placeholder="상품명/옵션 검색")
+    with c4:
+        df_o_raw, df_r_raw = get_v7_memo_fixed_data()
+        vendor_list = ["전체 업체"] + (sorted(df_o_raw["업체명"].unique().tolist()) if not df_o_raw.empty else [])
+        search_vendor = st.selectbox("🏭 업체 선택", vendor_list)
 
     if not df_o_raw.empty:
-        # --- [상단 필터 영역] ---
-        st.write("#### 🔍 데이터 필터링")
-        c1, c2, c3 = st.columns([2, 2, 2])
-        
-        with c1:
-            # 날짜 검색/업데이트 (발주 날짜 기준)
-            date_col_name = next((c for c in ["날짜", "발주시간"] if c in df_o_raw.columns), df_o_raw.columns[0])
-            # 날짜 형식이 있을 경우를 대비해 간단한 텍스트 혹은 날짜 선택기 가능
-            search_date = st.date_input("📅 날짜 범위", value=[]) 
-        
-        with c2:
-            # 상품명 검색
-            search_prod = st.text_input("📦 상품명 검색", placeholder="상품명 또는 옵션 입력")
-            
-        with c3:
-            # 업체 셀렉트
-            vendor_list = ["전체 업체"] + sorted(df_o_raw["업체명"].unique().tolist())
-            search_vendor = st.selectbox("🏭 업체 선택", vendor_list)
-
-        # --- [데이터 처리 로직] ---
+        # 컬럼명 유연하게 대처
         q_col = next((c for c in ["추가발주", "추가발주량", "수량"] if c in df_o_raw.columns), df_o_raw.columns[6])
-        
+        date_col = next((c for c in ["날짜", "발주시간"] if c in df_o_raw.columns), df_o_raw.columns[0])
+        memo_col = "메모" if "메모" in df_o_raw.columns else None
+        supply_col = "공급처상품명" if "공급처상품명" in df_o_raw.columns else None
+
         for df in [df_o_raw, df_r_raw]:
             df[q_col] = pd.to_numeric(df[q_col], errors='coerce').fillna(0).astype(int)
             df['key'] = (df['상품명'].astype(str) + df['옵션'].astype(str)).str.replace(" ","").str.upper()
 
-        # [A] 발주 집계
-        df_orders = df_o_raw[df_o_raw[q_col] > 0].groupby(['key', '업체명', '상품명', '옵션'], as_index=False).agg({
-            date_col_name: 'max',
-            '공급처상품명': 'first',
-            q_col: 'sum',
-            '메모': lambda x: " / ".join(dict.fromkeys(filter(None, x.astype(str))))
-        })
+        # [A] 발주 집계 (메모 데이터 보존 로직)
+        agg_dict = {
+            date_col: 'max',
+            q_col: 'sum'
+        }
+        if supply_col: agg_dict[supply_col] = 'first'
+        # 메모가 있으면 중복 제거해서 합치기
+        if memo_col:
+            agg_dict[memo_col] = lambda x: " / ".join(dict.fromkeys(filter(None, x.astype(str).str.strip())))
 
-        # [B] 입고 집계 (음수만 인정)
+        df_orders = df_o_raw[df_o_raw[q_col] > 0].groupby(['key', '업체명', '상품명', '옵션'], as_index=False).agg(agg_dict)
+
+        # [B] 입고 집계 (음수만)
         df_r_raw['actual_in'] = df_r_raw[q_col].apply(lambda x: abs(x) if x < 0 else 0)
         receive_sum = df_r_raw.groupby('key')['actual_in'].sum()
 
@@ -628,42 +626,40 @@ if st.session_state.get('analyzed'):
         df_orders['미입고잔량'] = df_orders.apply(lambda x: x[q_col] - receive_sum.get(x['key'], 0), axis=1)
         df_final = df_orders[df_orders['미입고잔량'] > 0].copy()
         
-        # --- [필터 적용] ---
+        # --- [필터링] ---
         if search_vendor != "전체 업체":
             df_final = df_final[df_final["업체명"] == search_vendor]
         if search_prod:
             df_final = df_final[df_final["상품명"].str.contains(search_prod, case=False) | df_final["옵션"].str.contains(search_prod, case=False)]
-        # 날짜 필터 (선택 시에만 작동)
         if len(search_date) == 2:
-            df_final[date_col_name] = pd.to_datetime(df_final[date_col_name], errors='coerce')
-            start_d, end_d = pd.Timestamp(search_date[0]), pd.Timestamp(search_date[1])
-            df_final = df_final[(df_final[date_col_name] >= start_d) & (df_final[date_col_name] <= end_d)]
+            df_final[date_col] = pd.to_datetime(df_final[date_col], errors='coerce')
+            df_final = df_final[(df_final[date_col].dt.date >= search_date[0]) & (df_final[date_col].dt.date <= search_date[1])]
 
-        # --- [결과 출력] ---
+        # --- [최종 출력] ---
         if not df_final.empty:
-            # 사장님 요청 순서로 컬럼 정리
-            df_final = df_final.rename(columns={date_col_name: "날짜", q_col: "추가리오더"})
-            display_cols = ["날짜", "업체명", "상품명", "옵션", "공급처상품명", "미입고잔량", "추가리오더", "메모"]
+            df_final = df_final.rename(columns={date_col: "날짜", q_col: "추가리오더"})
+            # 실제 존재하는 컬럼만 표시 리스트에 추가
+            actual_cols = ["날짜", "업체명", "상품명", "옵션"]
+            if supply_col: actual_cols.append("공급처상품명")
+            actual_cols.extend(["미입고잔량", "추가리오더"])
+            if memo_col: actual_cols.append("메모")
             
             st.dataframe(
                 df_final.sort_values("날짜", ascending=False),
                 use_container_width=True,
                 hide_index=True,
-                column_order=display_cols,
-                column_config={"미입고잔량": st.column_config.NumberColumn(format="%d"), "추가리오더": st.column_config.NumberColumn(format="%d")}
+                column_order=actual_cols,
+                column_config={
+                    "미입고잔량": st.column_config.NumberColumn("🔢 잔량", format="%d"),
+                    "추가리오더": st.column_config.NumberColumn("➕ 발주량", format="%d"),
+                    "메모": st.column_config.TextColumn("📝 메모", width="large")
+                }
             )
             
-            # --- [하단 엑셀 다운로드] ---
-            st.write("")
+            # 엑셀 다운로드
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_final[display_cols].to_excel(writer, index=False, sheet_name='미입고현황')
-            
-            st.download_button(
-                label="📥 미입고 리스트 엑셀 다운로드",
-                data=output.getvalue(),
-                file_name=f"미입고현황_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                df_final[actual_cols].to_excel(writer, index=False, sheet_name='미입고현황')
+            st.download_button(label="📥 엑셀 다운로드", data=output.getvalue(), file_name="미입고현황.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         else:
-            st.info("검색 조건에 맞는 미입고 내역이 없습니다.")
+            st.info("내역이 없습니다.")
