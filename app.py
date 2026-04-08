@@ -556,7 +556,7 @@ if st.session_state.get('analyzed'):
         
 
 # ------------------------------------------------------------------
-# [7단계: 수량 계산식 전면 수정 - 총 리오더 및 입고량 정상화]
+# [7단계: 수량 흐름 순서 변경 및 들여쓰기 오류 수정]
 # ------------------------------------------------------------------
 import io
 
@@ -581,19 +581,21 @@ if st.session_state.get('analyzed'):
             return df_o, df_r
         except: return pd.DataFrame(), pd.DataFrame()
 
-    # --- [상단 필터 및 업데이트 버튼] ---
+    # --- [상단 필터 영역] ---
     c1, c2, c3, c4 = st.columns([1.5, 0.8, 1.5, 1.5])
-    with c1: search_date = st.date_input("📅 날짜 범위", value=[])
+    with c1: 
+        search_date = st.date_input("📅 날짜 범위", value=[])
     with c2: 
         st.write(" ")
         if st.button("🔄 업데이트", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
-    with c3: search_prod = st.text_input("📦 상품명 검색", placeholder="상품명/옵션 검색")
+    with c3: 
+        search_prod = st.text_input("📦 상품명 검색", placeholder="상품명/옵션 검색")
     with c4:
         df_o_raw, df_r_raw = get_v7_final_fix()
-        vendor_list = ["전체 업체"] + (sorted(df_o_raw["업체명"].unique().tolist()) if not df_o_raw.empty else [])
-        search_vendor = st.selectbox("🏭 업체 선택", vendor_list)
+        v_list = ["전체 업체"] + (sorted(df_o_raw["업체명"].unique().tolist()) if not df_o_raw.empty else [])
+        search_vendor = st.selectbox("🏭 업체 선택", v_list)
 
     if not df_o_raw.empty:
         q_col = next((c for c in ["추가발주", "추가발주량", "수량"] if c in df_o_raw.columns), df_o_raw.columns[6])
@@ -603,30 +605,29 @@ if st.session_state.get('analyzed'):
             df[q_col] = pd.to_numeric(df[q_col], errors='coerce').fillna(0).astype(int)
             df['key'] = (df['상품명'].astype(str) + df['옵션'].astype(str)).str.replace(" ","").str.upper()
 
-        # [1] 총 리오더 수량 계산 (발주기록 시트 합계)
+        # [1] 총 리오더 수량 집계
         df_orders = df_o_raw[df_o_raw[q_col] > 0].groupby(['key', '업체명', '상품명', '옵션'], as_index=False).agg({
             date_col: 'max',
             '공급처상품명': 'first',
-            q_col: 'sum', # 이것이 총 리오더 수량
+            q_col: 'sum',
             '메모': lambda x: " / ".join(dict.fromkeys(filter(None, x.astype(str).str.strip())))
         })
         df_orders = df_orders.rename(columns={q_col: '총리오더수량'})
 
-        # [2] 진짜 입고 수량 계산 (입고기록 시트에서 '음수'만 골라냄)
-        # 사장님이 복사하신 플러스(+) 수량은 여기서 0으로 처리되어 무시됩니다!
+        # [2] 실제 입고 수량 집계 (마이너스 수량만 합산)
         df_r_raw['real_in_val'] = df_r_raw[q_col].apply(lambda x: abs(x) if x < 0 else 0)
         receive_sum = df_r_raw.groupby('key')['real_in_val'].sum().reset_index()
         receive_sum.columns = ['key', '입고수량']
 
-        # [3] 데이터 합치기 및 잔량 계산
+        # [3] 병합 및 잔량 계산
         df_final = pd.merge(df_orders, receive_sum, on='key', how='left')
         df_final['입고수량'] = df_final['입고수량'].fillna(0).astype(int)
         df_final['미입고잔량'] = df_final['총리오더수량'] - df_final['입고수량']
         
-        # 잔량이 있는 것만 필터링
+        # 잔량 남은 것만 표시
         df_final = df_final[df_final['미입고잔량'] > 0].copy()
 
-        # --- [검색 필터 적용] ---
+        # 필터링 적용
         if search_vendor != "전체 업체":
             df_final = df_final[df_final["업체명"] == search_vendor]
         if search_prod:
@@ -635,30 +636,37 @@ if st.session_state.get('analyzed'):
             df_final[date_col] = pd.to_datetime(df_final[date_col], errors='coerce')
             df_final = df_final[(df_final[date_col].dt.date >= search_date[0]) & (df_final[date_col].dt.date <= search_date[1])]
 
-        # [7단계 출력부 컬럼 순서 및 구성 수정]
-if not df_final.empty:
-    # 사장님 요청 순서로 재배치
-    display_cols = [
-        "날짜", "업체명", "상품명", "옵션", "공급처상품명", 
-        "총리오더수량", "입고수량", "미입고잔량", "메모"
-    ]
-    
-    st.dataframe(
-        df_final.sort_values("날짜", ascending=False),
-        use_container_width=True,
-        hide_index=True,
-        column_order=display_cols,
-        column_config={
-            "총리오더수량": st.column_config.NumberColumn("📦 총 리오더", format="%d"),
-            "입고수량": st.column_config.NumberColumn("✅ 입고수량", format="%d"),
-            "미입고잔량": st.column_config.NumberColumn("🔢 미입고잔량", format="%d", help="아직 안 들어온 수량"),
-            "메모": st.column_config.TextColumn("📝 메모", width="medium")
-        }
-    )
-            # 엑셀 다운로드
+        # --- [최종 화면 출력 영역] ---
+        if not df_final.empty:
+            # 순서: 날짜, 업체명, 상품명, 옵션, 공급처상품명, 총리오더수량, 입고수량, 미입고잔량, 메모
+            display_cols = ["날짜", "업체명", "상품명", "옵션", "공급처상품명", "총리오더수량", "입고수량", "미입고잔량", "메모"]
+            df_display = df_final.rename(columns={date_col: "날짜"})
+            
+            st.write(f"### 📊 상세 내역 (잔량 합계: {int(df_final['미입고잔량'].sum()):,}개)")
+            
+            st.dataframe(
+                df_display.sort_values("날짜", ascending=False),
+                use_container_width=True,
+                hide_index=True,
+                column_order=display_cols,
+                column_config={
+                    "총리오더수량": st.column_config.NumberColumn("📦 총 리오더", format="%d"),
+                    "입고수량": st.column_config.NumberColumn("✅ 입고수량", format="%d"),
+                    "미입고잔량": st.column_config.NumberColumn("🔢 미입고잔량", format="%d"),
+                    "메모": st.column_config.TextColumn("📝 메모", width="medium")
+                }
+            )
+            
+            # --- [엑셀 다운로드: 들여쓰기 주의 구간] ---
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_final[display_cols].to_excel(writer, index=False, sheet_name='미입고현황')
-            st.download_button(label="📥 현 리스트 엑셀 다운로드", data=output.getvalue(), file_name="미입고현황_상세.xlsx")
+                df_display[display_cols].to_excel(writer, index=False, sheet_name='미입고현황')
+            
+            st.download_button(
+                label="📥 엑셀 다운로드", 
+                data=output.getvalue(), 
+                file_name=f"리오더현황_{pd.Timestamp.now().strftime('%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         else:
-            st.info("검색 조건에 맞는 미입고 내역이 없습니다.")
+            st.info("검색 결과가 없습니다.")
