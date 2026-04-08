@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
+import time
 import unicodedata
 import gspread
 import streamlit.components.v1 as components
