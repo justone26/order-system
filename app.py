@@ -1,229 +1,169 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import time
-import io
 import re
 import unicodedata
-import streamlit.components.v1 as components
 import gspread
+import streamlit.components.v1 as components
 from datetime import datetime, timedelta, timezone
 
-# --- [1. 기본 설정 및 시간] ---
-KST = timezone(timedelta(hours=9)) 
-current_today = datetime.now(KST).date()
+# 1. 기본 설정 및 한국 시간
+KST = timezone(timedelta(hours=9))
 st.set_page_config(layout="wide", page_title="저스트원 재고관리 v4.0")
 
-# 새로고침 방지 스크립트
+# --- [세션 상태 초기화] ---
+if 'df_raw' not in st.session_state: st.session_state.df_raw = None
+if 'analyzed' not in st.session_state: st.session_state.analyzed = False
+if 'p' not in st.session_state: st.session_state.p = {}
+if 'upload_key' not in st.session_state: st.session_state.upload_key = 0
+
+# 새로고침 방지
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
 
-# --- [2. 세션 상태 초기화] ---
-for key in ['df_raw', 'analyzed', 'p', 'add_order_dict', 'upload_key', 'v6_data']:
-    if key not in st.session_state:
-        if key == 'analyzed': st.session_state[key] = False
-        elif key == 'p' or key == 'add_order_dict': st.session_state[key] = {}
-        elif key == 'upload_key': st.session_state[key] = 0
-        else: st.session_state[key] = None
-
-# --- [3. 구글 시트 연동 최적화 (핵심)] ---
-
-@st.cache_resource
-def get_gspread_client():
-    """구글 클라이언트 연결 유지 (인증 부하 방지)"""
-    return gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-
+# --- [공통 보조 함수] ---
 def get_sheet():
-    """시트 객체 반환"""
     try:
-        client = get_gspread_client()
+        client = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
         return client.open_by_key("1uWZ2xeS9Zj5Dpn2zB-enRHNMGGJ8JTl48HfICvVTOdg")
     except Exception as e:
         st.error(f"📡 시트 연결 실패: {e}")
         return None
 
-@st.cache_data(ttl=600) # 10분간 데이터 유지
-def get_cached_values(sheet_name):
-    """시트 데이터를 캐싱하여 API 호출 최소화"""
-    sh = get_sheet()
-    if sh:
-        try:
-            ws = sh.worksheet(sheet_name)
-            return ws.get_all_values()
-        except: return []
-    return []
-
-# --- [4. 유틸리티 함수] ---
-
 def super_clean(t):
-    """상품명/옵션 텍스트 정규화"""
     if not t: return ""
     t = unicodedata.normalize('NFC', str(t))
     return re.sub(r'[^a-zA-Z0-9가-힣]', '', t).upper().strip()
 
-def to_int(v):
-    """숫자 변환 안전 장치"""
-    try: return int(float(str(v).replace(",", "").strip()))
-    except: return 0
+def to_i(v):
+    try: 
+        return int(float(str(v).replace(",", "").strip()))
+    except: 
+        return 0
 
-# --- [5. 비즈니스 로직 함수] ---
-
+# --- [핵심: 리오더 동기화 - 기존(F) + 추가(G) 합산] ---
 def sync_reorder_from_sheet(df_uploaded):
-    """1단계: 업로드 파일과 시트 리오더 수량 매칭"""
-    all_data = get_cached_values("발주기록")
-    if len(all_data) <= 1: return df_uploaded
-
-    header = [str(h).strip().replace(" ", "") for h in all_data[0]]
-    idx_name = next((i for i, h in enumerate(header) if "상품명" in h), 1)
-    idx_opt = next((i for i, h in enumerate(header) if "옵션" in h), 2)
-    idx_f = next((i for i, h in enumerate(header) if "기존" in h), 5)
-    idx_g = next((i for i, h in enumerate(header) if "추가" in h), 6)
-
-    reorder_map = {}
-    for row in all_data[1:]:
-        s_key = super_clean(row[idx_name]) + "_" + super_clean(row[idx_opt])
-        qty = to_int(row[idx_f]) + to_int(row[idx_g])
-        if qty != 0:
-            reorder_map[s_key] = reorder_map.get(s_key, 0) + qty
-
-    def final_match(r):
-        u_key = super_clean(r['상품명']) + "_" + super_clean(r['옵션'])
-        return reorder_map.get(u_key, 0)
-
-    df_uploaded['리오더 수량'] = df_uploaded.apply(final_match, axis=1)
-    return df_uploaded
-
-def get_realtime_data_v4(target_date):
-    """4단계/7단계용 실시간 잔량 계산"""
-    d7 = get_cached_values("발주기록")
-    dh = get_cached_values("입고기록")
-    
-    r_map, h_map = {}, {}
-    # 발주 합산
-    if len(d7) > 1:
-        for row in d7[1:]:
-            key = super_clean(row[1]) + super_clean(row[2])
-            val = to_int(row[5]) + to_int(row[6])
-            r_map[key] = r_map.get(key, 0) + val
+    try:
+        sh = get_sheet()
+        if not sh: return df_uploaded
+        
+        ws = sh.worksheet("발주기록")
+        all_data = ws.get_all_values()
+        if len(all_data) <= 1: return df_uploaded
             
-    # 입고 합산 (날짜 필터)
-    t_str = target_date.strftime('%Y-%m-%d')
-    if len(dh) > 1:
-        for row in dh[1:]:
-            if t_str in str(row[0]):
-                h_key = super_clean(row[1]) + super_clean(row[2])
-                h_map[h_key] = h_map.get(h_key, 0) + to_int(row[3])
-    return r_map, h_map
+        header = [str(h).strip().replace(" ", "") for h in all_data[0]]
+        idx_name = next((i for i, h in enumerate(header) if "상품명" in h), 1)
+        idx_opt = next((i for i, h in enumerate(header) if "옵션" in h), 2)
+        idx_f = next((i for i, h in enumerate(header) if "기존" in h), 5) 
+        idx_g = next((i for i, h in enumerate(header) if "추가" in h), 6) 
 
-# --- [6. 메인 UI 및 단계별 로직] ---
+        reorder_map = {}
+        for row in all_data[1:]:
+            s_name = super_clean(row[idx_name])
+            s_opt = super_clean(row[idx_opt])
+            if not s_name: continue
+            
+            # F열(기존) + G열(추가) 합산
+            qty = to_i(row[idx_f]) + to_i(row[idx_g])
+            if qty != 0:
+                key = s_name + "_" + s_opt
+                reorder_map[key] = reorder_map.get(key, 0) + qty
 
+        if "리오더 수량" in df_uploaded.columns:
+            df_uploaded = df_uploaded.drop(columns=["리오더 수량"])
+
+        def final_match(r):
+            u_key = super_clean(r.get('상품명', '')) + "_" + super_clean(r.get('옵션', ''))
+            return reorder_map.get(u_key, 0)
+
+        df_uploaded['리오더 수량'] = df_uploaded.apply(final_match, axis=1)
+        st.success(f"✅ 리오더 수량(기존+추가) 매칭 완료!")
+        return df_uploaded
+    except Exception as e:
+        st.error(f"동기화 오류: {e}")
+        return df_uploaded
+
+# --- [메인 UI 영역] ---
 st.title("📦 저스트원 통합 재고 관리 v4.0")
 tab1, tab2 = st.tabs(["🏭 제작 상품 관리", "🌙 동대문 사입 관리"])
 
 with tab1:
-    # --- 1단계 ---
+    # 1단계: 데이터 업로드
     st.subheader("📁 1단계: 데이터 업로드")
-    up_file = st.file_uploader("엑셀/CSV 파일 업로드", type=['xlsx', 'xls', 'csv'], key=f"up_{st.session_state.upload_key}")
-    
+    up_file = st.file_uploader("파일 업로드", type=['xlsx', 'xls', 'csv'], key=f"up_{st.session_state.upload_key}")
+
     if st.button("🔄 화면 전체 초기화", use_container_width=True):
+        for key in list(st.session_state.keys()):
+            if key != "upload_key": del st.session_state[key]
         st.session_state.upload_key += 1
-        st.session_state.df_raw = None
-        st.session_state.analyzed = False
-        st.cache_data.clear()
         st.rerun()
 
     if up_file and st.session_state.df_raw is None:
-        with st.spinner("🔄 데이터 로드 및 시트 매칭 중..."):
+        try:
             df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
             df.columns = [str(c).strip() for c in df.columns]
-            df = sync_reorder_from_sheet(df)
+            with st.spinner("🔄 구글 시트 데이터 불러오는 중..."):
+                df = sync_reorder_from_sheet(df)
             st.session_state.df_raw = df.fillna("")
+            st.rerun()
+        except Exception as e:
+            st.error(f"파일 로드 오류: {e}")
 
-# ------------------------------------------------------------------
-# [2단계: 컬럼 매핑 및 매개변수 설정] - 등록일, LT, SS 포함
-# ------------------------------------------------------------------
-if st.session_state.get('df_raw') is not None:
-    st.divider()
-    st.subheader("⚙️ 2단계: 상세 컬럼 매핑 및 발주 환경 설정")
-    
-    cols = st.session_state.df_raw.columns.tolist()
-    
-    # 1. 컬럼 매핑 (등록일 포함 모든 필수 항목)
-    with st.expander("📌 엑셀 컬럼 매핑 설정", expanded=True):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            s_out = st.selectbox("🚦 판매상태", cols, index=0, key="map_so")
-            vnd = st.selectbox("🏢 공급처(업체명)", cols, index=1, key="map_vn")
-            item = st.selectbox("📦 상품명", cols, index=2, key="map_it")
-            reg_date = st.selectbox("🗓️ 등록일", cols, index=min(len(cols)-3, 0), key="map_reg") # 등록일 추가
-        with c2:
-            opt = st.selectbox("🎨 옵션명", cols, index=3, key="map_op")
-            v_it = st.selectbox("🆔 공급처 상품코드", cols, index=4, key="map_vi")
-            stk = st.selectbox("🏠 정상재고", cols, index=5, key="map_st")
-        with c3:
-            avl = st.selectbox("✅ 가용재고", cols, index=6, key="map_av")
-            t3 = st.selectbox("🔥 3일 발주합계", cols, index=len(cols)-2, key="map_t3")
-            t7 = st.selectbox("📊 7일 발주합계", cols, index=len(cols)-1, key="map_t7")
+    # 2단계 & 3단계
+    if st.session_state.df_raw is not None:
+        st.divider()
+        st.subheader("📋 2단계: 매핑 항목 확인")
+        cols = st.session_state.df_raw.columns.tolist()
+        
+        def auto_idx(keys, exclude_keys=None):
+            for i, c in enumerate(cols):
+                col_n = str(c)
+                if exclude_keys and any(ek in col_n for ek in exclude_keys): continue
+                if any(k in col_n for k in keys): return i
+            return 0
 
-    # 2. 발주 환경 설정 (리드타임, 안전재고 - 사장님 핵심 기능)
-    with st.expander("🚀 발주 시뮬레이션 매개변수 설정", expanded=True):
-        cc1, cc2 = st.columns(2)
-        with cc1:
-            lt_val = st.number_input("🚚 리드타임(LT) (상품 도착까지 걸리는 일수)", min_value=1, value=3, step=1)
-        with cc2:
-            ss_val = st.number_input("🛡️ 안전재고(SS) (품절 방지 여유 일수)", min_value=0, value=2, step=1)
+        c_left, c_right = st.columns(2)
+        with c_left:
+            st.markdown("##### [ 기본 정보 ]")
+            it = st.selectbox("📦 상품명", cols, index=auto_idx(['상품명']), key="sel_it")
+            op = st.selectbox("🎨 옵션", cols, index=auto_idx(['옵션']), key="sel_op")
+            vn = st.selectbox("🏭 공급처", cols, index=auto_idx(['공급처']), key="sel_vn")
+            vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(['공급처상품명', '공급처상품']), key="sel_vi") # 복구완료
+            so = st.selectbox("🚫 품절여부", cols, index=auto_idx(['품절']), key="sel_so")
+        with c_right:
+            st.markdown("##### [ 수량 및 날짜 ]")
+            av = st.selectbox("✅ 가용재고", cols, index=auto_idx(['가용재고']), key="sel_av")
+            stk = st.selectbox("📦 정상재고", cols, index=auto_idx(['정상재고']), key="sel_stk")
+            t3 = st.selectbox("🔥 3일 판매", cols, index=auto_idx(['3일'], exclude_keys=['7일', '품절']), key="sel_t3") # 복구완료
+            t7 = st.selectbox("📅 7일 판매", cols, index=auto_idx(['7일', '1주'], exclude_keys=['3일']), key="sel_t7")
+            reg = st.selectbox("📆 등록일", cols, index=auto_idx(['등록일']), key="sel_reg")
 
-    # 모든 설정값 세션에 통합 저장
-    st.session_state.p = {
-        'so': s_out, 'vn': vnd, 'it': item, 'op': opt, 'vi': v_it,
-        'st': stk, 'av': avl, 't3': t3, 't7': t7, 'reg': reg_date,
-        'lt': lt_val, 'ss': ss_val
-    }
+        st.divider()
+        st.subheader("🚀 3단계: 분석 설정")
+        s1, s2 = st.columns(2)
+        with s1: lt_val = st.number_input("⏳ 리드타임(LT)", value=7, key="inp_lt")
+        with s2: ss_val = st.number_input("🛡️ 안전재고(SS)", value=3, key="inp_ss")
 
-# ------------------------------------------------------------------
-# [3단계: 데이터 분석 실행] - '품절' 문자 제거 및 권장수량 계산
-# ------------------------------------------------------------------
-if st.session_state.get('p'):
-    st.divider()
-    st.subheader("📈 3단계: 데이터 분석 및 발주 권장량 산출")
-    
-    if st.button("🚀 분석 알고리즘 실행", use_container_width=True, type="primary"):
-        with st.spinner("데이터를 정밀 분석 중입니다..."):
-            df = st.session_state.df_raw.copy()
-            p = st.session_state.p
-
-            # A. 숫자형 데이터 강제 변환 (문자열 제거 로직)
-            numeric_target = [p['st'], p['av'], p['t3'], p['t7']]
-            for col in numeric_target:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
-
-            # B. 일판매량 계산 (7일 가중치 우선)
-            df['일판매량'] = df.apply(
-                lambda r: round(r[p['t7']]/7, 2) if r[p['t7']] > 0 
-                else (round(r[p['t3']]/3, 2) if r[p['t3']] > 0 else 0), axis=1
-            )
+        if st.button("📊 데이터 분석 시작", type="primary", use_container_width=True):
+            st.session_state.p = {
+                'it': it, 'op': op, 'vn': vn, 'vi': vi, 'so': so, 
+                'av': av, 'st': stk, 't3': t3, 't7': t7, 'reg': reg,
+                'lt': lt_val, 'ss': ss_val
+            }
+            # 데이터 타입 정리
+            df_final = st.session_state.df_raw.copy()
+            for col in [t3, t7, '리오더 수량']:
+                df_final[col] = pd.to_numeric(df_final.get(col, 0), errors='coerce').fillna(0)
             
-            # C. 매칭용 슈퍼 클린키 생성
-            df['clean_key'] = df.apply(lambda r: super_clean(str(r[p['it']])) + super_clean(str(r[p['op']])), axis=1)
-            
-            # D. 분석 완료 플래그
-            st.session_state.df_raw = df
+            st.session_state.df_raw = df_final
             st.session_state.analyzed = True
-            st.success("✅ 알고리즘 분석 완료!")
+            st.success("✅ 분석 완료! 4단계로 이동하세요.")
+            st.rerun()
 
-    # E. 분석 결과 대시보드 (에러 방지 처리 완료)
-    if st.session_state.get('analyzed'):
-        p = st.session_state.p
-        df_res = st.session_state.df_raw
-        
-        c1, c2, c3, c4 = st.columns(4)
-        total_items = len(df_res)
-        # 품절 상태 필터링 (텍스트 포함 여부 확인)
-        sold_out_count = len(df_res[df_res[p['so']].astype(str).str.contains("품절", na=False)])
-        
-        c1.metric("📦 전체 품목", f"{total_items}개")
-        c2.metric("🚫 현재 품절", f"{sold_out_count}개")
-        c3.metric("🚚 리드타임(LT)", f"{p['lt']}일")
-        c4.metric("🛡️ 안전재고(SS)", f"{p['ss']}일")
+        if st.button("🧹 화면 초기화", use_container_width=False):
+            for k in ['analyzed', 'p', 'df_raw']:
+                if k in st.session_state: del st.session_state[k]
+            st.session_state.upload_key += 1
+            st.rerun()
 
 
 # ------------------------------------------------------------------
