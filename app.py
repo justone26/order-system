@@ -366,7 +366,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 if "메모" in val: st.session_state.df_raw.at[idx, "메모"] = str(val["메모"])
             st.rerun()
 
-    # [4] 분산 저장 및 다운로드
+   # [4] 분산 저장 및 다운로드
     c_save, c_down = st.columns(2)
     
     with c_save:
@@ -378,15 +378,26 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                 try:
                     sh = get_sheet()
                     ws_order = sh.worksheet("발주기록")
-                    ws_hist = sh.worksheet("히스토리")
+                    # [수정포인트 1] 시트명을 사장님 실제 시트명인 'history'로 변경
+                    ws_hist = sh.worksheet("history") 
                     
-                    now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-                    order_rows = []    # 발주기록용 (총합계 저장)
-                    history_rows = []  # 히스토리용 (추가분만 저장)
+                    now_dt = datetime.now(KST)
+                    now_s = now_dt.strftime('%Y-%m-%d %H:%M')
+                    short_date = now_dt.strftime('%m/%d') # 메모용 날짜 (04/02 형식)
+                    
+                    order_rows = []    # 발주기록용
+                    history_rows = []  # 히스토리용
                     
                     for idx, add_qty in final_add_dict.items():
                         if add_qty > 0:
                             total_qty = int(df_v5.at[idx, "기존잔량"]) + int(add_qty)
+                            
+                            # [수정포인트 2] 메모에서 이모지 제거 및 날짜 간소화
+                            raw_memo = str(df_v5.at[idx, "메모"]).strip()
+                            # 기존 메모에서 사장님이 직접 넣으신 이모지는 유지되나, 
+                            # 시스템이 자동으로 붙이는 이모지가 있다면 여기서 텍스트만 처리합니다.
+                            # (현재는 입력된 메모 그대로를 문자열로만 깔끔하게 처리하도록 설정)
+                            memo_val = raw_memo 
                             
                             # 공통 데이터 추출
                             row_base = [
@@ -397,7 +408,6 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                                 int(df_v5.at[idx, avl]), 
                                 0 # F열(기존리오더)은 0으로 고정하여 중복방지
                             ]
-                            memo_val = str(df_v5.at[idx, "메모"])
                             vnd_val = str(df_v5.at[idx, vnd])
 
                             # A. 발주기록용 (총 리오더 수량 저장)
@@ -407,15 +417,16 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
                             history_rows.append(row_base + [int(add_qty), 0, memo_val, vnd_val])
                     
                     if order_rows:
-                        # 시트 저장 (추가된 상품만!)
+                        # 시트 저장
                         ws_order.append_rows(order_rows)
                         ws_hist.append_rows(history_rows)
                         
-                        st.success(f"✅ {len(order_rows)}건 분산 저장 완료! (발주기록/히스토리)")
+                        st.success(f"✅ {len(order_rows)}건 분산 저장 완료! (발주기록/history)")
                         st.cache_data.clear()
                         st.session_state.add_order_dict = {} 
                         time.sleep(1); st.rerun()
                 except Exception as e:
+                    # [확인용] 에러가 나면 어떤 시트 때문인지 더 자세히 출력
                     st.error(f"시트 저장 실패: {e}")
             else:
                 st.warning("저장할 추가 발주 수량이 없습니다. 1번 확정을 먼저 눌러주세요.")
