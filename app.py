@@ -556,111 +556,68 @@ if st.session_state.get('analyzed'):
         
 
 # ------------------------------------------------------------------
-# [7단계: 실시간 리오더 최종 잔량 상황판] - 시트 복사 대응 및 안정화 버전
+# [7단계: 데이터 복구 모드 - 마이너스 기록만 입고로 인정]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
-    st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
+    st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판 (데이터 복구 중)")
 
-    @st.cache_data(ttl=600)
-    def get_v7_final_integrated_data():
+    @st.cache_data(ttl=10) # 실시간 확인을 위해 캐시 최소화
+    def get_v7_recovery_data():
         try:
             sh = get_sheet()
-            # 1. [발주기록] 로드 (제목 2행)
+            # 1. 발주기록 (모든 주문 내역)
             ws_o = sh.worksheet("발주기록")
             o_all = ws_o.get_all_values()
-            # 2행(index 1)이 제목인지, 1행(index 0)이 제목인지 자동 체크
             o_h_idx = 1 if len(o_all) > 1 and "상품명" in o_all[1] else 0
-            df_o = pd.DataFrame(o_all[o_h_idx+1:], columns=o_all[o_h_idx]) if len(o_all) > 1 else pd.DataFrame()
+            df_o = pd.DataFrame(o_all[o_h_idx+1:], columns=o_all[o_h_idx])
             
-            # 2. [입고기록] 로드 (발주기록 복사본이므로 구조 동일)
+            # 2. 입고기록 (복사본 포함)
             ws_r = sh.worksheet("입고기록")
             r_all = ws_r.get_all_values()
             r_h_idx = 1 if len(r_all) > 1 and "상품명" in r_all[1] else 0
-            df_r = pd.DataFrame(r_all[r_h_idx+1:], columns=r_all[r_h_idx]) if len(r_all) > 1 else pd.DataFrame()
+            df_r = pd.DataFrame(r_all[r_h_idx+1:], columns=r_all[r_h_idx])
             
             return df_o, df_r
-        except Exception as e:
-            st.error(f"데이터 로드 실패: {e}")
-            return pd.DataFrame(), pd.DataFrame()
+        except: return pd.DataFrame(), pd.DataFrame()
 
-    df_order_raw, df_receive_raw = get_v7_final_integrated_data()
+    df_o, df_r = get_v7_recovery_data()
 
-    if not df_order_raw.empty:
-        try:
-            # --- [A] 발주 데이터 전처리 ---
-            df_o = df_order_raw.copy()
-            # 날짜/발주시간 컬럼 통일 (에러 방지)
-            time_col = next((c for c in ["날짜", "발주시간", "시간"] if c in df_o.columns), df_o.columns[0])
-            # 수량 컬럼 찾기 (G열: 추가발주)
-            o_qty_col = next((c for c in ["추가발주", "추가발주량", "수량"] if c in df_o.columns), df_o.columns[6])
+    if not df_o.empty:
+        # G열(추가발주) 수량 컬럼 찾기
+        q_col = next((c for c in ["추가발주", "추가발주량", "수량"] if c in df_o.columns), df_o.columns[6])
+        
+        # 데이터 정리 (숫자 변환 및 키 생성)
+        for df in [df_o, df_r]:
+            df[q_col] = pd.to_numeric(df[q_col], errors='coerce').fillna(0).astype(int)
+            df['key'] = (df['상품명'].astype(str) + df['옵션'].astype(str)).str.replace(" ","").str.upper()
+
+        # [A] 진짜 발주 총량 (발주기록 시트의 양수값만!)
+        orders = df_o[df_o[q_col] > 0].groupby(['key', '업체명', '상품명', '옵션'], as_index=False).agg({q_col: 'sum'})
+
+        # [B] 진짜 입고량 (입고기록 시트에서 '음수'였던 것 + 신규 입고값)
+        # 사장님이 과거에 -100 이라고 적었던 것들만 '입고'로 인식해서 양수로 변환
+        df_r['actual_in'] = df_r[q_col].apply(lambda x: abs(x) if x < 0 else 0) 
+        # (주의: 만약 입고기록에 앞으로 양수(+)로 적으실 거라면 'else 0'을 'else x'로 바꾸면 됩니다)
+        
+        receives = df_r.groupby('key')['actual_in'].sum()
+
+        # [C] 잔량 계산
+        orders['잔량'] = orders.apply(lambda x: x[q_col] - receives.get(x['key'], 0), axis=1)
+        df_final = orders[orders['잔량'] > 0].copy()
+
+        # [D] 화면 출력
+        if not df_final.empty:
+            st.warning(f"⚠️ 현재 {len(df_final)}개의 미입고 품목이 발견되었습니다.")
+            v_sum = df_final.groupby("업체명")["잔량"].sum().reset_index().sort_values("잔량", ascending=False)
             
-            df_o[o_qty_col] = pd.to_numeric(df_o[o_qty_col], errors='coerce').fillna(0).astype(int)
-            df_o['match_key'] = (df_o['상품명'].astype(str) + df_o['옵션'].astype(str)).str.replace(" ","").str.upper()
+            # 업체별 요약
+            cols = st.columns(4)
+            for i, r in enumerate(v_sum.itertuples()):
+                with cols[i%4]: st.metric(r.업체명, f"{int(r.잔량)}개")
             
-            # 순수 발주 합계 (양수만)
-            order_sum = df_o[df_o[o_qty_col] > 0].groupby(['match_key', '업체명', '상품명', '옵션'], as_index=False).agg({
-                time_col: 'max',
-                o_qty_col: 'sum'
-            })
-
-            # --- [B] 입고 데이터 전처리 (복사본+신규) ---
-            receive_total_sum = pd.Series(dtype=int)
-            if not df_receive_raw.empty:
-                df_r = df_receive_raw.copy()
-                # 입고 기록에서도 수량 컬럼 찾기
-                r_qty_col = next((c for c in ["추가발주", "수량", "입고량"] if c in df_r.columns), df_r.columns[6])
-                
-                df_r[r_qty_col] = pd.to_numeric(df_r[r_qty_col], errors='coerce').fillna(0).astype(int)
-                df_r['match_key'] = (df_r['상품명'].astype(str) + df_r['옵션'].astype(str)).str.replace(" ","").str.upper()
-                
-                # 과거 마이너스 차감분은 양수로 바꿔서 입고량에 포함, 신규 양수 입고분도 포함
-                df_r['actual_received'] = df_r[r_qty_col].apply(lambda x: abs(x) if x < 0 else x)
-                receive_total_sum = df_r.groupby('match_key')['actual_received'].sum()
-
-            # --- [C] 최종 차감 계산 ---
-            order_sum['최종잔량'] = order_sum.apply(
-                lambda x: max(0, x[o_qty_col] - receive_total_sum.get(x['match_key'], 0)), axis=1
-            )
-
-            # --- [D] 필터 및 결과 출력 ---
-            # 잔량이 0보다 큰 것만 표시
-            df_display = order_sum[order_sum["최종잔량"] > 0].copy()
-            
-            # UI 구성
-            f1, f2 = st.columns([3, 1])
-            with f1: q_v7 = st.text_input("🔍 상품명/옵션 검색", key="v7_qs_final")
-            with f2: 
-                st.write("") # 간격 맞춤
-                if st.button("🔄 새로고침", use_container_width=True):
-                    st.cache_data.clear()
-                    st.rerun()
-
-            if q_v7:
-                df_display = df_display[df_display["상품명"].str.contains(q_v7, case=False) | df_display["옵션"].str.contains(q_v7, case=False)]
-
-            if not df_display.empty:
-                st.write("### 📊 실시간 미입고 현황")
-                
-                # 업체별 요약 전광판
-                v_sum = df_display.groupby("업체명")["최종잔량"].sum().reset_index().sort_values("최종잔량", ascending=False)
-                cols = st.columns(min(len(v_sum), 4))
-                for i, r in enumerate(v_sum.itertuples()):
-                    with cols[i % 4]: st.metric(r.업체명, f"{int(r.최종잔량):,}개")
-                
-                # 상세 테이블
-                st.dataframe(
-                    df_display.sort_values(time_col, ascending=False),
-                    use_container_width=True, hide_index=True,
-                    column_order=[time_col, "업체명", "상품명", "옵션", o_qty_col, "최종잔량"],
-                    column_config={
-                        time_col: st.column_config.TextColumn("🕒 최근발주"),
-                        o_qty_col: st.column_config.NumberColumn("📦 총 발주량"),
-                        "최종잔량": st.column_config.NumberColumn("🔢 미입고 잔량", format="%d")
-                    }
-                )
-            else:
-                st.success("✅ 미입고 건이 없습니다! 모든 상품이 입고되었습니다.")
-
-        except Exception as e:
-            st.error(f"7단계 데이터 처리 오류: {e}")
+            # 리스트 출력
+            st.dataframe(df_final[['업체명', '상품명', '옵션', q_col, '잔량']].sort_values('잔량', ascending=False), 
+                         use_container_width=True, hide_index=True)
+        else:
+            st.info("데이터 분석 결과 미입고 내역이 없습니다. 시트의 마이너스(-) 표시를 확인해주세요.")
