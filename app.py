@@ -635,11 +635,10 @@ if st.session_state.get('analyzed'):
             df_final[date_col] = pd.to_datetime(df_final[date_col], errors='coerce')
             df_final = df_final[(df_final[date_col].dt.date >= search_date[0]) & (df_final[date_col].dt.date <= search_date[1])]
 
-        # --- [최종 화면 출력] ---
-       # [7단계 출력부 컬럼 순서 및 구성 수정]
-        if not df_final.empty:
-        # 사장님 요청 순서로 재배치
-            display_cols = [
+        # [7단계 출력부 컬럼 순서 및 구성 수정]
+if not df_final.empty:
+    # 사장님 요청 순서로 재배치
+    display_cols = [
         "날짜", "업체명", "상품명", "옵션", "공급처상품명", 
         "총리오더수량", "입고수량", "미입고잔량", "메모"
     ]
@@ -656,7 +655,6 @@ if st.session_state.get('analyzed'):
             "메모": st.column_config.TextColumn("📝 메모", width="medium")
         }
     )
-            
             # 엑셀 다운로드
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
