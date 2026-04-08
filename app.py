@@ -556,14 +556,16 @@ if st.session_state.get('analyzed'):
         
 
 # ------------------------------------------------------------------
-# [7단계: 특정 업체 누락 방지 및 데이터 강제 복구 버전]
+# [7단계: 최종 통합 상황판 - 필터 복구 및 엑셀 다운로드]
 # ------------------------------------------------------------------
+import io  # 엑셀 다운로드용
+
 if st.session_state.get('analyzed'):
     st.divider()
     st.subheader("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
 
-    @st.cache_data(ttl=5) # 즉각적인 확인을 위해 캐시를 거의 없앰
-    def get_v7_perfect_data():
+    @st.cache_data(ttl=5)
+    def get_v7_final_data():
         try:
             sh = get_sheet()
             # 1. 발주기록 로드
@@ -581,56 +583,87 @@ if st.session_state.get('analyzed'):
             return df_o, df_r
         except: return pd.DataFrame(), pd.DataFrame()
 
-    df_o, df_r = get_v7_perfect_data()
+    df_o_raw, df_r_raw = get_v7_final_data()
 
-    if not df_o.empty:
-        # 수량 컬럼 (G열: 추가발주)
-        q_col = next((c for c in ["추가발주", "추가발주량", "수량"] if c in df_o.columns), df_o.columns[6])
+    if not df_o_raw.empty:
+        # --- [상단 필터 영역] ---
+        st.write("#### 🔍 데이터 필터링")
+        c1, c2, c3 = st.columns([2, 2, 2])
         
-        # 숫자 변환 및 키 생성 (공백 제거하여 매칭 확률 업)
-        for df in [df_o, df_r]:
+        with c1:
+            # 날짜 검색/업데이트 (발주 날짜 기준)
+            date_col_name = next((c for c in ["날짜", "발주시간"] if c in df_o_raw.columns), df_o_raw.columns[0])
+            # 날짜 형식이 있을 경우를 대비해 간단한 텍스트 혹은 날짜 선택기 가능
+            search_date = st.date_input("📅 날짜 범위", value=[]) 
+        
+        with c2:
+            # 상품명 검색
+            search_prod = st.text_input("📦 상품명 검색", placeholder="상품명 또는 옵션 입력")
+            
+        with c3:
+            # 업체 셀렉트
+            vendor_list = ["전체 업체"] + sorted(df_o_raw["업체명"].unique().tolist())
+            search_vendor = st.selectbox("🏭 업체 선택", vendor_list)
+
+        # --- [데이터 처리 로직] ---
+        q_col = next((c for c in ["추가발주", "추가발주량", "수량"] if c in df_o_raw.columns), df_o_raw.columns[6])
+        
+        for df in [df_o_raw, df_r_raw]:
             df[q_col] = pd.to_numeric(df[q_col], errors='coerce').fillna(0).astype(int)
             df['key'] = (df['상품명'].astype(str) + df['옵션'].astype(str)).str.replace(" ","").str.upper()
 
-        # [A] 발주 계산: '발주기록' 시트의 양수(+)값만 합산
-        # '퍼스트' 업체가 여기서 먼저 잡힙니다.
-        df_orders = df_o[df_o[q_col] > 0].groupby(['key', '업체명', '상품명', '옵션'], as_index=False).agg({
+        # [A] 발주 집계
+        df_orders = df_o_raw[df_o_raw[q_col] > 0].groupby(['key', '업체명', '상품명', '옵션'], as_index=False).agg({
+            date_col_name: 'max',
+            '공급처상품명': 'first',
             q_col: 'sum',
-            df_o.columns[0]: 'max' # 날짜
+            '메모': lambda x: " / ".join(dict.fromkeys(filter(None, x.astype(str))))
         })
 
-        # [B] 입고 계산: '입고기록' 시트에서 오직 음수(-)값만 입고로 인정!
-        # 사장님이 복사해서 넣은 플러스(+) 값은 'actual_in'이 0이 되어 무시됩니다.
-        df_r['actual_in'] = df_r[q_col].apply(lambda x: abs(x) if x < 0 else 0)
-        receive_sum = df_r.groupby('key')['actual_in'].sum()
+        # [B] 입고 집계 (음수만 인정)
+        df_r_raw['actual_in'] = df_r_raw[q_col].apply(lambda x: abs(x) if x < 0 else 0)
+        receive_sum = df_r_raw.groupby('key')['actual_in'].sum()
 
-        # [C] 잔량 계산 (발주 - 진짜입고)
-        df_orders['잔량'] = df_orders.apply(lambda x: x[q_col] - receive_sum.get(x['key'], 0), axis=1)
+        # [C] 잔량 계산
+        df_orders['미입고잔량'] = df_orders.apply(lambda x: x[q_col] - receive_sum.get(x['key'], 0), axis=1)
+        df_final = df_orders[df_orders['미입고잔량'] > 0].copy()
         
-        # 최종 표시 (잔량이 1개라도 남은 것)
-        df_final = df_orders[df_orders['잔량'] > 0].copy()
+        # --- [필터 적용] ---
+        if search_vendor != "전체 업체":
+            df_final = df_final[df_final["업체명"] == search_vendor]
+        if search_prod:
+            df_final = df_final[df_final["상품명"].str.contains(search_prod, case=False) | df_final["옵션"].str.contains(search_prod, case=False)]
+        # 날짜 필터 (선택 시에만 작동)
+        if len(search_date) == 2:
+            df_final[date_col_name] = pd.to_datetime(df_final[date_col_name], errors='coerce')
+            start_d, end_d = pd.Timestamp(search_date[0]), pd.Timestamp(search_date[1])
+            df_final = df_final[(df_final[date_col_name] >= start_d) & (df_final[date_col_name] <= end_d)]
 
-        # --- 출력부 ---
-        # 업체 필터에 '퍼스트'가 있는지 확인하기 위해 필터 추가
-        st.write(f"### 📊 전체 미입고: {df_final['잔량'].sum():,}개")
-        
-        target_v = st.multiselect("🏭 업체별 보기", options=sorted(df_final['업체명'].unique()), default=sorted(df_final['업체명'].unique()))
-        
-        df_display = df_final[df_final['업체명'].isin(target_v)]
-
-        if not df_display.empty:
-            # 업체별 요약 카드
-            v_sum = df_display.groupby("업체명")["잔량"].sum().reset_index().sort_values("잔량", ascending=False)
-            v_cols = st.columns(min(len(v_sum), 4))
-            for i, r in enumerate(v_sum.itertuples()):
-                with v_cols[i%4]:
-                    st.metric(label=r.업체명, value=f"{int(r.잔량)}개")
+        # --- [결과 출력] ---
+        if not df_final.empty:
+            # 사장님 요청 순서로 컬럼 정리
+            df_final = df_final.rename(columns={date_col_name: "날짜", q_col: "추가리오더"})
+            display_cols = ["날짜", "업체명", "상품명", "옵션", "공급처상품명", "미입고잔량", "추가리오더", "메모"]
             
             st.dataframe(
-                df_display.sort_values("잔량", ascending=False),
+                df_final.sort_values("날짜", ascending=False),
                 use_container_width=True,
                 hide_index=True,
-                column_config={"잔량": st.column_config.NumberColumn("🔢 미입고 잔량", format="%d")}
+                column_order=display_cols,
+                column_config={"미입고잔량": st.column_config.NumberColumn(format="%d"), "추가리오더": st.column_config.NumberColumn(format="%d")}
+            )
+            
+            # --- [하단 엑셀 다운로드] ---
+            st.write("")
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_final[display_cols].to_excel(writer, index=False, sheet_name='미입고현황')
+            
+            st.download_button(
+                label="📥 미입고 리스트 엑셀 다운로드",
+                data=output.getvalue(),
+                file_name=f"미입고현황_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.info("선택한 업체의 미입고 내역이 없거나 모두 입고되었습니다.")
+            st.info("검색 조건에 맞는 미입고 내역이 없습니다.")
