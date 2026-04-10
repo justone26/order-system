@@ -298,12 +298,16 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
 
                 
 # ------------------------------------------------------------------
-# [5단계: 최종 발주 요약] - 긴급 옵션이 있는 "상품"의 모든 옵션 노출
+# [5단계: 최종 발주 요약] - 실시간 수량 저장 (검색/필터 시 유지)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     st.divider()
-    
-    # [1] 데이터 준비 및 숫자 변환
+
+    # [0] 세션 초기화
+    if 'add_order_dict' not in st.session_state:
+        st.session_state.add_order_dict = {}
+
+    # [1] 데이터 준비
     df_v5 = st.session_state.df_raw.copy()
     reorder_map_v5, _ = get_realtime_data_v4(datetime.now(KST).date())
 
@@ -311,7 +315,7 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
         if col in df_v5.columns:
             df_v5[col] = pd.to_numeric(df_v5[col], errors='coerce').fillna(0).astype(int)
 
-    # [2] 계산 및 개별 상태 판별
+    # [2] 계산 로직
     def get_clean_key_v5(r):
         import unicodedata, re
         n = re.sub(r'[^a-zA-Z0-9가-힣]', '', unicodedata.normalize('NFC', str(r.get(item, "")))).upper().strip()
@@ -323,134 +327,100 @@ if st.session_state.get('analyzed') and st.session_state.df_raw is not None:
     df_v5['일판매'] = df_v5.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
     df_v5['발주권장'] = ((df_v5['일판매'] * (lt + ss)) - (df_v5[avl] + df_v5["리오더잔량"])).clip(lower=0).astype(int)
 
-    # ⭐ 핵심 로직 수정: 
-    # 1. 옵션별로 긴급/정상 표기 (사장님 요청: S는 긴급, M은 정상)
     df_v5['알림표기'] = df_v5['발주권장'].apply(lambda x: "🚨 긴급발주" if x > 0 else "✅ 정상")
-    
-    # 2. "긴급 옵션"이 하나라도 포함된 상품명 리스트 추출
     urgent_product_names = df_v5[df_v5['발주권장'] > 0][item].unique()
-    
-    # 3. 정렬을 위한 가중치 (긴급 상품군을 위로 올리기 위함)
     df_v5['is_urgent_group'] = df_v5[item].apply(lambda x: 0 if x in urgent_product_names else 1)
 
-    # [3] UI 및 필터
+    # [3] 필터 및 검색창 (이 값들이 바뀌어도 숫자가 유지됨)
     f1, f2 = st.columns([1, 2])
     with f1: 
-        m5_f = st.selectbox(
-            "🚦 상태 필터", 
-            ["전체보기", "🚨 긴급포함 상품군", "✅ 정상 상품들"], 
-            index=1, # 첫 로딩 시 "긴급포함 상품군" 선택
-            key="v5_group_filter"
-        )
+        m5_f = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 긴급포함 상품군", "✅ 정상 상품들"], index=1, key="v5_filter")
     with f2: 
-        s5_q = st.text_input("🔍 검색 (상품명/옵션)", key="v5_group_search")
+        s5_q = st.text_input("🔍 검색 (상품명/옵션)", key="v5_search")
 
-    # 필터 적용
+    # 데이터 필터링
     df_v5_v = df_v5.copy()
     if s5_q:
         df_v5_v = df_v5_v[df_v5_v[item].astype(str).str.contains(s5_q, case=False) | df_v5_v[opt].astype(str).str.contains(s5_q, case=False)]
     
     if m5_f == "🚨 긴급포함 상품군":
-        # 긴급 옵션이 하나라도 있는 '상품'에 속한 모든 행을 보여줌
         df_v5_v = df_v5_v[df_v5_v[item].isin(urgent_product_names)]
     elif m5_f == "✅ 정상 상품들":
-        # 긴급 옵션이 하나도 없는 '상품'들만 보여줌
         df_v5_v = df_v5_v[~df_v5_v[item].isin(urgent_product_names)]
 
-    # 정렬: 긴급 상품군 우선 -> 상품명 -> 옵션 순
     df_v5_v = df_v5_v.sort_values(by=['is_urgent_group', item, opt])
 
-    # [4] 에디터 화면 (사장님 지정 순서 고정)
-    with st.form("v5_group_integrated_form"):
-        target_order = ["알림표기", vnd, item, opt, v_it, avl, "리오더잔량", "추가발주입력", "총합계", "발주권장", "메모"]
-        v_map = {"알림표기": "상태", vnd: "공급처", item: "상품명", opt: "옵션", v_it: "공급처상품명",
-                 avl: "가용재고", "리오더잔량": "기존잔량", "추가발주입력": "추가발주", "총합계": "총합계", "발주권장": "권장발주", "메모": "메모"}
+    # [4] ⭐ 실시간 수량 저장 핵심 함수
+    def sync_editor_changes():
+        # 에디터에서 변경된 내용을 즉시 세션 딕셔너리에 반영
+        if "v5_editor_key" in st.session_state:
+            edits = st.session_state["v5_editor_key"].get("edited_rows", {})
+            for r_idx_str, val in edits.items():
+                r_idx = int(r_idx_str)
+                real_idx = df_v5_v.index[r_idx] # 현재 화면 인덱스를 실제 데이터 인덱스로 매핑
+                if "추가발주" in val:
+                    st.session_state.add_order_dict[real_idx] = val["추가발주"]
+                if "메모" in val:
+                    # 메모는 df_raw에 직접 기록
+                    st.session_state.df_raw.at[real_idx, "메모"] = val["메모"]
 
-        # 데이터 최종 매핑
-        df_v5_v['추가발주입력'] = df_v5_v.index.map(st.session_state.get('add_order_dict', {})).fillna(0).astype(int)
-        df_v5_v['총합계'] = df_v5_v["리오더잔량"] + df_v5_v['추가발주입력']
-        for c in target_order:
-            if c not in df_v5_v.columns: df_v5_v[c] = "" if c == "메모" else 0
-
-        df_ed = df_v5_v[target_order].rename(columns=v_map)
-        
-        st.data_editor(
-            df_ed, use_container_width=True, hide_index=True, key="v5_ed_group_submit",
-            column_config={
-                "상태": st.column_config.TextColumn("🚦 상태", width="small"),
-                "추가발주": st.column_config.NumberColumn("➕ 추가발주", min_value=0),
-                "권장발주": st.column_config.NumberColumn("💡 권장", disabled=True),
-            }
-        )
-        
-        if st.form_submit_button("✅ 1. 수량 및 메모 확정", use_container_width=True):
-            if 'add_order_dict' not in st.session_state: st.session_state.add_order_dict = {}
-            edits = st.session_state.v5_ed_group_submit.get("edited_rows", {})
-            for r_idx, val in edits.items():
-                idx = df_v5_v.index[int(r_idx)]
-                if "추가발주" in val: st.session_state.add_order_dict[idx] = int(val["추가발주"])
-                if "메모" in val: st.session_state.df_raw.at[idx, "메모"] = str(val["메모"])
-            st.rerun()
-
-    # 5. 저장 및 다운로드 버튼
-    c_save, c_down = st.columns(2)
+    # 화면 표시용 데이터 구성
+    target_order = ["알림표기", vnd, item, opt, v_it, avl, "리오더잔량", "추가발주입력", "총합계", "발주권장", "메모"]
+    df_v5_v['추가발주입력'] = df_v5_v.index.map(st.session_state.add_order_dict).fillna(0).astype(int)
+    df_v5_v['총합계'] = df_v5_v["리오더잔량"] + df_v5_v['추가발주입력']
     
+    # 열 이름 매핑
+    v_map = {"알림표기": "상태", vnd: "공급처", item: "상품명", opt: "옵션", v_it: "공급처상품명",
+             avl: "가용재고", "리오더잔량": "기존잔량", "추가발주입력": "추가발주", "총합계": "총합계", "발주권장": "권장발주", "메모": "메모"}
+    
+    df_ed = df_v5_v[target_order].rename(columns=v_map)
+
+    # 에디터 배치 (on_change를 사용하여 수정 즉시 저장)
+    st.data_editor(
+        df_ed, 
+        use_container_width=True, 
+        hide_index=True, 
+        key="v5_editor_key",
+        on_change=sync_editor_changes, # 👈 값이 바뀌면 바로 함수 실행!
+        column_config={
+            "상태": st.column_config.TextColumn("🚦 상태", width="small", disabled=True),
+            "추가발주": st.column_config.NumberColumn("➕ 추가발주", min_value=0),
+            "기존잔량": st.column_config.NumberColumn("📦 기존", disabled=True),
+            "권장발주": st.column_config.NumberColumn("💡 권장", disabled=True),
+        }
+    )
+
+    # [5] 저장 및 다운로드
+    c_save, c_down = st.columns(2)
     with c_save:
-        if st.button("💾 2. 구글 시트 최종 저장", use_container_width=True, type="primary"):
-            final_adds = st.session_state.get('add_order_dict', {})
+        if st.button("💾 구글 시트 최종 저장", use_container_width=True, type="primary"):
+            final_adds = st.session_state.add_order_dict
             if any(v > 0 for v in final_adds.values()):
                 try:
                     sh = get_sheet()
-                    ws_log = sh.worksheet("발주기록")
-                    ws_hist = sh.worksheet("history")
+                    ws_log = sh.worksheet("발주기록"); ws_hist = sh.worksheet("history")
                     now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-                    
-                    rows_to_save = []
+                    rows = []
                     for idx, qty in final_adds.items():
                         if qty > 0:
-                            rows_to_save.append([
-                                now_s, 
-                                str(df_v5.at[idx, item]), 
-                                str(df_v5.at[idx, opt]), 
-                                str(df_v5.at[idx, v_it]), 
-                                int(df_v5.at[idx, avl]), 
-                                int(df_v5.at[idx, "리오더잔량"]), 
-                                int(qty), 
-                                0, # 입고차감용 필드
-                                str(df_v5.at[idx, "메모"]).strip(), 
-                                str(df_v5.at[idx, vnd])
-                            ])
-                    
-                    if rows_to_save:
-                        ws_log.append_rows(rows_to_save)
-                        ws_hist.append_rows(rows_to_save)
-                        st.success(f"✅ {len(rows_to_save)}건 시트 저장 완료!")
-                        st.session_state.add_order_dict = {} # 저장 후 초기화
-                        st.cache_data.clear()
-                        time.sleep(1); st.rerun()
-                except Exception as e: st.error(f"저장 중 오류: {e}")
-            else:
-                st.warning("확정된 추가발주 수량이 없습니다.")
+                            rows.append([now_s, str(df_v5.at[idx, item]), str(df_v5.at[idx, opt]), str(df_v5.at[idx, v_it]),
+                                         int(df_v5.at[idx, avl]), int(df_v5.at[idx, "리오더잔량"]), int(qty), 0,
+                                         str(st.session_state.df_raw.at[idx, "메모"]).strip(), str(df_v5.at[idx, vnd])])
+                    if rows:
+                        ws_log.append_rows(rows); ws_hist.append_rows(rows)
+                        st.success("✅ 저장 완료!"); st.session_state.add_order_dict = {}; st.rerun()
+                except Exception as e: st.error(f"저장 실패: {e}")
+            else: st.warning("입력된 수량이 없습니다.")
 
     with c_down:
-        current_adds = st.session_state.get('add_order_dict', {})
+        current_adds = st.session_state.add_order_dict
         dl_list = [k for k, v in current_adds.items() if v > 0]
         if dl_list:
             df_dl = df_v5[df_v5.index.isin(dl_list)].copy()
-            df_dl['최종수량'] = df_dl.index.map(current_adds)
-            
-            csv_data = df_dl[[vnd, item, opt, v_it, '최종수량']].rename(columns={
-                vnd: "공급처", item: "상품명", opt: "옵션", v_it: "공급처상품명", "최종수량": "수량"
-            })
-            
-            st.download_button(
-                label="📥 3. 발주서(CSV) 다운로드",
-                data=csv_data.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'),
-                file_name=f"발주서_{datetime.now(KST).strftime('%m%d_%H%M')}.csv",
-                mime="text/csv", use_container_width=True
-            )
-        else:
-            st.button("📥 3. 다운로드 (내역없음)", disabled=True, use_container_width=True)
+            df_dl['수량'] = df_dl.index.map(current_adds)
+            csv = df_dl[[vnd, item, opt, v_it, '수량']].to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button("📥 발주서 다운로드", csv, f"발주서_{datetime.now(KST).strftime('%m%d_%H%M')}.csv", use_container_width=True)
+
 
 
 # ==================================================================
