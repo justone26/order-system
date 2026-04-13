@@ -292,76 +292,54 @@ if st.session_state.get('analyzed'):
 
         
                 
-# ------------------------------------------------------------------
-# [5단계: 히스토리 모드 - 과부하 방지 및 무한로딩 차단]
-# ------------------------------------------------------------------
-if st.session_state.get('analyzed'):
-    st.divider()
-    st.header("📜 5단계: 히스토리 모드 (최근 기록)")
-    
-    with st.expander("🕒 최근 기록 조회 (조회 버튼을 눌러주세요)", expanded=True):
-        # 1. 상단 검색바 레이아웃
-        c1, c2, c3 = st.columns([2, 2, 1])
-        with c1:
-            h_dr = st.date_input("🗓️ 조회 기간", 
-                                value=((datetime.now(KST)-timedelta(days=7)).date(), datetime.now(KST).date()),
-                                key="h_date_in")
-        with c2:
-            h_search = st.text_input("🔍 상품명 검색", placeholder="검색어 입력", key="h_txt_in")
-        with c3:
-            st.write(" ") # 높이 맞춤
-            # ⭐ 중요: 이 버튼을 누를 때만 구글 시트에 접속하게 합니다.
-            btn_fetch = st.button("🔎 조회하기", use_container_width=True, type="primary")
+    # --- 6️⃣단계: 전체 히스토리 관리 ---
+        st.divider()
+        st.header("📜 6단계: 전체 히스토리 관리")
+        
+        h1, h2, h3, h4 = st.columns([1.2, 0.8, 1.5, 1.5])
+        with h1:
+            today = datetime.now(KST).date()
+            d_range = st.date_input("🗓️ 1. 조회 범위", value=(today, today), key="v6_dr")
+        with h2:
+            st.write(""); st.write("")
+            search_trigger = st.button("🔍 2. 내역 조회", use_container_width=True, type="primary")
 
-        # 2. 데이터 조회 로직 (버튼 클릭 시에만 실행)
-        if btn_fetch or 'cached_log' in st.session_state:
-            try:
-                # 버튼을 누르면 새로 가져오고, 아니면 기존에 가져온 세션 데이터를 씁니다.
-                if btn_fetch or 'cached_log' not in st.session_state:
-                    with st.spinner("데이터를 불러오는 중..."):
-                        sh = get_sheet()
-                        ws_log = sh.worksheet("발주기록")
-                        df_raw = pd.DataFrame(ws_log.get_all_records())
-                        # 메모리(세션)에 저장해서 다시 시트를 부르지 않게 함
-                        st.session_state.cached_log = df_raw 
-                
-                df_h = st.session_state.cached_log.copy()
-                
-                if not df_h.empty:
-                    # 날짜 필터링
-                    df_h['일시_dt'] = pd.to_datetime(df_h['일시']).dt.date
-                    if isinstance(h_dr, tuple) and len(h_dr) == 2:
-                        df_h = df_h[(df_h['일시_dt'] >= h_dr[0]) & (df_h['일시_dt'] <= h_dr[1])]
-                    
-                    # 텍스트 검색 필터링
-                    if h_search:
-                        df_h = df_h[df_h['상품명'].astype(str).str.contains(h_search, case=False) | 
-                                    df_h['옵션'].astype(str).str.contains(h_search, case=False)]
-                    
-                    # 최신순 정렬 및 표시
-                    df_h = df_h.sort_values(by='일시', ascending=False)
-                    
-                    st.dataframe(
-                        df_h.drop(columns=['일시_dt']), 
-                        use_container_width=True, 
-                        hide_index=True,
-                        column_config={
-                            "일시": st.column_config.TextColumn("날짜/시간", width="medium"),
-                            "상품명": st.column_config.TextColumn("상품명", width="large"),
-                            "수량": st.column_config.NumberColumn("수량", format="%d")
-                        }
-                    )
-                else:
-                    st.info("조회된 기록이 없습니다.")
-            except Exception as e:
-                st.error(f"데이터 로드 중 오류: {e}")
+        if 'v6_data' not in st.session_state: st.session_state.v6_data = None
+        if 'v6_sessions' not in st.session_state: st.session_state.v6_sessions = []
 
-        # 3. 강제 초기화 버튼 (무한 로딩 시 탈출구)
-        if st.button("♻️ 데이터 초기화 (로딩 멈춤)", use_container_width=True):
-            if 'cached_log' in st.session_state:
-                del st.session_state.cached_log
-            st.cache_data.clear()
-            st.rerun()
+        if search_trigger:
+            sh = get_sheet()
+            if sh:
+                all_h = sh.worksheet("발주기록").get_all_values()
+                if len(all_h) > 1:
+                    df_all = pd.DataFrame(all_h[1:], columns=["발주시간", "상품명", "옵션", "공급처상품명", "가용재고", "리오더잔량", "추가발주", "발주권장", "메모", "업체명"])
+                    df_all["날짜_만"] = df_all["발주시간"].str.slice(0, 10)
+                    s_d = d_range[0].strftime('%Y-%m-%d'); e_d = d_range[1].strftime('%Y-%m-%d') if len(d_range)>1 else s_d
+                    df_filt = df_all[(df_all["날짜_만"] >= s_d) & (df_all["날짜_만"] <= e_d)].copy()
+                    st.session_state.v6_data = df_filt
+                    st.session_state.v6_sessions = sorted(df_filt["발주시간"].unique(), reverse=True)
+                else: st.info("저장된 내역이 없습니다.")
+
+        with h3: h_q = st.text_input("🔍 3. 상품명/옵션 검색", key="v6_q")
+        with h4:
+            if st.session_state.v6_sessions:
+                s_opts = ["📊 선택 범위 전체 합산"] + [f"{len(st.session_state.v6_sessions)-i}회차 ({t[5:16]})" for i, t in enumerate(st.session_state.v6_sessions)]
+                sel_label = st.selectbox("📦 4. 회차 선택", s_opts)
+            else: st.selectbox("📦 4. 회차 선택", ["조회 결과 없음"], disabled=True); sel_label = None
+
+        if st.session_state.v6_data is not None and sel_label:
+            df_disp = st.session_state.v6_data.copy()
+            for c in ["가용재고", "리오더잔량", "추가발주", "발주권장"]: df_disp[c] = pd.to_numeric(df_disp[c], errors='coerce').fillna(0)
+            
+            if sel_label == "📊 선택 범위 전체 합산":
+                df_disp = df_disp.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({"발주시간":"max", "가용재고":"last", "리오더잔량":"last", "추가발주":"sum", "발주권장":"last", "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))})
+            else:
+                t_time = st.session_state.v6_sessions[s_opts.index(sel_label)-1]
+                df_disp = df_disp[df_disp["발주시간"] == t_time].copy()
+
+            if h_q: df_disp = df_disp[df_disp["상품명"].str.contains(h_q, case=False) | df_disp["옵션"].str.contains(h_q, case=False)]
+            st.dataframe(df_disp[["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "가용재고", "리오더잔량", "추가발주", "발주권장", "메모"]], use_container_width=True, hide_index=True)
+            
 
 
 # ------------------------------------------------------------------
