@@ -152,65 +152,74 @@ if up_file:
                 rows = [[now_s, str(r[m['it']]), str(r[m['op']]), str(r[m['vi']]), 0, int(r['리오더 수량']), int(r['추가발주'])-int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[m['vn']])] for _, r in to_save.iterrows()]
                 ws_main.append_rows(rows)
                 st.success("✅ 구글 시트 저장 완료!")
-# --- 6단계 (검색 고도화) 시작 ---
-st.divider()
-st.header("6️⃣ 저장 내역 상세 검색")
+                
+# --- 6단계 & 7단계 시작 ---
+        st.divider()
+        sh = get_sheet()
+        if sh:
+            ws_log = sh.worksheet("발주기록")
+            raw_logs = ws_log.get_all_values()
+            
+            if len(raw_logs) > 1:
+                df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
+                
+                # [6단계: 검색 필터 영역]
+                st.header("6️⃣ 저장 내역 상세 검색")
+                s_col1, s_col2, s_col3 = st.columns([1, 1.5, 2.5])
+                with s_col1:
+                    q_date = st.date_input("📅 1차: 날짜 선택", value=None, key="search_date")
+                with s_col2:
+                    q_item_log = st.text_input("🔎 2차: 상품명 검색", key="search_item")
+                with s_col3:
+                    q_extra = st.text_input("📑 3차: 섹션 필터 (공급처/메모)", key="search_extra")
 
-sh = get_sheet()
-if sh:
-    ws_log = sh.worksheet("발주기록")
-    raw_logs = ws_log.get_all_values()
-    
-    if len(raw_logs) > 1:
-        # 헤더 공백 제거 및 데이터프레임 생성
-        df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
-        
-        # [검색 필터 상단 배치]
-        search_col1, search_col2, search_col3 = st.columns([1, 1.5, 2.5])
-        
-        with search_col1:
-            q_date = st.date_input("📅 1차: 날짜 선택", value=None, key="search_date")
-        with search_col2:
-            q_item_log = st.text_input("🔎 2차: 상품명 검색", placeholder="상품명 입력...", key="search_item")
-        with search_col3:
-            q_extra = st.text_input("📑 3차: 섹션 필터 (공급처/메모)", placeholder="공급처나 메모 키워드...", key="search_extra")
+                # 필터링
+                f_logs = df_logs.copy()
+                d_col = next((c for c in f_logs.columns if '날짜' in c), f_logs.columns[0])
+                i_col = next((c for c in f_logs.columns if '상품명' in c), None)
+                v_col = next((c for c in f_logs.columns if '공급처' in c), None)
+                m_col = next((c for c in f_logs.columns if '메모' in c), None)
 
-        # 필터링 로직 실행
-        f_logs = df_logs.copy()
-        d_col = next((c for c in f_logs.columns if '날짜' in c), f_logs.columns[0])
-        i_col = next((c for c in f_logs.columns if '상품명' in c), None)
-        v_col = next((c for c in f_logs.columns if '공급처' in c), None)
-        m_col = next((c for c in f_logs.columns if '메모' in c), None)
+                if q_date:
+                    f_logs = f_logs[f_logs[d_col].str.contains(q_date.strftime('%Y-%m-%d'))]
+                if q_item_log and i_col:
+                    f_logs = f_logs[f_logs[i_col].str.contains(q_item_log, case=False)]
+                if q_extra:
+                    c_v = f_logs[v_col].str.contains(q_extra, case=False) if v_col else False
+                    c_m = f_logs[m_col].str.contains(q_extra, case=False) if m_col else False
+                    f_logs = f_logs[c_v | c_m]
 
-        if q_date:
-            f_logs = f_logs[f_logs[d_col].str.contains(q_date.strftime('%Y-%m-%d'))]
-        
-        if q_item_log:
-            if i_col:
-                f_logs = f_logs[f_logs[i_col].str.contains(q_item_log, case=False)]
-        
-        if q_extra:
-            # 공급처 또는 메모 컬럼에서 검색어 포함 여부 확인
-            cond_v = f_logs[v_col].str.contains(q_extra, case=False) if v_col else False
-            cond_m = f_logs[m_col].str.contains(q_extra, case=False) if m_col else False
-            f_logs = f_logs[cond_v | cond_m]
+                st.dataframe(f_logs.tail(30), use_container_width=True, hide_index=True)
 
-        # 검색 결과 출력
-        st.write(f"✅ 총 **{len(f_logs)}**건이 검색되었습니다.")
-        st.dataframe(f_logs.tail(30), use_container_width=True, hide_index=True)
+                # [다운로드 버튼]
+                if not f_logs.empty:
+                    csv_data = f_logs.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button("📥 검색 결과 내역 다운로드 (CSV)", data=csv_data, file_name="발주기록_검색.csv", mime="text/csv", use_container_width=True)
 
-        # [다운로드 버튼을 표 바로 아래에 배치]
-        if not f_logs.empty:
-            csv_data = f_logs.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(
-                label="📥 검색 결과 내역 다운로드 (CSV)",
-                data=csv_data,
-                file_name=f"발주기록_검색_{datetime.now(KST).strftime('%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-    else:
-        st.info("💡 아직 저장된 발주 내역이 없습니다.")
+                # [7단계: 현황판 영역 - 6단계 안쪽에 위치]
+                st.divider()
+                st.header("7️⃣ 오늘의 리오더 발주 현황판")
+                today_str = datetime.now(KST).strftime('%Y-%m-%d')
+                df_today = df_logs[df_logs[d_col].str.contains(today_str)]
+                
+                if not df_today.empty:
+                    df_today = df_today.copy()
+                    df_today['수량_num'] = df_today.iloc[:, 6].apply(to_i)
+                    t_qty = df_today['수량_num'].sum()
+                    t_vnd = df_today[v_col].nunique() if v_col else 0
+                    
+                    m1, m2 = st.columns(2)
+                    m1.metric("오늘 총 발주수량", f"{t_qty} 개")
+                    m2.metric("오늘 발주처 수", f"{t_vnd} 곳")
+                    
+                    if v_col:
+                        v_sum = df_today.groupby(v_col)['수량_num'].sum().reset_index()
+                        v_sum.columns = ['🏭 공급처', '📦 총 발주수량']
+                        st.table(v_sum)
+                else:
+                    st.info("오늘 저장된 내역이 없습니다.")
+            else:
+                st.info("저장된 내역이 없습니다.")
 
         
 
