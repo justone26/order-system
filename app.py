@@ -238,29 +238,99 @@ if up_file:
                     st.download_button("📥 검색 결과 다운로드", data=csv_6, file_name=f"발주내역_{target_date}.csv", use_container_width=True)
 
 
-                # ---------------------------------------------------------
-                # 7️⃣단계: 리오더 요약 현황판 (독립 블록)
+# ---------------------------------------------------------
+                # 7️⃣단계: 실시간 리오더 최종 잔량 상황판 (제로화/메모 보정 통합)
                 # ---------------------------------------------------------
                 st.divider()
-                st.header("7️⃣ 오늘의 리오더 발주 현황판")
-                
-                # 현황판은 항상 '오늘' 기준으로 자동 세팅
-                today_str = datetime.now(KST).strftime('%Y-%m-%d')
-                df_today = df_logs[df_logs['pure_date'] == today_str].copy()
+                st.subheader("🚀 7️⃣단계: 실시간 리오더 최종 잔량 상황판")
 
-                if not df_today.empty:
-                    # G열(index 6)을 숫자로 변환
-                    df_today['qty_num'] = df_today.iloc[:, 6].apply(to_i)
-                    
-                    m1, m2 = st.columns(2)
-                    m1.metric("오늘 총 발주수량", f"{df_today['qty_num'].sum()} 개")
-                    m2.metric("오늘 발주처 수", f"{df_today[v_col].nunique() if v_col else 0} 곳")
-                    
-                    if v_col:
-                        v_sum = df_today.groupby(v_col)['qty_num'].sum().reset_index()
-                        v_sum.columns = ['🏭 공급처', '📦 총 합계']
-                        st.table(v_sum)
+                # 1. 데이터 클리닝 및 전처리
+                df_v7 = df_logs.copy()
+                
+                # 수치 변환 (G열: 추가발주/입고차감 수량, F열: 기존리오더 수량)
+                # 시트 구조에 따라 iloc 인덱스는 확인이 필요할 수 있습니다.
+                df_v7["기존리오더"] = df_v7.iloc[:, 5].apply(to_i)
+                df_v7["추가발주"] = df_v7.iloc[:, 6].apply(to_i)
+                df_v7["최종잔량"] = df_v7["기존리오더"] + df_v7["추가발주"]
+                
+                # 메모 보정: "입고차감"만 적힌 경우 수량을 붙여줌
+                def fix_memo_v7(row):
+                    m = str(row.get('메모', '')).strip()
+                    q = row['추가발주']
+                    if q < 0 and (m == "입고차감" or m == ""):
+                        return f"{abs(q)}개 입고차감"
+                    return m
+                
+                if '메모' in df_v7.columns:
+                    df_v7["메모_보정"] = df_v7.apply(fix_memo_v7, axis=1)
                 else:
-                    st.info("오늘(7단계) 저장된 발주 내역이 없습니다.")
-            else:
-                st.info("시트에 저장된 내역이 없습니다.")
+                    df_v7["메모_보정"] = df_v7["추가발주"].apply(lambda x: f"{abs(x)}개 입고차감" if x < 0 else "")
+
+                # 2. 필터 UI (기존 기능 유지)
+                f_col1, f_col2, f_col3 = st.columns([1, 1, 2])
+                with f_col1:
+                    d_range = st.date_input("🗓️ 조회 기간", 
+                                            value=((datetime.now(KST)-timedelta(days=30)).date(), datetime.now(KST).date()), 
+                                            key="v7_date_range")
+                with f_col2:
+                    v_choice = st.selectbox("🏭 업체 선택", ["전체 업체"] + sorted(df_v7[v_col].unique().tolist()), key="v7_vendor_sel")
+                with f_col3:
+                    q_v7 = st.text_input("🔍 상품명/옵션 검색", key="v7_search_input")
+
+                # 3. 필터링 로직
+                df_f = df_v7.copy()
+                if isinstance(d_range, (list, tuple)) and len(d_range) == 2:
+                    df_f = df_f[(df_f["pure_date"] >= d_range[0].strftime('%Y-%m-%d')) & 
+                                (df_f["pure_date"] <= d_range[1].strftime('%Y-%m-%d'))]
+                
+                if v_choice != "전체 업체":
+                    df_f = df_f[df_f[v_col] == v_choice]
+                
+                if q_v7:
+                    i_col = next((c for c in df_f.columns if '상품명' in c), None)
+                    o_col = next((c for c in df_f.columns if '옵션' in c), None)
+                    cond = df_f[i_col].str.contains(q_v7, case=False) if i_col else False
+                    if o_col: cond |= df_f[o_col].str.contains(q_v7, case=False)
+                    df_f = df_f[cond]
+
+                # 4. 상세 리스트 그룹화 및 제로화(Clip)
+                if not df_f.empty:
+                    it_col = next((c for c in df_f.columns if '상품명' in c), "상품명")
+                    op_col = next((c for c in df_f.columns if '옵션' in c), "옵션")
+                    vi_col = next((c for c in df_f.columns if '공급처상품명' in c), "공급처상품명")
+                    
+                    df_final = df_f.groupby([v_col, it_col, op_col, vi_col], as_index=False).agg({
+                        d_col: "max",
+                        "최종잔량": "sum",
+                        "메모_보정": lambda x: " / ".join(dict.fromkeys(filter(None, x.astype(str))))
+                    })
+
+                    # ⭐ [핵심] 마이너스 잔량은 0으로 처리 (입고가 더 많이 잡힌 경우 방지)
+                    df_final["최종잔량"] = df_final["최종잔량"].clip(lower=0)
+                    df_final = df_final.sort_values([d_col, v_col], ascending=[False, True])
+
+                    # 5. 업체별 전광판 합산 출력
+                    st.write("### 📊 업체별 미입고 현황 (미입고 1개 이상)")
+                    df_v_sum = df_final.groupby(v_col)["최종잔량"].sum().reset_index()
+                    df_v_sum = df_v_sum[df_v_sum["최종잔량"] > 0].sort_values("최종잔량", ascending=False)
+                    
+                    if not df_v_sum.empty:
+                        v_metrics = st.columns(4)
+                        for i, r in enumerate(df_v_sum.itertuples()):
+                            with v_metrics[i % 4]:
+                                st.metric(label=getattr(r, v_col), value=f"{int(r.최종잔량):,} 개")
+                    
+                    # 6. 상세 내역 테이블
+                    st.write("#### 📋 상세 미입고 리스트")
+                    st.dataframe(
+                        df_final[df_final["최종잔량"] > 0], # 잔량이 있는 것만 노출
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={
+                            d_col: st.column_config.TextColumn("🕒 최종발주"),
+                            "최종잔량": st.column_config.NumberColumn("🔢 미입고 잔량", format="%d"),
+                            "메모_보정": st.column_config.TextColumn("📝 비고(차감내역)", width="large")
+                        }
+                    )
+                else:
+                    st.info("조회된 기간 내에 미입고 데이터가 없습니다.")
