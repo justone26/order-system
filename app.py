@@ -117,14 +117,14 @@ if 'df_raw' in st.session_state:
         r_map = load_reorder_data()
         today = datetime.now(KST).date()
 
-        # 데이터 클렌징 및 계산
+        # 데이터 계산
         df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
+        df[t3d] = pd.to_numeric(df[t3d], errors='coerce').fillna(0).astype(int)
         df['clean_k'] = df.apply(lambda r: super_clean(r[item]) + super_clean(r[option]), axis=1)
         
-        # ⭐ 4단계와 이름을 맞춤: '기존잔량', '발주권장'
-        df['기존잔량'] = df['clean_k'].map(r_map).fillna(0).astype(int).clip(lower=0)
+        # 컬럼명 통일 (4단계 순서 대응)
+        df['기존리오더'] = df['clean_k'].map(r_map).fillna(0).astype(int).clip(lower=0)
         
-        # 일판매량 계산
         def get_daily_avg(row):
             try:
                 r_dt = pd.to_datetime(row[reg_date]).date()
@@ -132,23 +132,24 @@ if 'df_raw' in st.session_state:
                 return to_i(row[t1w]) / days
             except: return to_i(row[t1w]) / 7
 
-        df['일판매량'] = df.apply(get_daily_avg, axis=1)
-        df['발주권장'] = ((df['일판매량'] * (lt + ss)) - (df[avail] + df['기존잔량'])).clip(lower=0).astype(int)
+        df['일판매량'] = df.apply(get_daily_avg, axis=1).round(1)
+        df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[avail] + df['기존리오더'])).clip(lower=0).astype(int)
         
-        # 상태 판별
         def status_check(row):
             if "품절" in str(row[sold_out]): return "🚫 품절"
-            return "🚨 발주필요" if row['발주권장'] > 0 else "✅ 정상"
+            return "🚨 발주필요" if row['권장발주수량'] > 0 else "✅ 정상"
         df['상태'] = df.apply(status_check, axis=1)
         
-        # 편집용 빈 컬럼 미리 생성 (KeyError 방지 핵심)
+        # 편집용 빈 컬럼 및 비고 생성
         df['입고차감'] = 0
         df['추가발주'] = 0
-        df['메모'] = ""
+        df['비고(메모)'] = ""
         
         st.session_state.df_final = df
         st.session_state.analyzed = True
         st.rerun()
+
+
 
 # ------------------------------------------------------------------
 # [통합 4단계: 실시간 재고 편집 및 최종 발주 확정]
@@ -162,10 +163,10 @@ if st.session_state.get('analyzed'):
     st.header("📊 4단계: 입고 관리 및 최종 발주 확정")
 
     p = st.session_state.p
-    # 매핑된 컬럼명들
-    vnd_c, itm_c, opt_c, vit_c, avl_c = p['vn'], p['it'], p['op'], p['vi'], p['av']
+    # 매핑된 원본 컬럼명들
+    vnd_c, itm_c, opt_c, vit_c, avl_c, t3_c = p['vn'], p['it'], p['op'], p['vi'], p['av'], p['t3']
 
-    # 1. 필터
+    # 1. 필터 및 UI
     f1, f2 = st.columns([1, 2])
     with f1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요", "✅ 정상", "🚫 품절"], index=1)
     with f2: s_query = st.text_input("🔍 검색 (상품명/옵션)")
@@ -181,33 +182,45 @@ if st.session_state.get('analyzed'):
         df_disp = df_disp[df_disp[itm_c].astype(str).str.contains(s_query, case=False) | 
                           df_disp[opt_c].astype(str).str.contains(s_query, case=False)]
 
-    # 2. 에디터에 보여줄 컬럼만 추출 (이 리스트에 있는 이름이 df_disp에 없으면 KeyError 발생)
-    # 2단계 분석 로직에서 생성한 이름과 정확히 일치시켜야 합니다.
-    disp_cols = [vnd_c, itm_c, opt_c, vit_c, avl_c, '기존잔량', '입고차감', '추가발주', '발주권장', '메모']
-    
-    # 만약 컬럼이 없으면 빈 값으로라도 생성해서 에러 방지
+    # ⭐ [변경 순서 반영]: 요청하신 순서대로 리스트 작성
+    # 상태 → 공급처 → 상품명 → 옵션 → 공급처상품명 → 가용재고 → 기존리오더 → 입고차감 → 추가발주 → 3일판매 → 일판매량 → 권장발주수량 → 비고(메모)
+    disp_cols = [
+        '상태', vnd_c, itm_c, opt_c, vit_c, avl_c, 
+        '기존리오더', '입고차감', '추가발주', t3_c, 
+        '일판매량', '권장발주수량', '비고(메모)'
+    ]
+
+    # 컬럼 누락 방지 체크
     for c in disp_cols:
         if c not in df_disp.columns: df_disp[c] = 0
 
     with st.form("v4_integrated_form"):
         edited_df = st.data_editor(
-            df_disp[disp_cols], # <-- 여기서 KeyError가 났던 것임
+            df_disp[disp_cols], 
             use_container_width=True,
             hide_index=True,
             column_config={
-                vnd_c: "공급처", itm_c: "상품명", opt_c: "옵션", vit_c: "공급처상품명",
+                '상태': st.column_config.TextColumn("상태", disabled=True),
+                vnd_c: st.column_config.TextColumn("공급처", disabled=True),
+                itm_c: st.column_config.TextColumn("상품명", disabled=True, width="medium"),
+                opt_c: st.column_config.TextColumn("옵션", disabled=True),
+                vit_c: st.column_config.TextColumn("공급처상품명", disabled=True),
                 avl_c: st.column_config.NumberColumn("가용재고", disabled=True),
-                "기존잔량": st.column_config.NumberColumn("📦 리오더잔량", disabled=True),
+                "기존리오더": st.column_config.NumberColumn("📦 기존잔량", disabled=True),
                 "입고차감": st.column_config.NumberColumn("📥 입고(-)", min_value=0),
                 "추가발주": st.column_config.NumberColumn("➕ 발주(+)", min_value=0),
-                "발주권장": st.column_config.NumberColumn("💡 권장", disabled=True),
+                t3_c: st.column_config.NumberColumn("3일판매", disabled=True),
+                "일판매량": st.column_config.NumberColumn("평균판매", disabled=True, format="%.1f"),
+                "권장발주수량": st.column_config.NumberColumn("💡 권장", disabled=True),
+                "비고(메모)": st.column_config.TextColumn("비고(메모)", width="medium")
             },
-            key="final_editor"
+            key="final_editor_ordered"
         )
         
         btn_save = st.form_submit_button("💾 데이터 최종 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
+        # 입고 혹은 발주 값이 있는 것만 추림
         change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
         if not change_list.empty:
             try:
@@ -217,13 +230,13 @@ if st.session_state.get('analyzed'):
                 rows = []
                 for _, r in change_list.iterrows():
                     net_qty = int(r['추가발주']) - int(r['입고차감'])
-                    m_txt = str(r['메모'])
+                    m_txt = str(r['비고(메모)'])
                     if r['입고차감'] > 0 and r['추가발주'] == 0: m_txt = f"[입고차감] {m_txt}".strip()
                     
                     rows.append([
                         now_s, str(r[itm_c]), str(r[opt_c]), str(r[vit_c]), 
-                        int(r[avl_c]), int(r['기존잔량']), net_qty, 
-                        int(r['발주권장']), m_txt, str(r[vnd_c])
+                        int(r[avl_c]), int(r['기존리오더']), net_qty, 
+                        int(r['권장발주수량']), m_txt, str(r[vnd_c])
                     ])
                 ws_log.append_rows(rows)
                 st.success(f"✅ {len(rows)}건 저장 성공!")
@@ -232,7 +245,7 @@ if st.session_state.get('analyzed'):
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ 오류: {e}")
-
+                
         
         # --- 6️⃣단계: 전체 히스토리 관리 ---
         st.divider()
