@@ -10,9 +10,9 @@ from datetime import datetime, timedelta, timezone
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 v5.6")
+st.set_page_config(layout="wide", page_title="저스트원 v5.7")
 
-# [새로고침 방지 스크립트]
+# [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
 
 # --- [사장님표 필수 함수] ---
@@ -33,8 +33,16 @@ def get_sheet():
         st.error(f"📡 시트 연결 실패: {e}")
         return None
 
+# 자동 인덱스 매칭 함수 (사장님 로직 반영)
+def auto_idx(cols, keys, exclude_keys=None):
+    for i, c in enumerate(cols):
+        c_str = str(c).upper()
+        if exclude_keys and any(k.upper() in c_str for k in exclude_keys): continue
+        if any(k.upper() in c_str for k in keys): return i
+    return 0
+
 # --- [세션 상태 관리] ---
-if 'view_step' not in st.session_state: st.session_state.view_step = "setup" # setup or analysis
+if 'view_step' not in st.session_state: st.session_state.view_step = "setup"
 if 'df_raw' not in st.session_state: st.session_state.df_raw = None
 if 'r_map' not in st.session_state: st.session_state.r_map = {}
 
@@ -42,7 +50,7 @@ st.title("📦 저스트원 통합 재고 관리")
 
 # --- [1~3단계 통합 화면] ---
 if st.session_state.view_step == "setup":
-    st.header("1-3단계: 데이터 업로드 및 환경 설정")
+    st.header("📋 1-3단계: 데이터 업로드 및 환경 설정")
     
     # 1단계: 업로드
     up_file = st.file_uploader("📂 엑셀 또는 CSV 파일 업로드", type=['xlsx', 'xls', 'csv'])
@@ -66,42 +74,57 @@ if st.session_state.view_step == "setup":
                             r_map[key] = r_map.get(key, 0) + (to_i(row[5]) + to_i(row[6]))
                     st.session_state.r_map = r_map
         
-        # 2단계: 매핑 (10개 항목 좌우 5:5)
-        st.divider()
-        st.subheader("📋 2단계: 필드 매핑 (10개 필수 항목)")
         cols = st.session_state.df_raw.columns.tolist()
         
-        m1, m2 = st.columns(2)
-        with m1:
-            it = st.selectbox("1. 📦 상품명", cols, index=0)
-            op = st.selectbox("2. 🎨 옵션", cols, index=1)
-            vn = st.selectbox("3. 🏭 공급처", cols, index=2)
-            vi = st.selectbox("4. 🆔 공급처상품명", cols, index=3)
-            rg = st.selectbox("5. 📝 등록이", cols, index=0)
-        with m2:
-            av = st.selectbox("6. ✅ 가용재고", cols, index=4)
-            t3 = st.selectbox("7. 🔥 3일 판매량", cols, index=5)
-            t7 = st.selectbox("8. 📅 7일 판매량", cols, index=6)
-            pr = st.selectbox("9. 💰 판매가", cols, index=0)
-            ct = st.selectbox("10. 📁 카테고리/기타", cols, index=0)
+        # 2단계: 매핑 (사장님 요청 5:5 정확한 레이아웃)
+        st.divider()
+        st.subheader("🔗 2단계: 필드 매핑 설정")
+        
+        c_left, c_right = st.columns(2)
+        with c_left:
+            st.markdown("##### [ 기본 정보 ]")
+            it = st.selectbox("📦 상품명", cols, index=auto_idx(cols, ['상품명']), key="sel_it")
+            op = st.selectbox("🎨 옵션", cols, index=auto_idx(cols, ['옵션']), key="sel_op")
+            vn = st.selectbox("🏭 공급처", cols, index=auto_idx(cols, ['공급처']), key="sel_vn")
+            vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(cols, ['공급처상품명']), key="sel_vi")
+            so = st.selectbox("🚫 품절 여부", cols, index=auto_idx(cols, ['품절']), key="sel_so")
+
+        with c_right:
+            st.markdown("##### [ 수량 및 날짜 ]")
+            av = st.selectbox("✅ 가용재고", cols, index=auto_idx(cols, ['가용재고']), key="sel_av")
+            stk = st.selectbox("📦 정상재고", cols, index=auto_idx(cols, ['정상재고']), key="sel_stk")
+            
+            # 3일 판매: '3일 발주합계' 최우선
+            t3_target = "3일 발주합계"
+            t3_idx = cols.index(t3_target) if t3_target in cols else auto_idx(cols, ['3일'], exclude_keys=['1주', '7일', '품절'])
+            t3 = st.selectbox("🔥 3일 판매", cols, index=t3_idx, key="sel_t3")
+            
+            # 7일 판매: '1주발주합계' 최우선
+            t7_target = "1주발주합계"
+            t7_idx = cols.index(t7_target) if t7_target in cols else auto_idx(cols, ['7일', '1주'], exclude_keys=['3일', '품절'])
+            t7 = st.selectbox("📅 7일 판매", cols, index=t7_idx, key="sel_t7")
+            
+            reg = st.selectbox("📆 상품 등록일", cols, index=auto_idx(cols, ['등록일', '등록일자', '최초등록']), key="sel_reg")
 
         # 3단계: 수치 설정
         st.divider()
         st.subheader("⏳ 3단계: 분석 수치 설정")
-        c1, c2 = st.columns(2)
-        with c1: lt = st.number_input("리드타임 (일)", value=7)
-        with c2: ss = st.number_input("안전재고 (개)", value=3)
+        col_lt, col_ss = st.columns(2)
+        with col_lt: lt = st.number_input("리드타임 (일)", value=7)
+        with col_ss: ss = st.number_input("안전재고 (개)", value=3)
 
-        if st.button("📊 분석 및 편집 화면으로 이동 ➡️", type="primary", use_container_width=True):
-            # 계산 로직
+        if st.button("📊 분석 시작 및 4단계 이동 ➡️", type="primary", use_container_width=True):
             df = st.session_state.df_raw.copy()
-            mapping = {'it':it, 'op':op, 'vn':vn, 'vi':vi, 'rg':rg, 'av':av, 't3':t3, 't7':t7}
+            mapping = {'it':it, 'op':op, 'vn':vn, 'vi':vi, 'reg':reg, 'av':av, 't3':t3, 't7':t7, 'so':so}
             
-            for c in [av, t3, t7]: df[c] = df[c].apply(to_i)
+            # 숫자 정제
+            for c in [av, t3, t7, stk]: df[c] = df[c].apply(to_i)
             
+            # 리오더 매핑
             df['clean_key'] = df.apply(lambda r: super_clean(r[it]) + super_clean(r[op]), axis=1)
             df['기존잔량'] = df['clean_key'].map(st.session_state.r_map).fillna(0).astype(int)
             
+            # 권장발주 계산
             df['일판매'] = df.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
             df['발주권장'] = ((df['일판매'] * (lt + ss)) - (df[av] + df['기존잔량'])).clip(lower=0).astype(int)
             
@@ -114,28 +137,30 @@ if st.session_state.view_step == "setup":
             st.session_state.view_step = "analysis"
             st.rerun()
 
-# --- [4~7단계: 편집 및 저장 화면] ---
+# --- [4~7단계: 편집 및 일괄 저장 화면] ---
 elif st.session_state.view_step == "analysis":
-    st.header("4-7단계: 발주 편집 및 최종 저장")
+    st.header("📝 4-7단계: 발주 편집 및 저장")
     m = st.session_state.current_mapping
     
+    # 편집 화면
     edited_df = st.data_editor(
-        st.session_state.df_final[[m['vn'], m['it'], m['op'], '기존잔량', '입고차감', '발주권장', '추가발주', '메모', m['rg']]],
+        st.session_state.df_final[[m['vn'], m['it'], m['op'], '기존잔량', '입고차감', '발주권장', '추가발주', '메모', m['reg']]],
         use_container_width=True,
         hide_index=True,
         column_config={
-            "입고차감": st.column_config.NumberColumn("📥 입고(-)", help="리오더 차감량"),
-            "추가발주": st.column_config.NumberColumn("➕ 추가발주", help="신규 발주량"),
-            "기존잔량": st.column_config.NumberColumn("📦 현재잔량", disabled=True)
+            "입고차감": st.column_config.NumberColumn("📥 4단계: 입고(-)", help="입고 수량"),
+            "추가발주": st.column_config.NumberColumn("➕ 5단계: 추가발주", help="추가 발주량"),
+            "기존잔량": st.column_config.NumberColumn("📦 현재잔량", disabled=True),
+            "발주권장": st.column_config.NumberColumn("💡 권장", disabled=True)
         }
     )
 
     col_save, col_reset = st.columns(2)
     with col_save:
-        if st.button("💾 구글 시트 일괄 저장", type="primary", use_container_width=True):
+        if st.button("💾 구글 시트 일괄 저장 (6-7단계)", type="primary", use_container_width=True):
             to_save = edited_df[(edited_df['입고차감'] != 0) | (edited_df['추가발주'] > 0)]
             if not to_save.empty:
-                with st.spinner("📡 저장 중..."):
+                with st.spinner("📡 전송 중..."):
                     sh = get_sheet()
                     ws_main = sh.worksheet("발주기록")
                     ws_hist = sh.worksheet("history")
@@ -151,16 +176,16 @@ elif st.session_state.view_step == "analysis":
                     
                     ws_main.append_rows(rows)
                     ws_hist.append_rows(rows)
-                    st.success("✅ 저장 성공!")
+                    st.success("✅ 저장 완료!")
                     time.sleep(1)
                     st.session_state.view_step = "setup"
                     st.session_state.df_raw = None
                     st.rerun()
             else:
-                st.warning("저장할 데이터가 없습니다.")
+                st.warning("수정된 데이터가 없습니다.")
 
     with col_reset:
-        if st.button("🔄 처음으로 돌아가기", use_container_width=True):
+        if st.button("🔄 처음으로 (파일 다시 올리기)", use_container_width=True):
             st.session_state.view_step = "setup"
             st.session_state.df_raw = None
             st.rerun()
