@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 통합 관리 v6.2")
+st.set_page_config(layout="wide", page_title="저스트원 통합 관리 v6.3")
 
 # [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
@@ -101,15 +101,21 @@ if up_file:
     if st.button("📊 분석 실행", type="primary", use_container_width=True):
         df = st.session_state.df_raw.copy()
         for c in [av, t3, t7, stk]: df[c] = df[c].apply(to_i)
+        
         df['clean_key'] = df.apply(lambda r: super_clean(r[it]) + super_clean(r[op]), axis=1)
         df['리오더 수량'] = df['clean_key'].map(st.session_state.r_map).fillna(0).astype(int)
         df['1일 판매량'] = df.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
         df['권장발주수량'] = ((df['1일 판매량'] * (lt + ss)) - (df[av] + df['리오더 수량'])).clip(lower=0).astype(int)
+        
         df['입고차감'] = 0
         df['추가발주'] = 0
         df['메모'] = ""
+        
+        # [수정포인트] 에러 방지를 위해 필요한 모든 매핑 키를 저장
+        st.session_state.mapping_info = {
+            'it': it, 'op': op, 'vn': vn, 'reg': reg, 'av': av, 't3': t3
+        }
         st.session_state.analyzed_data = df
-        st.session_state.mapping_info = {'it':it, 'op':op, 'vn':vn, 'av':av, 't3':t3}
 
     # --- [4~5단계: 편집 및 저장 영역] ---
     if 'analyzed_data' in st.session_state:
@@ -117,8 +123,11 @@ if up_file:
         st.header("4️⃣~5️⃣ 발주 편집 및 저장")
         m = st.session_state.mapping_info
         
-        # 사장님 요청 순서: 공급처 -> 상품명 -> 옵션 -> 가용재고 -> 리오더 수량 -> 입고차감 -> 추가발주 -> 3일발주합계 -> 1일 판매량 -> 권장발주수량 -> 메모
-        display_cols = [m['vn'], m['it'], m['op'], m['av'], '리오더 수량', '입고차감', '추가발주', m['t3'], '1일 판매량', '권장발주수량', '메모']
+        # 사장님 요청 순서 적용
+        display_cols = [
+            m['vn'], m['it'], m['op'], m['av'], '리오더 수량', 
+            '입고차감', '추가발주', m['t3'], '1일 판매량', '권장발주수량', '메모'
+        ]
         
         edited_df = st.data_editor(
             st.session_state.analyzed_data[display_cols],
@@ -143,13 +152,19 @@ if up_file:
                     rows = []
                     for _, r in to_save.iterrows():
                         final_change = int(r['추가발주']) - int(r['입고차감'])
-                        rows.append([now_s, str(r[m['it']]), str(r[m['op']]), "", 0, int(r['리오더 수량']), final_change, int(r['권장발주수량']), str(r['메모']), str(r[m['vn']])])
+                        rows.append([
+                            now_s, str(r[m['it']]), str(r[m['op']]), "", 0, 
+                            int(r['리오더 수량']), final_change, int(r['권장발주수량']), str(r['메모']), str(r[m['vn']])
+                        ])
                     ws_main.append_rows(rows)
                     ws_hist.append_rows(rows)
                     st.success("✅ 저장 완료!")
+                    # 저장 후 분석 데이터 삭제하여 초기 상태 유도 (선택 사항)
+                    del st.session_state.analyzed_data
                     st.rerun()
+            else:
+                st.warning("⚠️ 변경된 데이터가 없습니다.")
 
-        # 6단계 & 7단계는 아래에 계속 유지됨... (이전 코드 동일)
 
         # --- [6단계: 히스토리 (최근 저장 내역)] ---
         st.divider()
