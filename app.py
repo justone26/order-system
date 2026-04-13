@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 v8.1")
+st.set_page_config(layout="wide", page_title="저스트원 v8.2")
 
 # [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
@@ -80,19 +80,26 @@ if up_file:
     
     st.divider()
     
-    # 2단계와 3단계를 5:5 비율로 설정 ([1, 1])
+    # --- 2단계 & 3단계 영역 ---
+    # 레이아웃을 5:5 비율로 설정
     col_step2, col_step3 = st.columns([1, 1])
     
     with col_step2:
         st.header("2️⃣ 필드 매핑")
-        s_it = st.selectbox("📦 상품명", cols, index=auto_idx(cols, ['상품명']), key="it_box")
-        s_op = st.selectbox("🎨 옵션", cols, index=auto_idx(cols, ['옵션']), key="op_box")
-        s_vn = st.selectbox("🏭 공급처", cols, index=auto_idx(cols, ['공급처']), key="vn_box")
-        s_vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(cols, ['공급처상품명']), key="vi_box")
-        s_av = st.selectbox("✅ 가용재고", cols, index=auto_idx(cols, ['가용재고']), key="av_box")
-        s_so = st.selectbox("🚫 품절여부", cols, index=auto_idx(cols, ['품절']), key="so_box")
-        s_t3 = st.selectbox("🔥 3일 판매", cols, index=auto_idx(cols, ['3일']), key="t3_box")
-        s_t7 = st.selectbox("📅 7일 판매", cols, index=auto_idx(cols, ['7일', '1주']), key="t7_box")
+        # 좌측/우측 5:5로 다시 세부 분리
+        c_l, c_r = st.columns(2)
+        with c_l:
+            s_so = st.selectbox("🚫 품절 여부", cols, index=auto_idx(cols, ['품절']), key="so_box")
+            s_vn = st.selectbox("🏭 공급처", cols, index=auto_idx(cols, ['공급처']), key="vn_box")
+            s_vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(cols, ['공급처상품명']), key="vi_box")
+            s_it = st.selectbox("📦 상품명", cols, index=auto_idx(cols, ['상품명']), key="it_box")
+            s_op = st.selectbox("🎨 옵션", cols, index=auto_idx(cols, ['옵션']), key="op_box")
+        with c_r:
+            s_rd = st.selectbox("📅 등록일", cols, index=auto_idx(cols, ['등록일']), key="rd_box")
+            s_st = st.selectbox("🏢 정상재고", cols, index=auto_idx(cols, ['정상재고']), key="st_box")
+            s_av = st.selectbox("✅ 가용재고", cols, index=auto_idx(cols, ['가용재고']), key="av_box")
+            s_t3 = st.selectbox("🔥 3일 발주합계", cols, index=auto_idx(cols, ['3일']), key="t3_box")
+            s_t7 = st.selectbox("📅 7일 발주합계", cols, index=auto_idx(cols, ['7일', '1주']), key="t7_box")
 
     with col_step3:
         st.header("3️⃣ 수치 설정")
@@ -100,11 +107,12 @@ if up_file:
         ss = st.number_input("🛡️ 안전재고 (최소 유지 재고)", value=3, key="ss_val")
         st.write("")
         st.write("")
-        st.write("") # 버튼 위치 조절을 위한 간격
+        st.write("")
         analyze_btn = st.button("📊 분석 실행", type="primary", use_container_width=True)
 
     if analyze_btn:
         df = st.session_state.df_raw.copy()
+        # 숫자 변환 (가용재고, 3일판매, 7일판매)
         for c in [s_av, s_t3, s_t7]: df[c] = df[c].apply(to_i)
         
         df['clean_key'] = df.apply(lambda r: super_clean(r[s_it]) + super_clean(r[s_op]), axis=1)
@@ -147,7 +155,7 @@ if up_file:
         if search_q:
             df_view = df_view[df_view[m['it']].str.contains(search_q, case=False, na=False)]
 
-        # '상태' 컬럼을 '공급처' 앞으로 고정
+        # '상태' 컬럼이 '공급처' 앞으로 오도록 설정
         t_cols = ['상태', m['vn'], m['it'], m['op'], m['vi'], m['av'], '리오더 수량', '입고차감', '추가발주', m['t3'], '1일 판매량', '권장발주수량', '메모']
         a_cols = [c for c in t_cols if c in df_view.columns]
 
