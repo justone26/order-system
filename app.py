@@ -102,54 +102,79 @@ if 'df_raw' in st.session_state:
         t3d = st.selectbox("9. 3일 발주합계", cols, index=find_idx(cols, ['3일']))
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
-    st.divider()
+  st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정")
     clt, css = st.columns(2)
     lt, ss = clt.number_input("리드타임 (일)", value=10), css.number_input("안전재고 (일 수)", value=7)
 
     if st.button("🚀 분석 실행 / 업데이트", type="primary", use_container_width=True):
+        # 1. 설정값 저장
         st.session_state.p = {
             'so': sold_out, 'it': item, 'op': option, 'vn': vendor, 'vi': v_item_col,
             'av': avail, 't3': t3d, 't7': t1w, 'lt': lt, 'ss': ss
         }
 
-        df = st.session_state.df_raw.copy()
-        r_map = load_reorder_data()
-        today = datetime.now(KST).date()
-
-        # 데이터 계산
-        df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
-        df[t3d] = pd.to_numeric(df[t3d], errors='coerce').fillna(0).astype(int)
-        df['clean_k'] = df.apply(lambda r: super_clean(r[item]) + super_clean(r[option]), axis=1)
-        
-        # ⭐ 이름 중요: '기존리오더', '일판매량', '권장발주수량'
-        df['기존리오더'] = df['clean_k'].map(r_map).fillna(0).astype(int).clip(lower=0)
-        
-        def get_daily_avg(row):
+        # 2. 분석 진행 (스피너로 무한 로딩처럼 보이는 현상 방지)
+        with st.spinner("📊 구글 시트에서 리오더 잔량을 동기화하고 데이터를 분석 중입니다..."):
             try:
-                r_dt = pd.to_datetime(row[reg_date]).date()
-                days = max(1, min((today - r_dt).days, 7))
-                # 💡 소수점 반올림하여 정수로 저장
-                return int(round(to_i(row[t1w]) / days, 0))
-            except: 
-                return int(round(to_i(row[t1w]) / 7, 0))
+                # 데이터 복사
+                df = st.session_state.df_raw.copy()
+                
+                # [중요] 시트에서 리오더 맵 가져오기 (실패 시 빈 딕셔너리)
+                r_map = load_reorder_data()
+                st.session_state.r_map = r_map # 세션에도 저장해서 보관
+                
+                today = datetime.now(KST).date()
 
-        df['일판매량'] = df.apply(get_daily_avg, axis=1)
-        df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[avail] + df['기존리오더'])).clip(lower=0).astype(int)
-        
-        def status_check(row):
-            if "품절" in str(row[sold_out]): return "🚫 품절"
-            return "🚨 발주필요" if row['권장발주수량'] > 0 else "✅ 정상"
-        df['상태'] = df.apply(status_check, axis=1)
-        
-        # 필수 컬럼 생성
-        df['입고차감'] = 0
-        df['추가발주'] = 0
-        df['비고(메모)'] = ""
-        
-        st.session_state.df_final = df
-        st.session_state.analyzed = True
-        st.rerun()
+                # 데이터 숫자 형변환
+                df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
+                df[t3d] = pd.to_numeric(df[t3d], errors='coerce').fillna(0).astype(int)
+                df[t1w] = pd.to_numeric(df[t1w], errors='coerce').fillna(0).astype(int) # 7일 데이터도 형변환
+
+                # 고유 키 생성 (상품명 + 옵션)
+                df['clean_k'] = df.apply(lambda r: super_clean(r[item]) + super_clean(r[option]), axis=1)
+                
+                # 리오더 잔량 매핑
+                df['기존리오더'] = df['clean_k'].map(r_map).fillna(0).astype(int).clip(lower=0)
+                
+                # 일판매량 계산 함수
+                def get_daily_avg(row):
+                    try:
+                        # 등록일이 있으면 등록일로부터 오늘까지, 없으면 7일로 나눔
+                        r_dt = pd.to_datetime(row[reg_date]).date()
+                        days = max(1, min((today - r_dt).days, 7))
+                        return int(round(to_i(row[t1w]) / days, 0))
+                    except: 
+                        return int(round(to_i(row[t1w]) / 7, 0))
+
+                df['일판매량'] = df.apply(get_daily_avg, axis=1)
+                
+                # 권장발주수량 계산: (평균판매 * (리드타임+안전재고)) - (현재고 + 기존잔량)
+                df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[avail] + df['기존리오더'])).clip(lower=0).astype(int)
+                
+                # 상태 체크 (품절 제외 로직 포함)
+                def status_check(row):
+                    if "품절" in str(row[sold_out]): return "🚫 품절"
+                    return "🚨 발주필요" if row['권장발주수량'] > 0 else "✅ 정상"
+                
+                df['상태'] = df.apply(status_check, axis=1)
+                
+                # 사용자 입력용 필수 컬럼 초기화
+                df['입고차감'] = 0
+                df['추가발주'] = 0
+                df['비고(메모)'] = ""
+                
+                # 분석 결과 세션 저장
+                st.session_state.df_final = df
+                st.session_state.analyzed = True
+                
+                st.toast("✅ 분석 및 시트 동기화가 완료되었습니다!")
+                
+                # 화면 강제 리프레시 (분석 결과 반영)
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ 분석 중 오류가 발생했습니다: {e}")
 
 
 # ------------------------------------------------------------------
@@ -293,78 +318,82 @@ if st.session_state.get('analyzed'):
         
                 
 # ------------------------------------------------------------------
-# [5단계 & 6단계: 데이터 통합 로드 및 무한 로딩 방어 - 최적화 버전]
+# [5~6단계: 기록 및 리오더 현황 - 최적화 수정 버전]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.header("🕒 5~6단계: 기록 및 리오더 현황")
 
-    # 1. 시트 접속 함수 (st.cache_data 대신 session_state만 활용하여 제어)
-    def fetch_logs_to_session():
-        with st.spinner("📡 구글 시트에서 데이터를 안전하게 가져오고 있습니다..."):
+    # 1. 데이터 호출 함수 (캐시 대신 세션 상태 직접 제어)
+    def load_master_data():
+        with st.spinner("📡 구글 시트에서 기록을 안전하게 불러오는 중..."):
             try:
                 sh = get_sheet()
                 if sh:
                     ws = sh.worksheet("발주기록")
-                    # 가져온 데이터를 세션에 직접 저장
-                    st.session_state.master_log = pd.DataFrame(ws.get_all_records())
-                    st.toast("✅ 최신 기록 동기화 완료!")
+                    # 전체 데이터를 한 번에 가져와서 세션에 저장
+                    data = ws.get_all_records()
+                    st.session_state.master_log = pd.DataFrame(data)
+                    st.success("✅ 최신 기록 동기화 성공!")
             except Exception as e:
-                st.error(f"데이터 로드 실패: {e}")
+                st.error(f"❌ 데이터 로드 중 오류 발생: {e}")
 
-    # 2. 버튼 컨트롤 (버튼을 누를 때만 함수 실행)
-    if st.button("🔄 시트 데이터 불러오기 / 새로고침", use_container_width=True, type="primary"):
-        fetch_logs_to_session()
+    # 2. 버튼 구성 (이 버튼이 '출입문' 역할을 합니다)
+    if st.button("🔄 기록 및 리오더 현황 데이터 가져오기", use_container_width=True, type="primary"):
+        load_master_data()
 
-    # 3. 데이터가 있을 때만 화면 구성
+    # 3. 세션에 데이터가 있을 때만 화면을 그림
     if 'master_log' in st.session_state and not st.session_state.master_log.empty:
-        # 필터링을 위한 복사본 생성
-        master_df = st.session_state.master_log.copy()
+        # 데이터 복사본 생성 (필터링용)
+        df_all = st.session_state.master_log.copy()
         
-        # 날짜 변환 (에러 방지용)
-        try:
-            master_df['일시_dt'] = pd.to_datetime(master_df['일시']).dt.date
-        except:
-            master_df['일시_dt'] = datetime.now(KST).date()
+        # 날짜 타입 변환 (에러 방지용)
+        df_all['일시_dt'] = pd.to_datetime(df_all['일시'], errors='coerce').dt.date
 
         # --- [5단계: 히스토리 모드] ---
-        with st.expander("📜 5단계: 최근 발주/입고 히스토리", expanded=True):
-            c1, c2 = st.columns([2, 2])
-            with c1:
-                # NameError 방지를 위해 사전에 계산된 값 사용
-                h_dr = st.date_input("조회 기간", 
-                                    value=((datetime.now(KST)-timedelta(days=7)).date(), datetime.now(KST).date()), 
-                                    key="h_dr_final")
-            with c2:
-                h_search = st.text_input("상품명 검색", key="h_search_final")
-            
-            # 메모리 내 필터링 (시트 공격 안 함)
-            df_h = master_df.copy()
-            if isinstance(h_dr, tuple) and len(h_dr) == 2:
-                df_h = df_h[(df_h['일시_dt'] >= h_dr[0]) & (df_h['일시_dt'] <= h_dr[1])]
-            
+        with st.expander("📜 5단계: 최근 발주/입고 히스토리 조회", expanded=True):
+            col_search, col_reset = st.columns([3, 1])
+            with col_search:
+                h_search = st.text_input("🔍 상품명 또는 옵션 검색", key="h_search_final")
+            with col_reset:
+                st.write(" ") # 레이블 간격 맞춤
+                if st.button("검색어 초기화", use_container_width=True):
+                    st.rerun()
+
+            # 필터링 로직 (메모리 내부에서만 작동)
+            df_h = df_all.copy()
             if h_search:
                 df_h = df_h[df_h['상품명'].astype(str).str.contains(h_search, case=False) | 
                             df_h['옵션'].astype(str).str.contains(h_search, case=False)]
             
-            st.dataframe(df_h.sort_values('일시', ascending=False).drop(columns=['일시_dt']), 
-                         use_container_width=True, hide_index=True)
+            # 테이블 표시
+            st.dataframe(
+                df_h.sort_values('일시', ascending=False).drop(columns=['일시_dt']), 
+                use_container_width=True, 
+                hide_index=True
+            )
 
         # --- [6단계: 실시간 리오더 현황] ---
         with st.expander("📊 6단계: 현재 미입고 리오더 잔량", expanded=True):
-            # 메모리 내 집계
-            df_r = master_df.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+            # 시트 데이터 전체의 [수량] 합산 (입고는 -로 되어있어야 함)
+            df_r = df_all.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
             df_r.columns = ['상품명', '옵션', '미입고잔량']
+            
+            # 0보다 큰 것(주문은 했으나 입고가 덜 된 것)만 필터링
             df_r = df_r[df_r['미입고잔량'] > 0].sort_values('미입고잔량', ascending=False)
             
-            st.dataframe(df_r, use_container_width=True, hide_index=True, 
-                         column_config={"미입고잔량": st.column_config.NumberColumn("잔량", format="%d 📦")})
+            st.dataframe(
+                df_r, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={"미입고잔량": st.column_config.NumberColumn("잔량", format="%d 📦")}
+            )
     else:
-        st.info("💡 위 [시트 데이터 불러오기] 버튼을 눌러야 기록 조회가 시작됩니다 (구글 시트 과부하 방지)")
+        # 데이터가 없을 때 표시될 안내 문구
+        st.info("💡 상단 [🔄 기록 및 리오더 현황 데이터 가져오기] 버튼을 클릭하면 내역이 나타납니다.")
 
-    # 4. 무한 로딩 탈출용 완전 초기화 버튼
-    if st.button("♻️ 화면 강제 초기화 (로딩이 멈추지 않을 때만 클릭)"):
-        # 모든 세션과 캐시를 날림
+    # 4. 강제 리셋 버튼 (에러 상황 탈출용)
+    if st.button("♻️ 화면 초기화 (무한 로딩 발생 시 클릭)"):
         st.session_state.clear()
         st.cache_data.clear()
         st.rerun()
