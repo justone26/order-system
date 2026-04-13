@@ -42,6 +42,26 @@ def auto_idx(cols, keys, exclude_keys=None):
         if any(k.upper() in c_str for k in keys): return i
     return 0
 
+# --- [공통 데이터 로드] ---
+        st.divider()
+        sh = get_sheet()
+        
+        if sh:
+            ws_log = sh.worksheet("발주기록")
+            raw_logs = ws_log.get_all_values()
+            
+            # 데이터가 있는 경우에만 아래 단계들 실행
+            if len(raw_logs) > 1:
+                df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
+                d_col = next((c for c in df_logs.columns if '날짜' in c), df_logs.columns[0])
+                v_col = next((c for c in df_logs.columns if '공급처' in c), None)
+
+                # 날짜/시간 전처리 (공통)
+                df_logs['pure_dt'] = df_logs[d_col].str.strip()
+                df_logs['pure_date'] = df_logs['pure_dt'].str.split(' ').str[0]
+                df_logs['pure_time'] = df_logs['pure_dt'].str.split(' ').str[1].str[:5]
+
+
 # --- [메인 화면] ---
 st.title("📦 저스트원 통합 재고 관리")
 
@@ -181,28 +201,9 @@ if up_file:
                 st.warning("⚠️ 저장할 변경 내역(입고차감 또는 추가발주)이 없습니다.")
 
         
-                
-# --- [공통 데이터 로드] ---
-        st.divider()
-        sh = get_sheet()
-        
-        if sh:
-            ws_log = sh.worksheet("발주기록")
-            raw_logs = ws_log.get_all_values()
-            
-            # 데이터가 있는 경우에만 아래 단계들 실행
-            if len(raw_logs) > 1:
-                df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
-                d_col = next((c for c in df_logs.columns if '날짜' in c), df_logs.columns[0])
-                v_col = next((c for c in df_logs.columns if '공급처' in c), None)
 
-                # 날짜/시간 전처리 (공통)
-                df_logs['pure_dt'] = df_logs[d_col].str.strip()
-                df_logs['pure_date'] = df_logs['pure_dt'].str.split(' ').str[0]
-                df_logs['pure_time'] = df_logs['pure_dt'].str.split(' ').str[1].str[:5]
-
-                # ---------------------------------------------------------
-                # 6️⃣단계: 저장 내역 상세 검색 (독립 블록)
+# ---------------------------------------------------------
+                # 6️⃣단계: 저장 내역 상세 검색 (컬럼 순서 정리 버전)
                 # ---------------------------------------------------------
                 st.header("6️⃣ 저장 내역 상세 검색")
                 
@@ -211,18 +212,16 @@ if up_file:
                     q_date = st.date_input("📅 날짜 선택", value=datetime.now(KST).date(), key="s_date_6")
                     target_date = q_date.strftime('%Y-%m-%d') if q_date else ""
                 
-                # 날짜 필터링 우선 적용
                 f_logs_6 = df_logs[df_logs['pure_date'] == target_date].copy()
 
                 with s_col3:
-                    # 회차 리스트 생성
                     times_6 = sorted(f_logs_6['pure_time'].dropna().unique(), reverse=True)
                     q_time_6 = st.selectbox(f"⏰ 저장 회차 ({len(times_6)}회)", ["전체 보기"] + times_6, key="s_time_6")
 
                 with s_col2:
                     q_item_6 = st.text_input("🔎 상품명 검색", key="s_item_6")
 
-                # 6단계 필터 최종 결과
+                # 필터링 적용
                 df_res_6 = f_logs_6.copy()
                 if q_time_6 != "전체 보기":
                     df_res_6 = df_res_6[df_res_6['pure_time'] == q_time_6]
@@ -231,11 +230,35 @@ if up_file:
                     if i_col:
                         df_res_6 = df_res_6[df_res_6[i_col].str.contains(q_item_6, case=False)]
 
-                st.dataframe(df_res_6.iloc[::-1], use_container_width=True, hide_index=True)
+                # 🔥 [핵심] 사장님이 요청하신 순서대로 컬럼 재배치 및 미노출 설정
+                # 기존 시트의 컬럼 순서를 무시하고 아래 정의한 순서대로만 화면에 출력합니다.
+                display_cols = [
+                    d_col,          # 날짜(발주시간)
+                    v_col,          # 업체명(공급처)
+                    "상품명", 
+                    "옵션", 
+                    "공급처상품명", 
+                    "가용재고", 
+                    "기존리오더", 
+                    "수량",         # 입고수량/발주수량(G열)
+                    "추가발주",     # 실제 저장 시 계산된 추가발주
+                    "권장발주수량", # 당시 계산된 권장량
+                    "메모"
+                ]
+                
+                # 존재하는 컬럼만 필터링 (에러 방지)
+                actual_display_cols = [c for c in display_cols if c in df_res_6.columns]
+                
+                # 표 출력 (보조 컬럼 pure_dt, pure_date, pure_time 등은 자동 미노출됨)
+                st.dataframe(
+                    df_res_6[actual_display_cols].iloc[::-1], 
+                    use_container_width=True, 
+                    hide_index=True
+                )
                 
                 if not df_res_6.empty:
-                    csv_6 = df_res_6.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button("📥 검색 결과 다운로드", data=csv_6, file_name=f"발주내역_{target_date}.csv", use_container_width=True)
+                    csv_6 = df_res_6[actual_display_cols].to_csv(index=False).encode('utf-8-sig')
+                    st.download_button("📥 현재 검색 결과 다운로드", data=csv_6, file_name=f"발주내역_{target_date}.csv", use_container_width=True)
 
 
 # ---------------------------------------------------------
