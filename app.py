@@ -11,12 +11,11 @@ import streamlit.components.v1 as components
 KST = timezone(timedelta(hours=9))
 st.set_page_config(layout="wide", page_title="저스트원 발주 시스템")
 
-# --- [🚨 핵심 추가: F5 새로고침/창닫기 방지 자바스크립트] ---
+# --- [🚨 새로고침/창닫기 방지 자바스크립트] ---
 components.html(
     """
     <script>
     window.addEventListener('beforeunload', function (e) {
-      // 표준에 따라 설정 (대부분의 브라우저에서 커스텀 문구 대신 시스템 기본 문구가 출력됨)
       e.preventDefault();
       e.returnValue = '';
     });
@@ -66,17 +65,14 @@ def load_reorder_data():
 
 # --- [메인 로직] ---
 
-# 1️⃣단계: 파일 업로드 및 데이터 로드
+# 1️⃣단계: 파일 업로드 (초기화 버튼 위치 수정)
 st.header("1️⃣ 파일 업로드 및 데이터 로드")
-c_up, c_reset = st.columns([4, 1])
+up_file = st.file_uploader("엑셀 파일을 업로드하세요.", type=['xlsx', 'xls'])
 
-with c_up:
-    up_file = st.file_uploader("엑셀 파일을 업로드하세요.", type=['xlsx', 'xls'])
-
-with c_reset:
-    if st.button("🔄 화면 전체 초기화", help="데이터를 모두 지우고 처음으로 돌아갑니다."):
-        st.session_state.clear()
-        st.rerun()
+# 업로드 창 바로 아래에 초기화 버튼 배치
+if st.button("🔄 현재 화면 데이터 초기화", use_container_width=True):
+    st.session_state.clear()
+    st.rerun()
 
 if up_file:
     if 'df_raw' not in st.session_state:
@@ -106,7 +102,7 @@ if 'df_raw' in st.session_state:
         t3d = st.selectbox("9. 3일 발주합계", cols, index=find_idx(cols, ['3일']))
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
-    # 3️⃣단계: 분석 설정 및 실행 (등록일 기준 일평균 판매량 보정)
+    # 3️⃣단계: 분석 설정 (등록일 기준 보정)
     st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정")
     clt, css = st.columns(2)
@@ -121,7 +117,7 @@ if 'df_raw' in st.session_state:
             try:
                 r_dt = pd.to_datetime(row[reg_date]).date()
                 diff = (today - r_dt).days
-                days = max(1, min(diff, 7))
+                days = max(1, min(diff, 7)) # 등록일 기준 7일 이내는 실제 날짜로 나눔
                 return to_i(row[t1w]) / days
             except: return to_i(row[t1w]) / 7
 
@@ -137,6 +133,7 @@ if 'df_raw' in st.session_state:
             return "🚨 긴급" if row['권장발주수량'] > 0 else "✅ 정상"
         df['상태'] = df.apply(status_check, axis=1)
         
+        # 긴급 상품 옵션 묶음 로직
         is_emg = df.groupby(item)['상태'].transform(lambda x: any(x == "🚨 긴급"))
         df['sort_group'] = np.where(is_emg, 0, 1)
         df = df.sort_values(by=['sort_group', item, option], ascending=[True, True, True])
@@ -146,7 +143,7 @@ if 'df_raw' in st.session_state:
         st.session_state.analyzed = True
         st.rerun()
 
-    # 4️⃣단계: 편집 및 저장 (실시간 수치 업데이트)
+    # 4️⃣단계: 편집 및 저장
     if st.session_state.get('analyzed'):
         st.divider()
         st.header("4️⃣ 발주 편집 및 저장")
@@ -163,9 +160,9 @@ if 'df_raw' in st.session_state:
         if q: disp = disp[disp[item].str.contains(q, case=False, na=False)]
 
         safe = ['상태', vendor, item, option, v_item, avail, '기존리오더', '권장발주수량', '추가발주', '입고차감', '메모']
-        edit_df = st.data_editor(disp[safe], hide_index=True, use_container_width=True, key="final_editor_v21")
+        edit_df = st.data_editor(disp[safe], hide_index=True, use_container_width=True, key="final_v22")
 
-        if st.button("💾 내역 저장 및 즉시 업데이트", type="primary", use_container_width=True):
+        if st.button("💾 내역 저장 및 수치 즉시 갱신", type="primary", use_container_width=True):
             to_save = edit_df[(edit_df['추가발주'] > 0) | (edit_df['입고차감'] > 0)]
             if not to_save.empty:
                 sh = get_sheet()
@@ -173,13 +170,11 @@ if 'df_raw' in st.session_state:
                 now = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
                 rows = [[now, str(r[item]), str(r[option]), str(r[v_item]), int(to_i(r[avail])), int(r['기존리오더']), int(r['추가발주']) - int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[vendor])] for _, r in to_save.iterrows()]
                 ws.append_rows(rows)
-                st.success("✅ 저장되었습니다! 수치를 최신으로 갱신합니다.")
-                
-                # 저장 후 리오더 맵 갱신 및 재분석 유도
-                st.session_state.analyzed = False 
+                st.success("✅ 저장 완료! 리오더 수치를 업데이트합니다.")
+                st.session_state.analyzed = False # 분석 재실행 유도
                 st.rerun()
 
-        # 6-7단계 (생략 없이 포함)
+        # 6-7단계 (검색 및 현황)
         st.divider()
         c6, c7 = st.columns(2)
         with c6:
