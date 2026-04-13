@@ -204,21 +204,24 @@ if up_file:
         
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 저장 내역 상세 검색 (날짜/회차/상품명 필터 유지)
+# 6️⃣단계: 저장 내역 상세 검색 (날짜/회차/상품명 검색 후 조회)
 # ------------------------------------------------------------------
 st.divider()
 st.header("6️⃣ 저장 내역 상세 검색")
 
-# 상단 필터 레이아웃
+# [1] 상단 검색 설정 영역
 c1, c2, c3 = st.columns([1, 1, 1])
 with c1:
-    q_date_6 = st.date_input("📅 1차: 날짜 선택", value=datetime.now(KST).date(), key="fixed_date_6")
+    q_date_6 = st.date_input("📅 1차: 날짜 선택", value=datetime.now(KST).date(), key="final_date_6")
 with c2:
     st.write("") # 간격 맞춤
-    btn_load_6 = st.button("🚀 데이터 조회하기", use_container_width=True, type="primary", key="fixed_btn_6")
+    # 이 버튼을 눌러야만 아래 내용이 나옵니다.
+    btn_load_6 = st.button("🚀 데이터 조회하기", use_container_width=True, type="primary", key="final_btn_6")
 
-if btn_load_6 or st.session_state.get('data_loaded_6'):
-    st.session_state.data_loaded_6 = True # 버튼 클릭 상태 유지
+# [2] 조회 버튼 클릭 시 실행
+if btn_load_6 or st.session_state.get('step6_active'):
+    st.session_state.step6_active = True  # 조회 상태 유지
+    
     sh = get_sheet()
     if sh:
         ws = sh.worksheet("발주기록")
@@ -226,7 +229,7 @@ if btn_load_6 or st.session_state.get('data_loaded_6'):
         if len(raw) > 1:
             df_6 = pd.DataFrame(raw[1:], columns=[c.strip() for c in raw[0]])
             
-            # 날짜 및 시간 전처리
+            # 날짜/시간 데이터 정리 (화면 미노출용)
             df_6['pure_dt'] = df_6.iloc[:, 0].str.strip()
             df_6['pure_date'] = df_6['pure_dt'].str.split(' ').str[0]
             df_6['pure_time'] = df_6['pure_dt'].str.split(' ').str[1].str[:5]
@@ -234,42 +237,48 @@ if btn_load_6 or st.session_state.get('data_loaded_6'):
             target_s = q_date_6.strftime('%Y-%m-%d')
             res_date = df_6[df_6['pure_date'] == target_s].copy()
 
-            # 2차/3차 필터 (회차 셀렉트 & 상품명 검색)
-            sub_f1, sub_f2 = st.columns(2)
-            with sub_f1:
-                times = sorted(res_date['pure_time'].dropna().unique(), reverse=True)
-                q_time = st.selectbox(f"⏰ 2차: 회차 선택 ({len(times)}회)", ["전체 보기"] + times, key="fixed_time_6")
-            with sub_f2:
-                q_item = st.text_input("🔎 3차: 상품명 검색", key="fixed_search_6")
+            if not res_date.empty:
+                # [상단 2차 필터: 회차 및 상품명]
+                sub_f1, sub_f2 = st.columns(2)
+                with sub_f1:
+                    times = sorted(res_date['pure_time'].dropna().unique(), reverse=True)
+                    q_time = st.selectbox(f"⏰ 2차: 회차 선택 ({len(times)}회)", ["전체 보기"] + times, key="final_time_6")
+                with sub_f2:
+                    q_item = st.text_input("🔎 3차: 상품명 검색", key="final_search_6")
 
-            # 최종 필터링
-            display_6 = res_date.copy()
-            if q_time != "전체 보기":
-                display_6 = display_6[display_6['pure_time'] == q_time]
-            if q_item:
-                display_6 = display_6[display_6.iloc[:, 1].str.contains(q_item, case=False)]
+                # 필터링 적용
+                display_6 = res_date.copy()
+                if q_time != "전체 보기":
+                    display_6 = display_6[display_6['pure_time'] == q_time]
+                if q_item:
+                    # 상품명 컬럼(index 1) 기준 검색
+                    display_6 = display_6[display_6.iloc[:, 1].str.contains(q_item, case=False)]
 
-            # [사장님 요청 컬럼 순서 고정]
-            # 날짜(0), 업체(9), 상품(1), 옵션(2), 공급처상품(3), 가용(4), 기존(5), 입고수량(6), 추가(6), 권장(7), 메모(8)
-            col_order = [
-                display_6.columns[0], display_6.columns[-1], "상품명", "옵션", "공급처상품명", 
-                "가용재고", "기존리오더", display_6.columns[6], "추가발주", "권장발주수량", "메모"
-            ]
-            
-            # 존재하는 컬럼만 노출 (뒷부분 보조 컬럼은 자동 숨김)
-            final_cols = [c for c in col_order if c in display_6.columns]
-            
-            st.dataframe(display_6[final_cols].iloc[::-1], use_container_width=True, hide_index=True)
-
-
+                # [사장님 요청 컬럼 순서 고정]
+                # 날짜 => 업체명 => 상품명 => 옵션 => 공급처상품명 => 가용재고 => 기존리오더 => 입고수량(G열) => 추가발주 => 권장발주 => 메모
+                col_order = [
+                    display_6.columns[0],   # 날짜
+                    display_6.columns[-1],  # 업체명
+                    "상품명", "옵션", "공급처상품명", "가용재고", "기존리오더", 
+                    display_6.columns[6],   # 입고수량(G열)
+                    "추가발주", "권장발주수량", "메모"
+                ]
+                
+                # 실제 존재하는 컬럼만 노출 (순서 강제 지정, 보조컬럼 제외)
+                final_cols = [c for c in col_order if c in display_6.columns]
+                
+                st.dataframe(display_6[final_cols].iloc[::-1], use_container_width=True, hide_index=True)
+            else:
+                st.info(f"{target_s}에 저장된 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 7️⃣단계: 실시간 리오더 최종 잔량 상황판 (미입고 잔량 전용)
+# 7️⃣단계: 실시간 리오더 최종 잔량 상황판 (독립형 업데이트)
 # ------------------------------------------------------------------
 st.divider()
 st.header("7️⃣ 실시간 리오더 최종 잔량 상황판")
 
-if st.button("📊 실시간 현황판 업데이트", key="fixed_btn_7", use_container_width=True):
+# 상단 업데이트 버튼
+if st.button("📊 실시간 현황판 업데이트", key="final_btn_7", use_container_width=True, type="secondary"):
     sh = get_sheet()
     if sh:
         ws = sh.worksheet("발주기록")
@@ -277,24 +286,24 @@ if st.button("📊 실시간 현황판 업데이트", key="fixed_btn_7", use_con
         if len(raw) > 1:
             df_7 = pd.DataFrame(raw[1:], columns=[c.strip() for c in raw[0]])
             
-            # 수량(G열) 합산 로직
-            df_7['qty'] = df_7.iloc[:, 6].apply(to_i)
-            v_col = df_7.columns[-1] # 업체명
+            # 수량 계산 (G열: 추가발주/차감액)
+            df_7['qty_val'] = df_7.iloc[:, 6].apply(to_i)
+            v_col_7 = df_7.columns[-1] # 업체명
             
-            # 업체/상품/옵션별 최종 잔량 계산
-            df_remain = df_7.groupby([v_col, df_7.columns[1], df_7.columns[2]], as_index=False)['qty'].sum()
-            df_remain = df_remain[df_remain['qty'] > 0] # 잔량이 남은 것만
-            df_remain.columns = ['업체명', '상품명', '옵션', '잔량']
+            # 업체/상품/옵션별 잔량 합계 계산
+            df_res_7 = df_7.groupby([v_col_7, df_7.columns[1], df_7.columns[2]], as_index=False)['qty_val'].sum()
+            df_res_7 = df_res_7[df_res_7['qty_val'] > 0] # 미입고만 추출
+            df_res_7.columns = ['업체명', '상품명', '옵션', '잔량']
 
-            if not df_remain.empty:
-                # 업체별 메트릭
-                v_sum = df_remain.groupby('업체명')['잔량'].sum().reset_index()
+            if not df_res_7.empty:
+                # 업체별 총량 메트릭
+                v_sum_7 = df_res_7.groupby('업체명')['잔량'].sum().reset_index()
                 m_cols = st.columns(4)
-                for idx, r in enumerate(v_sum.itertuples()):
+                for idx, r in enumerate(v_sum_7.itertuples()):
                     with m_cols[idx % 4]:
-                        st.metric(r.업체명, f"{int(r.잔량)} 개")
+                        st.metric(r.업체명, f"{int(r.잔량):,} 개")
                 
                 st.write("#### 📋 상세 미입고 리스트")
-                st.dataframe(df_remain.sort_values('잔량', ascending=False), use_container_width=True, hide_index=True)
+                st.dataframe(df_res_7.sort_values('잔량', ascending=False), use_container_width=True, hide_index=True)
             else:
-                st.success("🎉 모든 상품이 입고 완료되었습니다!")
+                st.success("🎉 현재 모든 입고가 완료되어 미입고 잔량이 없습니다!")
