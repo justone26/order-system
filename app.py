@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 v7.5")
+st.set_page_config(layout="wide", page_title="저스트원 v7.6")
 
 # [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
@@ -39,7 +39,7 @@ def auto_idx(cols, keys, exclude_keys=None):
         if any(k.upper() in c_str for k in keys): return i
     return 0
 
-# --- [메인 화면 영역] ---
+# --- [메인 화면] ---
 st.title("📦 저스트원 통합 재고 관리")
 
 # 1단계: 업로드
@@ -64,12 +64,12 @@ if up_file:
                         r_map[key] = r_map.get(key, 0) + (to_i(row[5]) + to_i(row[6]))
                 st.session_state.r_map = r_map
         except Exception as e:
-            st.error(f"파일 읽기 오류: {e}")
+            st.error(f"⚠️ 파일 로드 실패: {e}")
             st.stop()
 
     cols = st.session_state.df_raw.columns.tolist()
     
-    # 2~3단계: 매핑 및 설정 (항상 노출)
+    # 2~3단계: 설정 영역 (상단 고정)
     st.divider()
     st.header("2️⃣ 필드 매핑 및 3️⃣ 수치 설정")
     c1, c2, c3 = st.columns([2, 2, 1])
@@ -82,7 +82,7 @@ if up_file:
         s_av = st.selectbox("✅ 가용재고", cols, index=auto_idx(cols, ['가용재고']), key="av_box")
         s_so = st.selectbox("🚫 품절여부", cols, index=auto_idx(cols, ['품절']), key="so_box")
         s_t3 = st.selectbox("🔥 3일 판매", cols, index=auto_idx(cols, ['3일']), key="t3_box")
-        s_t7 = st.selectbox("📅 7일 판매", cols, index=auto_idx(cols, ['7일']), key="t7_box")
+        s_t7 = st.selectbox("📅 7일 판매", cols, index=auto_idx(cols, ['7일', '1주']), key="t7_box")
     with c3:
         lt = st.number_input("⏳ 리드타임", value=7, key="lt_val")
         ss = st.number_input("🛡️ 안전재고", value=3, key="ss_val")
@@ -107,7 +107,7 @@ if up_file:
         st.session_state.analyzed_data = df.sort_values(by=['item_urgent_group', s_it, s_op], ascending=[False, True, True])
         st.session_state.final_mapping = {'vn':s_vn, 'it':s_it, 'op':s_op, 'vi':s_vi, 'av':s_av, 't3':s_t3, 'so':s_so}
 
-    # --- [4~5단계: 결과 편집 영역] ---
+    # 4~5단계: 결과 영역 (이 블록의 들여쓰기를 엄격히 맞춤)
     if 'analyzed_data' in st.session_state:
         st.divider()
         st.header("4️⃣~5️⃣ 발주 편집 및 저장")
@@ -152,11 +152,11 @@ if up_file:
                 now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
                 rows = [[now_s, str(r[m['it']]), str(r[m['op']]), str(r[m['vi']]), 0, int(r['리오더 수량']), int(r['추가발주'])-int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[m['vn']])] for _, r in to_save.iterrows()]
                 ws_main.append_rows(rows)
-                st.success("✅ 저장 완료!")
+                st.success("✅ 저장 성공!")
                 del st.session_state.analyzed_data
                 st.rerun()
 
-# [사이드바] 전체 초기화 버튼
+# [사이드바]
 if st.sidebar.button("🔄 전체 초기화"):
     for k in list(st.session_state.keys()): del st.session_state[k]
     st.rerun()
