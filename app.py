@@ -87,6 +87,7 @@ if 'df_raw' in st.session_state:
     cols = df_work.columns.tolist()
     st.subheader("⚙️ 2️⃣단계: 매핑 설정")
     
+    # ... (생략: 기존 매핑 selectbox 코드들은 동일) ...
     c1, c2 = st.columns(2)
     with c1:
         sold_out = st.selectbox("1. 품절 여부", cols, index=find_idx(cols, ['품절']))
@@ -107,7 +108,6 @@ if 'df_raw' in st.session_state:
     lt, ss = clt.number_input("리드타임 (일)", value=10), css.number_input("안전재고 (일 수)", value=7)
 
     if st.button("🚀 분석 실행 / 업데이트", type="primary", use_container_width=True):
-        # 4단계를 위한 매핑 정보 저장 (p)
         st.session_state.p = {
             'so': sold_out, 'it': item, 'op': option, 'vn': vendor, 'vi': v_item_col,
             'av': avail, 't3': t3d, 't7': t1w, 'lt': lt, 'ss': ss
@@ -117,22 +117,24 @@ if 'df_raw' in st.session_state:
         r_map = load_reorder_data()
         today = datetime.now(KST).date()
 
-        # 데이터 변환 및 계산
+        # 데이터 계산
         df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
         df[t3d] = pd.to_numeric(df[t3d], errors='coerce').fillna(0).astype(int)
         df['clean_k'] = df.apply(lambda r: super_clean(r[item]) + super_clean(r[option]), axis=1)
         
-        # ⭐ 4단계에서 사용할 컬럼들 명확히 생성
+        # ⭐ 이름 중요: '기존리오더', '일판매량', '권장발주수량'
         df['기존리오더'] = df['clean_k'].map(r_map).fillna(0).astype(int).clip(lower=0)
         
         def get_daily_avg(row):
             try:
                 r_dt = pd.to_datetime(row[reg_date]).date()
                 days = max(1, min((today - r_dt).days, 7))
-                return to_i(row[t1w]) / days
-            except: return to_i(row[t1w]) / 7
+                # 💡 소수점 반올림하여 정수로 저장
+                return int(round(to_i(row[t1w]) / days, 0))
+            except: 
+                return int(round(to_i(row[t1w]) / 7, 0))
 
-        df['일판매량'] = df.apply(get_daily_avg, axis=1).round(1)
+        df['일판매량'] = df.apply(get_daily_avg, axis=1)
         df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[avail] + df['기존리오더'])).clip(lower=0).astype(int)
         
         def status_check(row):
@@ -140,7 +142,7 @@ if 'df_raw' in st.session_state:
             return "🚨 발주필요" if row['권장발주수량'] > 0 else "✅ 정상"
         df['상태'] = df.apply(status_check, axis=1)
         
-        # ⭐ KeyError 방지용 필수 컬럼 강제 생성
+        # 필수 컬럼 생성
         df['입고차감'] = 0
         df['추가발주'] = 0
         df['비고(메모)'] = ""
@@ -164,71 +166,62 @@ if st.session_state.get('analyzed'):
     p = st.session_state.p
     vnd_c, itm_c, opt_c, vit_c, avl_c, t3_c = p['vn'], p['it'], p['op'], p['vi'], p['av'], p['t3']
 
+    df_disp = st.session_state.df_final.copy()
+    
     # 1. 필터 UI
     f1, f2 = st.columns([1, 2])
     with f1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
     with f2: s_query = st.text_input("🔍 검색 (상품명/옵션)")
 
-    df_disp = st.session_state.df_final.copy()
-    
-    # 2. [핵심 로직] 세트 필터링 적용
+    # 2. 필터 로직 (여기서 이름을 '권장발주수량'으로 통일)
     if f_mode == "🚨 발주필요(세트)":
-        # (1) 먼저 발주가 필요한(권장수량 > 0) 상품명 리스트를 뽑습니다.
-        need_order_items = df_disp[df_disp['발주권장'] > 0][itm_c].unique()
-        # (2) 그 상품명에 해당하는 모든 옵션을 다 보여줍니다.
-        df_disp = df_disp[df_disp[itm_c].isin(need_order_items)]
-        # (3) 품절 상품은 제외하고 싶으시면 아래 주석을 해제하세요.
-        # df_disp = df_disp[~df_disp['상태'].str.contains("품절")]
-
+        # ⭐ '권장발주수량'이 0보다 큰 상품의 [상품명]을 모두 찾음
+        need_items = df_disp[df_disp['권장발주수량'] > 0][itm_c].unique()
+        # 그 상품명에 속한 모든 옵션을 노출 (브라운이 걸리면 블랙도 같이 나옴)
+        df_disp = df_disp[df_disp[itm_c].isin(need_items)]
     elif f_mode == "✅ 정상":
         df_disp = df_disp[df_disp['상태'] == "✅ 정상"]
     elif f_mode == "🚫 품절":
         df_disp = df_disp[df_disp['상태'] == "🚫 품절"]
 
-    # 검색어 필터
     if s_query:
         df_disp = df_disp[df_disp[itm_c].astype(str).str.contains(s_query, case=False) | 
                           df_disp[opt_c].astype(str).str.contains(s_query, case=False)]
 
-    # 3. 컬럼 순서 및 존재 확인 (이전과 동일)
+    # 3. 컬럼 순서 및 존재 보장
     disp_cols = [
         '상태', vnd_c, itm_c, opt_c, vit_c, avl_c, 
         '기존리오더', '입고차감', '추가발주', t3_c, 
         '일판매량', '권장발주수량', '비고(메모)'
     ]
-    for col_name in disp_cols:
-        if col_name not in df_disp.columns:
-            df_disp[col_name] = "" if "메모" in col_name else 0
+    for c in disp_cols:
+        if c not in df_disp.columns: df_disp[c] = 0
 
-    # 4. 에디터 실행
-    with st.form("v4_set_view_form"):
+    # 4. 에디터
+    with st.form("v4_final_stable_form"):
         edited_df = st.data_editor(
             df_disp[disp_cols],
             use_container_width=True,
             hide_index=True,
             column_config={
                 '상태': st.column_config.TextColumn("상태", disabled=True),
-                vnd_c: st.column_config.TextColumn("공급처", disabled=True),
-                itm_c: st.column_config.TextColumn("상품명", disabled=True, width="medium"),
-                opt_c: st.column_config.TextColumn("옵션", disabled=True),
-                vit_c: st.column_config.TextColumn("공급처상품명", disabled=True),
+                vnd_c: "공급처", itm_c: "상품명", opt_c: "옵션", vit_c: "공급처상품명",
                 avl_c: st.column_config.NumberColumn("가용재고", disabled=True, format="%d"),
                 "기존리오더": st.column_config.NumberColumn("📦 기존잔량", disabled=True, format="%d"),
                 "입고차감": st.column_config.NumberColumn("📥 입고(-)", min_value=0, format="%d"),
                 "추가발주": st.column_config.NumberColumn("➕ 발주(+)", min_value=0, format="%d"),
                 t3_c: st.column_config.NumberColumn("3일판매", disabled=True, format="%d"),
-                "일판매량": st.column_config.NumberColumn("평균판매", disabled=True, format="%d"), # 정수 표시
+                "일판매량": st.column_config.NumberColumn("평균판매", disabled=True, format="%d"),
                 "권장발주수량": st.column_config.NumberColumn("💡 권장", disabled=True, format="%d"),
                 "비고(메모)": st.column_config.TextColumn("비고(메모)", width="medium")
             },
-            key="editor_set_view"
+            key="final_editor_ordered"
         )
         
         btn_save = st.form_submit_button("💾 데이터 최종 저장 및 시트 전송", use_container_width=True, type="primary")
 
-    # (저장 로직은 이전과 동일하므로 생략)
     if btn_save:
-        # 변경된 데이터만 필터링
+        # 저장 로직 (생략하지 않고 포함)
         change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
         if not change_list.empty:
             try:
@@ -240,7 +233,6 @@ if st.session_state.get('analyzed'):
                     net_qty = int(r['추가발주']) - int(r['입고차감'])
                     m_txt = str(r['비고(메모)'])
                     if r['입고차감'] > 0 and r['추가발주'] == 0: m_txt = f"[입고차감] {m_txt}".strip()
-                    
                     rows.append([
                         now_s, str(r[itm_c]), str(r[opt_c]), str(r[vit_c]), 
                         int(r[avl_c]), int(r['기존리오더']), net_qty, 
@@ -253,7 +245,6 @@ if st.session_state.get('analyzed'):
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ 오류: {e}")
-                
                 
         
         # --- 6️⃣단계: 전체 히스토리 관리 ---
