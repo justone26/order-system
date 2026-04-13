@@ -292,85 +292,76 @@ if st.session_state.get('analyzed'):
 
         
                 
-        
 # ------------------------------------------------------------------
-# [5단계: 히스토리 모드 - 과부하 및 무한로딩 방지 버전]
+# [5단계: 히스토리 모드 - 과부하 방지 및 무한로딩 차단]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.header("📜 5단계: 히스토리 모드 (최근 기록)")
     
-    with st.expander("🕒 최근 발주 및 입고 기록 보기 (구글 시트 연동)", expanded=True):
-        # 1. 시트 데이터 로드 (캐시 사용으로 무한 로딩 방지)
-        @st.cache_data(ttl=600) # 10분 동안은 구글 시트를 다시 공격하지 않고 메모리에서 가져옵니다.
-        def get_log_data_cached():
+    with st.expander("🕒 최근 기록 조회 (조회 버튼을 눌러주세요)", expanded=True):
+        # 1. 상단 검색바 레이아웃
+        c1, c2, c3 = st.columns([2, 2, 1])
+        with c1:
+            h_dr = st.date_input("🗓️ 조회 기간", 
+                                value=((datetime.now(KST)-timedelta(days=7)).date(), datetime.now(KST).date()),
+                                key="h_date_in")
+        with c2:
+            h_search = st.text_input("🔍 상품명 검색", placeholder="검색어 입력", key="h_txt_in")
+        with c3:
+            st.write(" ") # 높이 맞춤
+            # ⭐ 중요: 이 버튼을 누를 때만 구글 시트에 접속하게 합니다.
+            btn_fetch = st.button("🔎 조회하기", use_container_width=True, type="primary")
+
+        # 2. 데이터 조회 로직 (버튼 클릭 시에만 실행)
+        if btn_fetch or 'cached_log' in st.session_state:
             try:
-                sh = get_sheet()
-                ws_log = sh.worksheet("발주기록")
-                return pd.DataFrame(ws_log.get_all_records())
+                # 버튼을 누르면 새로 가져오고, 아니면 기존에 가져온 세션 데이터를 씁니다.
+                if btn_fetch or 'cached_log' not in st.session_state:
+                    with st.spinner("데이터를 불러오는 중..."):
+                        sh = get_sheet()
+                        ws_log = sh.worksheet("발주기록")
+                        df_raw = pd.DataFrame(ws_log.get_all_records())
+                        # 메모리(세션)에 저장해서 다시 시트를 부르지 않게 함
+                        st.session_state.cached_log = df_raw 
+                
+                df_h = st.session_state.cached_log.copy()
+                
+                if not df_h.empty:
+                    # 날짜 필터링
+                    df_h['일시_dt'] = pd.to_datetime(df_h['일시']).dt.date
+                    if isinstance(h_dr, tuple) and len(h_dr) == 2:
+                        df_h = df_h[(df_h['일시_dt'] >= h_dr[0]) & (df_h['일시_dt'] <= h_dr[1])]
+                    
+                    # 텍스트 검색 필터링
+                    if h_search:
+                        df_h = df_h[df_h['상품명'].astype(str).str.contains(h_search, case=False) | 
+                                    df_h['옵션'].astype(str).str.contains(h_search, case=False)]
+                    
+                    # 최신순 정렬 및 표시
+                    df_h = df_h.sort_values(by='일시', ascending=False)
+                    
+                    st.dataframe(
+                        df_h.drop(columns=['일시_dt']), 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={
+                            "일시": st.column_config.TextColumn("날짜/시간", width="medium"),
+                            "상품명": st.column_config.TextColumn("상품명", width="large"),
+                            "수량": st.column_config.NumberColumn("수량", format="%d")
+                        }
+                    )
+                else:
+                    st.info("조회된 기록이 없습니다.")
             except Exception as e:
-                return pd.DataFrame()
+                st.error(f"데이터 로드 중 오류: {e}")
 
-        df_log_raw = get_log_data_cached()
-
-        if not df_log_raw.empty:
-            df_log = df_log_raw.copy()
-            df_log['일시_dt'] = pd.to_datetime(df_log['일시']).dt.date
-
-            # --- 🎨 상단 검색바 레이아웃 (3컬럼) ---
-            c1, c2, c3 = st.columns([2, 2, 1])
-            
-            with c1:
-                log_date_range = st.date_input(
-                    "🗓️ 조회 기간",
-                    value=((datetime.now(KST) - timedelta(days=30)).date(), datetime.now(KST).date()),
-                    key="history_date_filter_v2"
-                )
-            
-            with c2:
-                search_txt = st.text_input("🔍 상품명 검색", placeholder="상품명 또는 옵션 입력", key="history_search_txt_v2")
-            
-            with c3:
-                st.write(" ") # 높이 맞춤용
-                # 버튼을 누르지 않아도 엔터나 날짜 변경 시 자동 필터링되도록 버튼은 '새로고침' 용도로만 사용
-                btn_refresh = st.button("🔄 기록 새로고침", use_container_width=True)
-
-            # --- 🔍 필터링 로직 (데이터프레임 내에서만 계산) ---
-            if isinstance(log_date_range, tuple) and len(log_date_range) == 2:
-                start_date, end_date = log_date_range
-                df_log = df_log[(df_log['일시_dt'] >= start_date) & (df_log['일시_dt'] <= end_date)]
-            
-            if search_txt:
-                df_log = df_log[
-                    df_log['상품명'].astype(str).str.contains(search_txt, case=False) |
-                    df_log['옵션'].astype(str).str.contains(search_txt, case=False)
-                ]
-
-            # 최신순 정렬
-            df_log = df_log.sort_values(by='일시', ascending=False)
-            
-            # --- 📊 결과 표시 ---
-            st.dataframe(
-                df_log.drop(columns=['일시_dt']),
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "일시": st.column_config.TextColumn("날짜"),
-                    "상품명": st.column_config.TextColumn("상품명", width="large"),
-                    "수량": st.column_config.NumberColumn("발주/입고", format="%d"),
-                    "공급처": st.column_config.TextColumn("공급처")
-                }
-            )
-            
-            # 새로고침 버튼 클릭 시에만 캐시 삭제 후 재실행
-            if btn_refresh:
-                st.cache_data.clear()
-                st.rerun()
-        else:
-            st.info("데이터가 없거나 시트를 읽을 수 없습니다.")
-            if st.button("다시 시도"):
-                st.rerun()
-
+        # 3. 강제 초기화 버튼 (무한 로딩 시 탈출구)
+        if st.button("♻️ 데이터 초기화 (로딩 멈춤)", use_container_width=True):
+            if 'cached_log' in st.session_state:
+                del st.session_state.cached_log
+            st.cache_data.clear()
+            st.rerun()
 
 
 # ------------------------------------------------------------------
