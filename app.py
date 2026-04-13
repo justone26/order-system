@@ -43,23 +43,24 @@ def auto_idx(cols, keys, exclude_keys=None):
     return 0
 
 # --- [공통 데이터 로드] ---
-        st.divider()
-        sh = get_sheet()
-        
-        if sh:
-            ws_log = sh.worksheet("발주기록")
-            raw_logs = ws_log.get_all_values()
-            
-            # 데이터가 있는 경우에만 아래 단계들 실행
-            if len(raw_logs) > 1:
-                df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
-                d_col = next((c for c in df_logs.columns if '날짜' in c), df_logs.columns[0])
-                v_col = next((c for c in df_logs.columns if '공급처' in c), None)
+# 여기서부터는 왼쪽 벽에 딱 붙여야 합니다! (공백 제거)
+st.divider()
+sh = get_sheet()
 
-                # 날짜/시간 전처리 (공통)
-                df_logs['pure_dt'] = df_logs[d_col].str.strip()
-                df_logs['pure_date'] = df_logs['pure_dt'].str.split(' ').str[0]
-                df_logs['pure_time'] = df_logs['pure_dt'].str.split(' ').str[1].str[:5]
+if sh:
+    ws_log = sh.worksheet("발주기록")
+    raw_logs = ws_log.get_all_values()
+    
+    # 데이터가 있는 경우에만 아래 단계들 실행
+    if len(raw_logs) > 1:
+        df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
+        d_col = next((c for c in df_logs.columns if '날짜' in c), df_logs.columns[0])
+        v_col = next((c for c in df_logs.columns if '공급처' in c), None)
+
+        # 날짜/시간 전처리 (공통)
+        df_logs['pure_dt'] = df_logs[d_col].str.strip()
+        df_logs['pure_date'] = df_logs['pure_dt'].str.split(' ').str[0]
+        df_logs['pure_time'] = df_logs['pure_dt'].str.split(' ').str[1].str[:5]
 
 
 # --- [메인 화면] ---
