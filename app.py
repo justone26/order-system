@@ -163,38 +163,58 @@ if st.session_state.get('analyzed'):
     st.divider()
     st.header("📊 4단계: 입고 관리 및 최종 발주 확정")
 
+    # 2단계에서 저장한 매핑 정보 불러오기
     p = st.session_state.p
     vnd_c, itm_c, opt_c, vit_c, avl_c, t3_c = p['vn'], p['it'], p['op'], p['vi'], p['av'], p['t3']
 
+    # 원본 데이터 복사
     df_disp = st.session_state.df_final.copy()
     
-    # 1. 필터 UI (세트 보기 포함)
-    f1, f2 = st.columns([1, 2])
-    with f1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
-    with f2: s_query = st.text_input("🔍 검색 (상품명/옵션)")
+    # [데이터 전처리] 숫자 타입 강제 변환 (에러 방지)
+    num_fields = [avl_c, '기존리오더', '입고차감', '추가발주', t3_c, '일판매량', '권장발주수량']
+    for col in num_fields:
+        if col in df_disp.columns:
+            df_disp[col] = pd.to_numeric(df_disp[col], errors='coerce').fillna(0).astype(int)
 
-    # 필터 로직
+    # 1. 필터 UI 설정
+    f1, f2 = st.columns([1, 2])
+    with f1: 
+        f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
+    with f2: 
+        s_query = st.text_input("🔍 검색 (상품명/옵션)")
+
+    # 2. 필터 로직 적용 (품절 제외 및 세트 보기)
     if f_mode == "🚨 발주필요(세트)":
-        need_items = df_disp[df_disp['권장발주수량'] > 0][itm_c].unique()
-        df_disp = df_disp[df_disp[itm_c].isin(need_items)]
+        # 상태가 '품절'이 아닌 것들 중에서 발주가 필요한 상품명(세트) 추출
+        df_active = df_disp[df_disp['상태'] != "🚫 품절"]
+        need_items = df_active[df_active['권장발주수량'] > 0][itm_c].unique()
+        df_disp = df_active[df_active[itm_c].isin(need_items)]
     elif f_mode == "✅ 정상":
         df_disp = df_disp[df_disp['상태'] == "✅ 정상"]
     elif f_mode == "🚫 품절":
         df_disp = df_disp[df_disp['상태'] == "🚫 품절"]
 
+    # 검색어 필터
     if s_query:
         df_disp = df_disp[df_disp[itm_c].astype(str).str.contains(s_query, case=False) | 
                           df_disp[opt_c].astype(str).str.contains(s_query, case=False)]
 
-    # 2. 컬럼 순서 설정
+    # 3. 컬럼 순서 설정 및 존재 여부 체크 (KeyError 방지)
+    # [순서]: 상태 → 공급처 → 상품명 → 옵션 → 공급처상품명 → 가용재고 → 기존리오더 → 입고차감 → 추가발주 → 3일판매 → 일판매량 → 권장발주수량 → 비고(메모)
     disp_cols = [
         '상태', vnd_c, itm_c, opt_c, vit_c, avl_c, 
         '기존리오더', '입고차감', '추가발주', t3_c, 
         '일판매량', '권장발주수량', '비고(메모)'
     ]
+    
+    for c in disp_cols:
+        if c not in df_disp.columns:
+            df_disp[c] = "" if "메모" in c else 0
 
-    # 3. 통합 에디터 (수정 권한 제어)
-    with st.form("v4_final_protected_form"):
+    # 4. 통합 에디터 실행
+    with st.form("v4_final_integrated_form"):
+        st.info("💡 '입고차감', '추가발주', '비고(메모)' 컬럼만 수정 가능합니다. 기존잔량은 수정되지 않습니다.")
+        
         edited_df = st.data_editor(
             df_disp[disp_cols],
             use_container_width=True,
@@ -207,49 +227,70 @@ if st.session_state.get('analyzed'):
                 vit_c: st.column_config.TextColumn("공급처상품명", disabled=True),
                 avl_c: st.column_config.NumberColumn("가용재고", disabled=True, format="%d"),
                 
-                # ⭐ [핵심 수정] 기존잔량 수정 불가 설정
-                "기존리오더": st.column_config.NumberColumn("📦 기존잔량", disabled=True, format="%d", help="구글 시트에서 계산된 리오더 잔량입니다. 수정 불가."),
-                
-                # ✍️ 수정 가능한 컬럼들
-                "입고차감": st.column_config.NumberColumn("📥 입고(-)", min_value=0, format="%d", help="들어온 수량을 입력하면 리오더에서 차감됩니다."),
-                "추가발주": st.column_config.NumberColumn("➕ 발주(+)", min_value=0, format="%d", help="새로 주문할 수량을 입력하세요."),
-                
+                # 수정 불가 컬럼 (보호)
+                "기존리오더": st.column_config.NumberColumn("📦 기존잔량", disabled=True, format="%d"),
                 t3_c: st.column_config.NumberColumn("3일판매", disabled=True, format="%d"),
                 "일판매량": st.column_config.NumberColumn("평균판매", disabled=True, format="%d"),
                 "권장발주수량": st.column_config.NumberColumn("💡 권장", disabled=True, format="%d"),
-                "비고(메모)": st.column_config.TextColumn("비고(메모)", width="medium") # 메모는 수정 가능
+                
+                # 수정 가능 컬럼
+                "입고차감": st.column_config.NumberColumn("📥 입고(-)", min_value=0, format="%d"),
+                "추가발주": st.column_config.NumberColumn("➕ 발주(+)", min_value=0, format="%d"),
+                "비고(메모)": st.column_config.TextColumn("비고(메모)", width="medium")
             },
-            key="editor_v6_protected"
+            key="final_stable_editor_v8"
         )
         
         btn_save = st.form_submit_button("💾 데이터 최종 저장 및 시트 전송", use_container_width=True, type="primary")
 
-    # (저장 로직은 이전과 동일)
+    # 5. 저장 로직
     if btn_save:
+        # 입고차감이나 추가발주 값이 있는 행만 추출
         change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
+        
         if not change_list.empty:
             try:
                 sh = get_sheet()
                 ws_log = sh.worksheet("발주기록")
                 now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
                 rows = []
+                
                 for _, r in change_list.iterrows():
+                    # 입고는 빼고, 발주는 더해서 순 발주량 계산
                     net_qty = int(r['추가발주']) - int(r['입고차감'])
                     m_txt = str(r['비고(메모)'])
-                    if r['입고차감'] > 0 and r['추가발주'] == 0: m_txt = f"[입고차감] {m_txt}".strip()
+                    
+                    # 메모 자동 보충 (입고만 기록할 경우)
+                    if r['입고차감'] > 0 and r['추가발주'] == 0:
+                        m_txt = f"[입고차감] {m_txt}".strip()
                     
                     rows.append([
-                        now_s, str(r[itm_c]), str(r[opt_c]), str(r[vit_c]), 
-                        int(r[avl_c]), int(r['기존리오더']), net_qty, 
-                        int(r['권장발주수량']), m_txt, str(r[vnd_c])
+                        now_s,          # 일시
+                        str(r[itm_c]),  # 상품명
+                        str(r[opt_c]),  # 옵션
+                        str(r[vit_c]),  # 공급처상품명
+                        int(r[avl_c]),  # 가용재고
+                        int(r['기존리오더']), # 기존잔량
+                        net_qty,        # 수량
+                        int(r['권장발주수량']), # 권장수량
+                        m_txt,          # 메모
+                        str(r[vnd_c])   # 공급처
                     ])
+                
                 ws_log.append_rows(rows)
-                st.success(f"✅ {len(rows)}건 저장 성공!")
+                st.success(f"✅ 총 {len(rows)}건의 기록이 '발주기록' 시트에 전송되었습니다!")
+                
+                # 캐시 삭제 및 화면 새로고침
                 st.cache_data.clear()
-                time.sleep(1)
+                time.sleep(1.5)
                 st.rerun()
+                
             except Exception as e:
-                st.error(f"❌ 오류: {e}")
+                st.error(f"❌ 구글 시트 저장 중 오류가 발생했습니다: {e}")
+        else:
+            st.warning("⚠️ 입력된 입고/발주 수량이 없습니다.")
+
+        
                 
         
         # --- 6️⃣단계: 전체 히스토리 관리 ---
