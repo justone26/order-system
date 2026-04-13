@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 통합 관리 v6.1")
+st.set_page_config(layout="wide", page_title="저스트원 통합 관리 v6.2")
 
 # [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
@@ -40,14 +40,13 @@ def auto_idx(cols, keys, exclude_keys=None):
         if any(k.upper() in c_str for k in keys): return i
     return 0
 
-# --- [메인 화면 시작] ---
+# --- [메인 화면] ---
 st.title("📦 저스트원 통합 재고 관리")
 
 # 1단계: 업로드
 st.header("1️⃣ 데이터 업로드")
 if 'reset_trigger' not in st.session_state: st.session_state.reset_trigger = 0
-
-up_file = st.file_uploader("📂 엑셀 또는 CSV 파일 업로드", type=['xlsx', 'xls', 'csv'], key=f"uploader_{st.session_state.reset_trigger}")
+up_file = st.file_uploader("📂 파일 업로드", type=['xlsx', 'xls', 'csv'], key=f"uploader_{st.session_state.reset_trigger}")
 
 if st.button("🔄 전체 화면 초기화"):
     for key in list(st.session_state.keys()): del st.session_state[key]
@@ -56,11 +55,10 @@ if st.button("🔄 전체 화면 초기화"):
 
 if up_file:
     if 'df_raw' not in st.session_state:
-        with st.spinner("🚀 구글 시트 잔량 동기화 중..."):
+        with st.spinner("🚀 데이터 로드 및 시트 동기화 중..."):
             df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
             df.columns = [str(c).strip() for c in df.columns]
             st.session_state.df_raw = df.fillna("")
-            
             sh = get_sheet()
             if sh:
                 ws = sh.worksheet("발주기록")
@@ -76,7 +74,7 @@ if up_file:
 
     # 2단계: 매핑
     st.divider()
-    st.header("2️⃣ 필드 매핑 설정")
+    st.header("2️⃣ 필드 매핑")
     c_left, c_right = st.columns(2)
     with c_left:
         st.markdown("##### [ 기본 정보 ]")
@@ -104,27 +102,37 @@ if up_file:
         df = st.session_state.df_raw.copy()
         for c in [av, t3, t7, stk]: df[c] = df[c].apply(to_i)
         df['clean_key'] = df.apply(lambda r: super_clean(r[it]) + super_clean(r[op]), axis=1)
-        df['기존잔량'] = df['clean_key'].map(st.session_state.r_map).fillna(0).astype(int)
-        df['일판매'] = df.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
-        df['발주권장'] = ((df['일판매'] * (lt + ss)) - (df[av] + df['기존잔량'])).clip(lower=0).astype(int)
+        df['리오더 수량'] = df['clean_key'].map(st.session_state.r_map).fillna(0).astype(int)
+        df['1일 판매량'] = df.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
+        df['권장발주수량'] = ((df['1일 판매량'] * (lt + ss)) - (df[av] + df['리오더 수량'])).clip(lower=0).astype(int)
         df['입고차감'] = 0
         df['추가발주'] = 0
         df['메모'] = ""
         st.session_state.analyzed_data = df
-        st.session_state.mapping_info = {'it':it, 'op':op, 'vn':vn, 'reg':reg, 'vi':vi}
+        st.session_state.mapping_info = {'it':it, 'op':op, 'vn':vn, 'av':av, 't3':t3}
 
-    # --- [4~7단계 통합 구역] ---
+    # --- [4~5단계: 편집 및 저장 영역] ---
     if 'analyzed_data' in st.session_state:
         st.divider()
         st.header("4️⃣~5️⃣ 발주 편집 및 저장")
         m = st.session_state.mapping_info
         
+        # 사장님 요청 순서: 공급처 -> 상품명 -> 옵션 -> 가용재고 -> 리오더 수량 -> 입고차감 -> 추가발주 -> 3일발주합계 -> 1일 판매량 -> 권장발주수량 -> 메모
+        display_cols = [m['vn'], m['it'], m['op'], m['av'], '리오더 수량', '입고차감', '추가발주', m['t3'], '1일 판매량', '권장발주수량', '메모']
+        
         edited_df = st.data_editor(
-            st.session_state.analyzed_data[[m['vn'], m['it'], m['op'], '기존잔량', '입고차감', '발주권장', '추가발주', '메모', m['reg']]],
-            use_container_width=True, hide_index=True, key="main_editor"
+            st.session_state.analyzed_data[display_cols],
+            use_container_width=True, hide_index=True, key="main_editor",
+            column_config={
+                "입고차감": st.column_config.NumberColumn("📥 입고(-)", help="입고량 입력 시 차감"),
+                "추가발주": st.column_config.NumberColumn("➕ 추가발주", help="신규 발주량"),
+                "리오더 수량": st.column_config.NumberColumn("📦 리오더 잔량", disabled=True),
+                "1일 판매량": st.column_config.NumberColumn("📈 일판매", disabled=True),
+                "권장발주수량": st.column_config.NumberColumn("💡 권장", disabled=True)
+            }
         )
 
-        if st.button("💾 변경사항 일괄 저장 (6-7단계 자동 반영)", type="primary", use_container_width=True):
+        if st.button("💾 변경사항 일괄 저장", type="primary", use_container_width=True):
             to_save = edited_df[(edited_df['입고차감'] != 0) | (edited_df['추가발주'] > 0)]
             if not to_save.empty:
                 with st.spinner("📡 데이터 기록 중..."):
@@ -135,11 +143,13 @@ if up_file:
                     rows = []
                     for _, r in to_save.iterrows():
                         final_change = int(r['추가발주']) - int(r['입고차감'])
-                        rows.append([now_s, str(r[m['it']]), str(r[m['op']]), "", 0, int(r['기존잔량']), final_change, int(r['발주권장']), str(r['메모']), str(r[m['vn']])])
+                        rows.append([now_s, str(r[m['it']]), str(r[m['op']]), "", 0, int(r['리오더 수량']), final_change, int(r['권장발주수량']), str(r['메모']), str(r[m['vn']])])
                     ws_main.append_rows(rows)
                     ws_hist.append_rows(rows)
                     st.success("✅ 저장 완료!")
                     st.rerun()
+
+        # 6단계 & 7단계는 아래에 계속 유지됨... (이전 코드 동일)
 
         # --- [6단계: 히스토리 (최근 저장 내역)] ---
         st.divider()
