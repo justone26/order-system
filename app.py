@@ -10,12 +10,12 @@ from datetime import datetime, timedelta, timezone
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 v6.6")
+st.set_page_config(layout="wide", page_title="저스트원 v6.7")
 
 # [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
 
-# --- [사장님표 필수 함수] ---
+# --- [공통 함수] ---
 def super_clean(t):
     if not t: return ""
     t = unicodedata.normalize('NFC', str(t))
@@ -55,24 +55,20 @@ if st.button("🔄 전체 화면 초기화"):
 
 if up_file:
     if 'df_raw' not in st.session_state:
-        with st.spinner("🚀 데이터 로드 중..."):
-            try:
-                df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
-                df.columns = [str(c).strip() for c in df.columns]
-                st.session_state.df_raw = df.fillna("")
-                sh = get_sheet()
-                if sh:
-                    ws = sh.worksheet("발주기록")
-                    all_vals = ws.get_all_values()
-                    r_map = {}
-                    if len(all_vals) > 1:
-                        for row in all_vals[1:]:
-                            key = super_clean(row[1]) + super_clean(row[2])
-                            r_map[key] = r_map.get(key, 0) + (to_i(row[5]) + to_i(row[6]))
-                    st.session_state.r_map = r_map
-            except Exception as e:
-                st.error(f"파일 로드 에러: {e}")
-                st.stop()
+        with st.spinner("🚀 데이터 로드 및 시트 조회 중..."):
+            df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
+            df.columns = [str(c).strip() for c in df.columns]
+            st.session_state.df_raw = df.fillna("")
+            sh = get_sheet()
+            if sh:
+                ws = sh.worksheet("발주기록")
+                all_vals = ws.get_all_values()
+                r_map = {}
+                if len(all_vals) > 1:
+                    for row in all_vals[1:]:
+                        key = super_clean(row[1]) + super_clean(row[2])
+                        r_map[key] = r_map.get(key, 0) + (to_i(row[5]) + to_i(row[6]))
+                st.session_state.r_map = r_map
 
     cols = st.session_state.df_raw.columns.tolist()
 
@@ -82,18 +78,16 @@ if up_file:
     c_left, c_right = st.columns(2)
     with c_left:
         st.markdown("##### [ 기본 정보 ]")
-        it = st.selectbox("📦 상품명", cols, index=auto_idx(cols, ['상품명']), key="sel_it")
-        op = st.selectbox("🎨 옵션", cols, index=auto_idx(cols, ['옵션']), key="sel_op")
-        vn = st.selectbox("🏭 공급처", cols, index=auto_idx(cols, ['공급처']), key="sel_vn")
-        vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(cols, ['공급처상품명']), key="sel_vi")
-        so = st.selectbox("🚫 품절 여부", cols, index=auto_idx(cols, ['품절']), key="sel_so")
+        sel_it = st.selectbox("📦 상품명", cols, index=auto_idx(cols, ['상품명']), key="it_box")
+        sel_op = st.selectbox("🎨 옵션", cols, index=auto_idx(cols, ['옵션']), key="op_box")
+        sel_vn = st.selectbox("🏭 공급처", cols, index=auto_idx(cols, ['공급처']), key="vn_box")
+        sel_vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(cols, ['공급처상품명']), key="vi_box")
     with c_right:
         st.markdown("##### [ 수량 및 날짜 ]")
-        av = st.selectbox("✅ 가용재고", cols, index=auto_idx(cols, ['가용재고']), key="sel_av")
-        stk = st.selectbox("📦 정상재고", cols, index=auto_idx(cols, ['정상재고']), key="sel_stk")
-        t3 = st.selectbox("🔥 3일 판매", cols, index=auto_idx(cols, ['3일'], exclude_keys=['1주', '7일']), key="sel_t3")
-        t7 = st.selectbox("📅 7일 판매", cols, index=auto_idx(cols, ['7일', '1주'], exclude_keys=['3일']), key="sel_t7")
-        reg = st.selectbox("📆 상품 등록일", cols, index=auto_idx(cols, ['등록일', '등록일자', '최초등록']), key="sel_reg")
+        sel_av = st.selectbox("✅ 가용재고", cols, index=auto_idx(cols, ['가용재고']), key="av_box")
+        sel_t3 = st.selectbox("🔥 3일 판매", cols, index=auto_idx(cols, ['3일'], exclude_keys=['1주', '7일']), key="t3_box")
+        sel_t7 = st.selectbox("📅 7일 판매", cols, index=auto_idx(cols, ['7일', '1주'], exclude_keys=['3일']), key="t7_box")
+        sel_reg = st.selectbox("📆 상품 등록일", cols, index=auto_idx(cols, ['등록일']), key="reg_box")
 
     # 3단계: 수치 설정
     st.divider()
@@ -104,44 +98,50 @@ if up_file:
 
     if st.button("📊 분석 실행", type="primary", use_container_width=True):
         df = st.session_state.df_raw.copy()
-        for c in [av, t3, t7, stk]: df[c] = df[c].apply(to_i)
         
-        df['clean_key'] = df.apply(lambda r: super_clean(r[it]) + super_clean(r[op]), axis=1)
+        # 숫자 변환
+        for c in [sel_av, sel_t3, sel_t7]: df[c] = df[c].apply(to_i)
+        
+        # 분석 컬럼 생성
+        df['clean_key'] = df.apply(lambda r: super_clean(r[sel_it]) + super_clean(r[sel_op]), axis=1)
         df['리오더 수량'] = df['clean_key'].map(st.session_state.r_map).fillna(0).astype(int)
-        df['1일 판매량'] = df.apply(lambda r: int(round(r[t7]/7)) if r[t7]>0 else (int(round(r[t3]/3)) if r[t3]>0 else 0), axis=1)
-        df['권장발주수량'] = ((df['1일 판매량'] * (lt + ss)) - (df[av] + df['리오더 수량'])).clip(lower=0).astype(int)
+        df['1일 판매량'] = df.apply(lambda r: int(round(r[sel_t7]/7)) if r[sel_t7]>0 else (int(round(r[sel_t3]/3)) if r[sel_t3]>0 else 0), axis=1)
+        df['권장발주수량'] = ((df['1일 판매량'] * (lt + ss)) - (df[sel_av] + df['리오더 수량'])).clip(lower=0).astype(int)
         
         df['입고차감'] = 0
         df['추가발주'] = 0
         df['메모'] = ""
         
-        # 분석 시점의 매핑 정보를 확정 저장
+        # [핵심 보강] 모든 매핑 키를 명시적으로 저장
         st.session_state.final_mapping = {
-            'vn': vn, 'it': it, 'op': op, 'vi': vi, 'av': av, 't3': t3, 'reg': reg
+            'vn': sel_vn, 'it': sel_it, 'op': sel_op, 'vi': sel_vi, 
+            'av': sel_av, 't3': sel_t3, 'reg': sel_reg
         }
         st.session_state.analyzed_data = df
 
-    # --- [4~5단계: 편집 및 저장 영역] ---
+    # --- [4~5단계: 편집 및 저장] ---
     if 'analyzed_data' in st.session_state and 'final_mapping' in st.session_state:
         st.divider()
         st.header("4️⃣~5️⃣ 발주 편집 및 저장")
+        
         m = st.session_state.final_mapping
         
-        # [수정 완료] 옵션(op) 다음에 공급처 상품명(vi) 배치
+        # 사장님 요청 순서 (공급처 -> 상품명 -> 옵션 -> 공급처 상품명 -> 가용재고 ...)
         display_cols = [
             m['vn'], m['it'], m['op'], m['vi'], m['av'], '리오더 수량', 
             '입고차감', '추가발주', m['t3'], '1일 판매량', '권장발주수량', '메모'
         ]
         
-        existing_cols = [c for c in display_cols if c in st.session_state.analyzed_data.columns]
+        # 컬럼 존재 확인 후 에디터 호출
+        actual_cols = [c for c in display_cols if c in st.session_state.analyzed_data.columns]
         
         edited_df = st.data_editor(
-            st.session_state.analyzed_data[existing_cols],
+            st.session_state.analyzed_data[actual_cols],
             use_container_width=True, hide_index=True, key="main_editor",
             column_config={
                 m['vi']: st.column_config.TextColumn("🆔 공급처 상품명", disabled=True),
-                "입고차감": st.column_config.NumberColumn("📥 입고(-)", help="리오더 차감"),
-                "추가발주": st.column_config.NumberColumn("➕ 추가발주", help="추가 발주"),
+                "입고차감": st.column_config.NumberColumn("📥 입고(-)", help="입고량 마이너스 입력"),
+                "추가발주": st.column_config.NumberColumn("➕ 추가발주", help="추가 발주량"),
                 "리오더 수량": st.column_config.NumberColumn("📦 리오더 잔량", disabled=True),
                 "1일 판매량": st.column_config.NumberColumn("📈 일판매", disabled=True),
                 "권장발주수량": st.column_config.NumberColumn("💡 권장", disabled=True)
@@ -151,7 +151,7 @@ if up_file:
         if st.button("💾 변경사항 일괄 저장", type="primary", use_container_width=True):
             to_save = edited_df[(edited_df['입고차감'] != 0) | (edited_df['추가발주'] > 0)]
             if not to_save.empty:
-                with st.spinner("📡 데이터 전송 중..."):
+                with st.spinner("📡 데이터 기록 중..."):
                     sh = get_sheet()
                     ws_main = sh.worksheet("발주기록")
                     ws_hist = sh.worksheet("history")
@@ -165,11 +165,9 @@ if up_file:
                         ])
                     ws_main.append_rows(rows)
                     ws_hist.append_rows(rows)
-                    st.success("✅ 저장 완료!")
+                    st.success("✅ 저장 성공!")
                     del st.session_state.analyzed_data
                     st.rerun()
-            else:
-                st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
         # --- [6단계: 히스토리 (최근 저장 내역)] ---
         st.divider()
