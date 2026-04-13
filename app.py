@@ -179,3 +179,46 @@ if up_file:
                 ws_main.append_rows(rows)
                 st.success("✅ 구글 시트에 저장되었습니다!")
 
+
+
+# 5단계 저장 버튼 바로 아래에 추가하세요
+        st.divider()
+        st.header("6️⃣ 발주서 다운로드 및 7️⃣ 작업 로그")
+        
+        col_6, col_7 = st.columns([1, 1])
+        
+        with col_6:
+            st.subheader("📄 발주서 내보내기")
+            # 현재 편집 중인 데이터(수량이 입력된 것만)를 엑셀로 변환
+            reorder_df = edited_df[(edited_df['입고차감'] != 0) | (edited_df['추가발주'] > 0)]
+            
+            if not reorder_df.empty:
+                # 엑셀 파일 생성을 위한 임시 버퍼
+                import io
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    reorder_df.to_excel(writer, index=False, sheet_name='발주리스트')
+                
+                st.download_button(
+                    label="📥 발주서 엑셀 다운로드",
+                    data=output.getvalue(),
+                    file_name=f"발주서_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            else:
+                st.info("💡 수량을 입력하면 다운로드 버튼이 활성화됩니다.")
+
+        with col_7:
+            st.subheader("🕒 최근 저장 내역 (로그)")
+            if st.button("🔄 최신 로그 불러오기", use_container_width=True):
+                sh = get_sheet()
+                if sh:
+                    ws_log = sh.worksheet("발주기록")
+                    recent_data = ws_log.get_all_values()
+                    if len(recent_data) > 1:
+                        # 최근 5개 행만 표시
+                        log_df = pd.DataFrame(recent_data[1:], columns=recent_data[0]).tail(5)
+                        st.table(log_df[['날짜', '상품명', '옵션', '발주수량']])
+                    else:
+                        st.write("기록된 내역이 없습니다.")
