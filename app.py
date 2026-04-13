@@ -102,45 +102,40 @@ if 'df_raw' in st.session_state:
         t3d = st.selectbox("9. 3일 발주합계", cols, index=find_idx(cols, ['3일']))
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
-  st.divider()
+st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정")
     clt, css = st.columns(2)
     lt, ss = clt.number_input("리드타임 (일)", value=10), css.number_input("안전재고 (일 수)", value=7)
 
     if st.button("🚀 분석 실행 / 업데이트", type="primary", use_container_width=True):
-        # 1. 설정값 저장
+        # --- 여기서부터는 'if'문 안쪽이므로 4칸(또는 1탭) 들여쓰기가 필수입니다 ---
         st.session_state.p = {
             'so': sold_out, 'it': item, 'op': option, 'vn': vendor, 'vi': v_item_col,
             'av': avail, 't3': t3d, 't7': t1w, 'lt': lt, 'ss': ss
         }
 
-        # 2. 분석 진행 (스피너로 무한 로딩처럼 보이는 현상 방지)
-        with st.spinner("📊 구글 시트에서 리오더 잔량을 동기화하고 데이터를 분석 중입니다..."):
+        with st.spinner("📊 데이터를 분석 중입니다..."):
             try:
-                # 데이터 복사
                 df = st.session_state.df_raw.copy()
                 
-                # [중요] 시트에서 리오더 맵 가져오기 (실패 시 빈 딕셔너리)
+                # 시트에서 리오더 맵 가져오기
                 r_map = load_reorder_data()
-                st.session_state.r_map = r_map # 세션에도 저장해서 보관
+                st.session_state.r_map = r_map 
                 
                 today = datetime.now(KST).date()
 
                 # 데이터 숫자 형변환
                 df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
                 df[t3d] = pd.to_numeric(df[t3d], errors='coerce').fillna(0).astype(int)
-                df[t1w] = pd.to_numeric(df[t1w], errors='coerce').fillna(0).astype(int) # 7일 데이터도 형변환
+                df[t1w] = pd.to_numeric(df[t1w], errors='coerce').fillna(0).astype(int)
 
-                # 고유 키 생성 (상품명 + 옵션)
+                # 고유 키 생성 및 리오더 매핑
                 df['clean_k'] = df.apply(lambda r: super_clean(r[item]) + super_clean(r[option]), axis=1)
-                
-                # 리오더 잔량 매핑
                 df['기존리오더'] = df['clean_k'].map(r_map).fillna(0).astype(int).clip(lower=0)
                 
-                # 일판매량 계산 함수
+                # 일판매량 계산 (함수 정의)
                 def get_daily_avg(row):
                     try:
-                        # 등록일이 있으면 등록일로부터 오늘까지, 없으면 7일로 나눔
                         r_dt = pd.to_datetime(row[reg_date]).date()
                         days = max(1, min((today - r_dt).days, 7))
                         return int(round(to_i(row[t1w]) / days, 0))
@@ -149,33 +144,30 @@ if 'df_raw' in st.session_state:
 
                 df['일판매량'] = df.apply(get_daily_avg, axis=1)
                 
-                # 권장발주수량 계산: (평균판매 * (리드타임+안전재고)) - (현재고 + 기존잔량)
+                # 권장발주수량 계산
                 df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[avail] + df['기존리오더'])).clip(lower=0).astype(int)
                 
-                # 상태 체크 (품절 제외 로직 포함)
+                # 상태 체크
                 def status_check(row):
                     if "품절" in str(row[sold_out]): return "🚫 품절"
                     return "🚨 발주필요" if row['권장발주수량'] > 0 else "✅ 정상"
                 
                 df['상태'] = df.apply(status_check, axis=1)
                 
-                # 사용자 입력용 필수 컬럼 초기화
+                # 필수 컬럼 초기화
                 df['입고차감'] = 0
                 df['추가발주'] = 0
                 df['비고(메모)'] = ""
                 
-                # 분석 결과 세션 저장
+                # 결과 저장 및 화면 갱신
                 st.session_state.df_final = df
                 st.session_state.analyzed = True
                 
-                st.toast("✅ 분석 및 시트 동기화가 완료되었습니다!")
-                
-                # 화면 강제 리프레시 (분석 결과 반영)
+                st.toast("✅ 분석이 완료되었습니다!")
                 st.rerun()
                 
             except Exception as e:
-                st.error(f"❌ 분석 중 오류가 발생했습니다: {e}")
-
+                st.error(f"❌ 분석 중 오류 발생: {e}")
 
 # ------------------------------------------------------------------
 # [통합 4단계: 실시간 재고 편집 및 최종 발주 확정]
