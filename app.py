@@ -294,86 +294,84 @@ if st.session_state.get('analyzed'):
                 
         
 # ------------------------------------------------------------------
-# [5단계: 히스토리 모드 - UI 개선 버전]
+# [5단계: 히스토리 모드 - 과부하 및 무한로딩 방지 버전]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.header("📜 5단계: 히스토리 모드 (최근 기록)")
     
     with st.expander("🕒 최근 발주 및 입고 기록 보기 (구글 시트 연동)", expanded=True):
-        try:
-            sh = get_sheet()
-            ws_log = sh.worksheet("발주기록")
-            log_data = ws_log.get_all_records()
+        # 1. 시트 데이터 로드 (캐시 사용으로 무한 로딩 방지)
+        @st.cache_data(ttl=600) # 10분 동안은 구글 시트를 다시 공격하지 않고 메모리에서 가져옵니다.
+        def get_log_data_cached():
+            try:
+                sh = get_sheet()
+                ws_log = sh.worksheet("발주기록")
+                return pd.DataFrame(ws_log.get_all_records())
+            except Exception as e:
+                return pd.DataFrame()
+
+        df_log_raw = get_log_data_cached()
+
+        if not df_log_raw.empty:
+            df_log = df_log_raw.copy()
+            df_log['일시_dt'] = pd.to_datetime(df_log['일시']).dt.date
+
+            # --- 🎨 상단 검색바 레이아웃 (3컬럼) ---
+            c1, c2, c3 = st.columns([2, 2, 1])
             
-            if log_data:
-                df_log = pd.DataFrame(log_data)
-                # 날짜 형식을 계산 가능한 타입으로 변환
-                df_log['일시_dt'] = pd.to_datetime(df_log['일시']).dt.date
-
-                # --- 🎨 상단 검색바 레이아웃 (3컬럼) ---
-                c1, c2, c3 = st.columns([2, 2, 1])
-                
-                with c1:
-                    # 달력 (최근 30일 기본값)
-                    log_date_range = st.date_input(
-                        "🗓️ 조회 기간",
-                        value=((datetime.now(KST) - timedelta(days=30)).date(), datetime.now(KST).date()),
-                        key="history_date_filter"
-                    )
-                
-                with c2:
-                    # 상품명 검색창
-                    search_txt = st.text_input("🔍 상품명 검색", placeholder="상품명 또는 옵션 입력", key="history_search_txt")
-                
-                with c3:
-                    # 버튼 배치를 위해 빈 공간 추가 후 버튼 배치
-                    st.write(" ") # 레이블 높이 맞춤용
-                    btn_search = st.button("🔎 검색하기", use_container_width=True)
-
-                # --- 🔍 필터링 로직 ---
-                # 1. 날짜 필터 (달력이 두 개 다 선택되었을 때만)
-                if isinstance(log_date_range, tuple) and len(log_date_range) == 2:
-                    start_date, end_date = log_date_range
-                    df_log = df_log[(df_log['일시_dt'] >= start_date) & (df_log['일시_dt'] <= end_date)]
-                
-                # 2. 텍스트 검색 (검색 버튼을 누르거나 엔터를 쳤을 때)
-                if search_txt:
-                    df_log = df_log[
-                        df_log['상품명'].astype(str).str.contains(search_txt, case=False) |
-                        df_log['옵션'].astype(str).str.contains(search_txt, case=False)
-                    ]
-
-                # --- 📊 결과 표시 ---
-                # 최신순 정렬
-                df_log = df_log.sort_values(by='일시', ascending=False)
-                
-                # 불필요한 보조 컬럼 제거 후 표시
-                display_df = df_log.drop(columns=['일시_dt']) if '일시_dt' in df_log.columns else df_log
-
-                st.dataframe(
-                    display_df,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "일시": st.column_config.TextColumn("날짜", width="medium"),
-                        "상품명": st.column_config.TextColumn("상품명", width="large"),
-                        "수량": st.column_config.NumberColumn("발주/입고", format="%d"),
-                        "가용재고": st.column_config.NumberColumn("당시재고", format="%d"),
-                        "기존잔량": st.column_config.NumberColumn("기존잔량", format="%d"),
-                        "권장수량": st.column_config.NumberColumn("권장발주", format="%d")
-                    }
+            with c1:
+                log_date_range = st.date_input(
+                    "🗓️ 조회 기간",
+                    value=((datetime.now(KST) - timedelta(days=30)).date(), datetime.now(KST).date()),
+                    key="history_date_filter_v2"
                 )
-                
-                if st.button("🔄 기록 새로고침", use_container_width=True, key="log_refresh_btn"):
-                    st.cache_data.clear()
-                    st.rerun()
-            else:
-                st.info("기록된 데이터가 없습니다.")
-                
-        except Exception as e:
-            st.error(f"❌ 히스토리 로드 실패: {e}")
-        
+            
+            with c2:
+                search_txt = st.text_input("🔍 상품명 검색", placeholder="상품명 또는 옵션 입력", key="history_search_txt_v2")
+            
+            with c3:
+                st.write(" ") # 높이 맞춤용
+                # 버튼을 누르지 않아도 엔터나 날짜 변경 시 자동 필터링되도록 버튼은 '새로고침' 용도로만 사용
+                btn_refresh = st.button("🔄 기록 새로고침", use_container_width=True)
+
+            # --- 🔍 필터링 로직 (데이터프레임 내에서만 계산) ---
+            if isinstance(log_date_range, tuple) and len(log_date_range) == 2:
+                start_date, end_date = log_date_range
+                df_log = df_log[(df_log['일시_dt'] >= start_date) & (df_log['일시_dt'] <= end_date)]
+            
+            if search_txt:
+                df_log = df_log[
+                    df_log['상품명'].astype(str).str.contains(search_txt, case=False) |
+                    df_log['옵션'].astype(str).str.contains(search_txt, case=False)
+                ]
+
+            # 최신순 정렬
+            df_log = df_log.sort_values(by='일시', ascending=False)
+            
+            # --- 📊 결과 표시 ---
+            st.dataframe(
+                df_log.drop(columns=['일시_dt']),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "일시": st.column_config.TextColumn("날짜"),
+                    "상품명": st.column_config.TextColumn("상품명", width="large"),
+                    "수량": st.column_config.NumberColumn("발주/입고", format="%d"),
+                    "공급처": st.column_config.TextColumn("공급처")
+                }
+            )
+            
+            # 새로고침 버튼 클릭 시에만 캐시 삭제 후 재실행
+            if btn_refresh:
+                st.cache_data.clear()
+                st.rerun()
+        else:
+            st.info("데이터가 없거나 시트를 읽을 수 없습니다.")
+            if st.button("다시 시도"):
+                st.rerun()
+
+
 
 # ------------------------------------------------------------------
 # [6단계: 실시간 리오더 현황 - 구글 시트 연동]
