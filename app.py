@@ -65,11 +65,10 @@ def load_reorder_data():
 
 # --- [메인 로직] ---
 
-# 1️⃣단계: 파일 업로드 (초기화 버튼 위치 수정)
+# 1️⃣단계: 파일 업로드
 st.header("1️⃣ 파일 업로드 및 데이터 로드")
 up_file = st.file_uploader("엑셀 파일을 업로드하세요.", type=['xlsx', 'xls'])
 
-# 업로드 창 바로 아래에 초기화 버튼 배치
 if st.button("🔄 현재 화면 데이터 초기화", use_container_width=True):
     st.session_state.clear()
     st.rerun()
@@ -81,7 +80,7 @@ if up_file:
         st.session_state.analyzed = False
         st.success("✅ 파일 로드 및 리오더 값 동기화 완료!")
 
-# 2️⃣단계: 매핑 설정 (5:5 배치)
+# 2️⃣단계: 매핑 설정
 if 'df_raw' in st.session_state:
     st.divider()
     df_work = st.session_state.df_raw
@@ -102,7 +101,7 @@ if 'df_raw' in st.session_state:
         t3d = st.selectbox("9. 3일 발주합계", cols, index=find_idx(cols, ['3일']))
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
-    # 3️⃣단계: 분석 설정 (등록일 기준 보정)
+    # 3️⃣단계: 분석 설정
     st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정")
     clt, css = st.columns(2)
@@ -113,27 +112,30 @@ if 'df_raw' in st.session_state:
         r_map = load_reorder_data()
         today = datetime.now(KST).date()
 
+        # [핵심 로직] 등록일 기준 일판매량 계산 (신상품 보정)
         def get_daily_avg(row):
             try:
                 r_dt = pd.to_datetime(row[reg_date]).date()
                 diff = (today - r_dt).days
-                days = max(1, min(diff, 7)) # 등록일 기준 7일 이내는 실제 날짜로 나눔
-                return to_i(row[t1w]) / days
-            except: return to_i(row[t1w]) / 7
+                # 오늘 등록은 1일, 2일 전 등록은 2일... 최대 7일로 나눔
+                days = max(1, min(diff, 7)) 
+                return round(to_i(row[t1w]) / days, 2)
+            except: 
+                return round(to_i(row[t1w]) / 7, 2)
 
-        df['일평균'] = df.apply(get_daily_avg, axis=1)
+        df['일판매량'] = df.apply(get_daily_avg, axis=1)
         df['clean_k'] = df.apply(lambda r: super_clean(r[item]) + super_clean(r[option]), axis=1)
         df['기존리오더'] = df['clean_k'].map(r_map).fillna(0).astype(int)
         
         av_val = pd.to_numeric(df[avail], errors='coerce').fillna(0)
-        df['권장발주수량'] = ((df['일평균'] * (lt + ss)) - (av_val + df['기존리오더'])).clip(lower=0).astype(int)
+        df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (av_val + df['기존리오더'])).clip(lower=0).astype(int)
         
         def status_check(row):
             if "품절" in str(row[sold_out]): return "🚫 품절"
             return "🚨 긴급" if row['권장발주수량'] > 0 else "✅ 정상"
         df['상태'] = df.apply(status_check, axis=1)
         
-        # 긴급 상품 옵션 묶음 로직
+        # 긴급 상품 옵션 묶음
         is_emg = df.groupby(item)['상태'].transform(lambda x: any(x == "🚨 긴급"))
         df['sort_group'] = np.where(is_emg, 0, 1)
         df = df.sort_values(by=['sort_group', item, option], ascending=[True, True, True])
@@ -159,8 +161,22 @@ if 'df_raw' in st.session_state:
         elif sel_s == "🚫 품절": disp = disp[disp['상태'] == "🚫 품절"]
         if q: disp = disp[disp[item].str.contains(q, case=False, na=False)]
 
-        safe = ['상태', vendor, item, option, v_item, avail, '기존리오더', '권장발주수량', '추가발주', '입고차감', '메모']
-        edit_df = st.data_editor(disp[safe], hide_index=True, use_container_width=True, key="final_v22")
+        # [수정] 표에 '일판매량'과 '3일합계'를 포함시킴
+        safe = ['상태', vendor, item, option, '일판매량', t3d, avail, '기존리오더', '권장발주수량', '추가발주', '입고차감', '메모']
+        
+        st.info("💡 '일판매량'은 신상품의 경우 등록일 기준으로 보정되어 계산된 수치입니다.")
+        edit_df = st.data_editor(
+            disp[safe], 
+            hide_index=True, 
+            use_container_width=True, 
+            key="final_v23",
+            column_config={
+                "일판매량": st.column_config.NumberColumn("🔥 일판매량", format="%.2f"),
+                t3d: st.column_config.NumberColumn("📅 3일합계"),
+                "추가발주": st.column_config.NumberColumn("➕ 추가발주", step=1),
+                "입고차감": st.column_config.NumberColumn("➖ 입고차감", step=1),
+            }
+        )
 
         if st.button("💾 내역 저장 및 수치 즉시 갱신", type="primary", use_container_width=True):
             to_save = edit_df[(edit_df['추가발주'] > 0) | (edit_df['입고차감'] > 0)]
@@ -168,13 +184,14 @@ if 'df_raw' in st.session_state:
                 sh = get_sheet()
                 ws = sh.worksheet("발주기록")
                 now = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-                rows = [[now, str(r[item]), str(r[option]), str(r[v_item]), int(to_i(r[avail])), int(r['기존리오더']), int(r['추가발주']) - int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[vendor])] for _, r in to_save.iterrows()]
+                # vendor_item(v_item)은 매핑값에서 가져옴
+                rows = [[now, str(r[item]), str(r[option]), "", int(to_i(r[avail])), int(r['기존리오더']), int(r['추가발주']) - int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[vendor])] for _, r in to_save.iterrows()]
                 ws.append_rows(rows)
                 st.success("✅ 저장 완료! 리오더 수치를 업데이트합니다.")
-                st.session_state.analyzed = False # 분석 재실행 유도
+                st.session_state.analyzed = False 
                 st.rerun()
 
-        # 6-7단계 (검색 및 현황)
+        # 6-7단계 내역 조회
         st.divider()
         c6, c7 = st.columns(2)
         with c6:
