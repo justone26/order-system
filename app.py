@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 v7.6")
+st.set_page_config(layout="wide", page_title="저스트원 v7.7")
 
 # [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
@@ -107,7 +107,7 @@ if up_file:
         st.session_state.analyzed_data = df.sort_values(by=['item_urgent_group', s_it, s_op], ascending=[False, True, True])
         st.session_state.final_mapping = {'vn':s_vn, 'it':s_it, 'op':s_op, 'vi':s_vi, 'av':s_av, 't3':s_t3, 'so':s_so}
 
-    # 4~5단계: 결과 영역 (이 블록의 들여쓰기를 엄격히 맞춤)
+    # 4~5단계: 결과 영역 (들여쓰기 교정 완료)
     if 'analyzed_data' in st.session_state:
         st.divider()
         st.header("4️⃣~5️⃣ 발주 편집 및 저장")
@@ -156,36 +156,7 @@ if up_file:
                 del st.session_state.analyzed_data
                 st.rerun()
 
-# [사이드바]
+# [사이드바 초기화 버튼]
 if st.sidebar.button("🔄 전체 초기화"):
     for k in list(st.session_state.keys()): del st.session_state[k]
     st.rerun()
-         
-
-        # --- [6단계: 히스토리 (최근 저장 내역)] ---
-        st.divider()
-        st.header("6️⃣ 최근 히스토리 (History)")
-        sh_hist = get_sheet()
-        if sh_hist:
-            ws_h = sh_hist.worksheet("history")
-            # 최근 10개 행만 가져오기
-            hist_data = ws_h.get_all_values()
-            if len(hist_data) > 1:
-                h_df = pd.DataFrame(hist_data[1:], columns=hist_data[0]).tail(10)
-                st.table(h_df.iloc[::-1]) # 최신순 정렬해서 표로 표시
-            else:
-                st.write("기록된 히스토리가 없습니다.")
-
-        # --- [7단계: 리오더 현황판 (실시간)] ---
-        st.divider()
-        st.header("7️⃣ 실시간 리오더 현황판")
-        if 'r_map' in st.session_state:
-            # 잔량이 있는 항목만 모아서 요약
-            summary = []
-            for k, v in st.session_state.r_map.items():
-                if v > 0: summary.append({"상품 식별키": k, "현재 리오더 총 잔량": v})
-            
-            if summary:
-                st.dataframe(pd.DataFrame(summary), use_container_width=True)
-            else:
-                st.info("현재 진행 중인 리오더 잔량이 없습니다.")
