@@ -153,65 +153,44 @@ if up_file:
                 ws_main.append_rows(rows)
                 st.success("✅ 구글 시트 저장 완료!")
                 
-# --- 6단계 & 7단계 통합 영역 (에러 방지 및 회차 필터 최적화) ---
-        st.divider()
-        sh = get_sheet()
-        if sh:
-            ws_log = sh.worksheet("발주기록")
-            raw_logs = ws_log.get_all_values()
+# --- 6단계 수정 로직 (데이터 정제 강화) ---
+if len(raw_logs) > 1:
+    # 1. 헤더와 데이터 정리
+    df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
+    d_col = next((c for c in df_logs.columns if '날짜' in c), df_logs.columns[0])
+    
+    # 2. 날짜 데이터 강제 정제 (공백 제거 및 형식 통일)
+    # 시트에 ' 2024-10-27 ' 처럼 공백이 있어도 잡아냅니다.
+    df_logs['temp_dt'] = df_logs[d_col].str.strip() 
+    df_logs['pure_date'] = df_logs['temp_dt'].str.split(' ').str[0]
+    df_logs['pure_time'] = df_logs['temp_dt'].str.split(' ').str[1].str[:5]
+
+    st.header("6️⃣ 저장 내역 히스토리 검색")
+    
+    s_col1, s_col2, s_col3 = st.columns([1, 1.5, 1.5])
+    
+    with s_col1:
+        q_date = st.date_input("📅 1차: 날짜 선택", value=datetime.now(KST).date(), key="search_date")
+        target_date_str = q_date.strftime('%Y-%m-%d') if q_date else ""
+    
+    # [중요] 해당 날짜의 데이터만 먼저 필터링
+    f_logs = df_logs[df_logs['pure_date'] == target_date_str].copy()
+
+    with s_col3:
+        # 3. 시간 리스트 추출 (비어있는지 확인)
+        # 만약 저장된 데이터가 있는데도 안 나온다면 'pure_time'이 제대로 추출되었는지 확인
+        valid_times = f_logs['pure_time'].dropna().unique()
+        time_list = sorted([t for t in valid_times if t], reverse=True)
+        
+        if len(time_list) > 0:
+            q_time = st.selectbox(f"⏰ 3차: 저장 회차 선택 ({len(time_list)}회)", ["전체 보기"] + time_list, key="time_filter")
+        else:
+            # 💡 이 메시지가 나온다면 'pure_date'와 'target_date_str'이 매칭이 안 된 것입니다.
+            q_time = st.selectbox("⏰ 3차: 저장 회차 선택", ["내역 없음(날짜 확인)"], disabled=True)
+
+
+
             
-            if len(raw_logs) > 1:
-                # 데이터프레임 생성 및 날짜 형식 정리
-                df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
-                d_col = next((c for c in df_logs.columns if '날짜' in c), df_logs.columns[0])
-                
-                # 날짜/시간 분리 및 정렬을 위한 전처리
-                df_logs['pure_date'] = df_logs[d_col].str.split(' ').str[0]
-                df_logs['pure_time'] = df_logs[d_col].str.split(' ').str[1].str[:5]
-
-                st.header("6️⃣ 저장 내역 히스토리 검색")
-                
-                # [필터 상단 배치]
-                s_col1, s_col2, s_col3 = st.columns([1, 1.5, 1.5])
-                
-                with s_col1:
-                    # 에러 방지: 기본값을 오늘로 설정
-                    q_date = st.date_input("📅 1차: 날짜 선택", value=datetime.now(KST).date(), key="search_date")
-                    # 날짜가 정상적으로 선택되었을 때만 문자열 변환
-                    target_date_str = q_date.strftime('%Y-%m-%d') if q_date else ""
-                
-                # 날짜 필터링 우선 적용
-                f_logs = df_logs[df_logs['pure_date'] == target_date_str] if target_date_str else df_logs
-
-                with s_col3:
-                    # 3차: 시간대별 회차 선택 (최신순 정렬)
-                    if not f_logs.empty and target_date_str:
-                        time_list = sorted(f_logs['pure_time'].unique(), reverse=True)
-                        q_time = st.selectbox(f"⏰ 3차: 저장 회차 선택 ({len(time_list)}회)", ["전체 보기"] + time_list, key="time_filter")
-                    else:
-                        q_time = st.selectbox("⏰ 3차: 저장 회차 선택", ["내역 없음"], disabled=True)
-
-                with s_col2:
-                    q_item_log = st.text_input("🔎 2차: 상품명 검색", placeholder="검색어 입력...", key="search_item_input")
-
-                # 최종 필터링 결과 생성
-                display_df = f_logs.copy()
-                if q_time != "전체 보기" and q_time != "내역 없음":
-                    display_df = display_df[display_df['pure_time'] == q_time]
-                
-                if q_item_log:
-                    i_col = next((c for c in display_df.columns if '상품명' in c), None)
-                    if i_col:
-                        display_df = display_df[display_df[i_col].str.contains(q_item_log, case=False)]
-
-                # 히스토리 출력 (최신순 정렬)
-                st.dataframe(display_df.iloc[::-1], use_container_width=True, hide_index=True)
-
-                # 다운로드 버튼 (동적으로 이름 변경)
-                if not display_df.empty:
-                    csv_data = display_df.to_csv(index=False).encode('utf-8-sig')
-                    file_name = f"발주기록_{target_date_str}_{q_time.replace(':','시')}분.csv"
-                    st.download_button("📥 현재 화면 내역 다운로드 (CSV)", data=csv_data, file_name=file_name, use_container_width=True)
 
                 # --- 7단계: 현황판 ---
                 st.divider()
