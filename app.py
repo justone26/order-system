@@ -93,7 +93,7 @@ if 'df_raw' in st.session_state:
         vendor = st.selectbox("2. 공급처(업체명)", cols, index=find_idx(cols, ['공급처', '업체']))
         item = st.selectbox("3. 상품명", cols, index=find_idx(cols, ['상품명', '품명']))
         option = st.selectbox("4. 옵션", cols, index=find_idx(cols, ['옵션', '규격']))
-        v_item = st.selectbox("5. 공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
+        v_item_col = st.selectbox("5. 공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
     with c2:
         reg_date = st.selectbox("6. 등록일", cols, index=find_idx(cols, ['등록일']))
         stock = st.selectbox("7. 정상재고", cols, index=find_idx(cols, ['정상재고']))
@@ -112,13 +112,12 @@ if 'df_raw' in st.session_state:
         r_map = load_reorder_data()
         today = datetime.now(KST).date()
 
-        # [핵심 로직] 등록일 기준 일판매량 계산 (신상품 보정)
+        # [신상품 보정 로직]
         def get_daily_avg(row):
             try:
                 r_dt = pd.to_datetime(row[reg_date]).date()
                 diff = (today - r_dt).days
-                # 오늘 등록은 1일, 2일 전 등록은 2일... 최대 7일로 나눔
-                days = max(1, min(diff, 7)) 
+                days = max(1, min(diff, 7)) # 2일이면 2로 나눔
                 return round(to_i(row[t1w]) / days, 2)
             except: 
                 return round(to_i(row[t1w]) / 7, 2)
@@ -135,7 +134,6 @@ if 'df_raw' in st.session_state:
             return "🚨 긴급" if row['권장발주수량'] > 0 else "✅ 정상"
         df['상태'] = df.apply(status_check, axis=1)
         
-        # 긴급 상품 옵션 묶음
         is_emg = df.groupby(item)['상태'].transform(lambda x: any(x == "🚨 긴급"))
         df['sort_group'] = np.where(is_emg, 0, 1)
         df = df.sort_values(by=['sort_group', item, option], ascending=[True, True, True])
@@ -161,35 +159,38 @@ if 'df_raw' in st.session_state:
         elif sel_s == "🚫 품절": disp = disp[disp['상태'] == "🚫 품절"]
         if q: disp = disp[disp[item].str.contains(q, case=False, na=False)]
 
-        # [수정] 표에 '일판매량'과 '3일합계'를 포함시킴
+        # --- [에러 방지 핵심: safe 리스트를 매핑 변수명으로 구성] ---
+        # 사용자가 선택한 컬럼명(item, option 등)을 직접 리스트에 넣어야 KeyError가 안 납니다.
         safe = ['상태', vendor, item, option, '일판매량', t3d, avail, '기존리오더', '권장발주수량', '추가발주', '입고차감', '메모']
         
-        st.info("💡 '일판매량'은 신상품의 경우 등록일 기준으로 보정되어 계산된 수치입니다.")
-        edit_df = st.data_editor(
-            disp[safe], 
-            hide_index=True, 
-            use_container_width=True, 
-            key="final_v23",
-            column_config={
-                "일판매량": st.column_config.NumberColumn("🔥 일판매량", format="%.2f"),
-                t3d: st.column_config.NumberColumn("📅 3일합계"),
-                "추가발주": st.column_config.NumberColumn("➕ 추가발주", step=1),
-                "입고차감": st.column_config.NumberColumn("➖ 입고차감", step=1),
-            }
-        )
+        try:
+            edit_df = st.data_editor(
+                disp[safe], 
+                hide_index=True, 
+                use_container_width=True, 
+                key="final_v24_fix",
+                column_config={
+                    "일판매량": st.column_config.NumberColumn("🔥 일판매량", format="%.2f"),
+                    t3d: st.column_config.NumberColumn("📅 3일합계"),
+                    "추가발주": st.column_config.NumberColumn("➕ 추가발주", step=1),
+                    "입고차감": st.column_config.NumberColumn("➖ 입고차감", step=1),
+                }
+            )
 
-        if st.button("💾 내역 저장 및 수치 즉시 갱신", type="primary", use_container_width=True):
-            to_save = edit_df[(edit_df['추가발주'] > 0) | (edit_df['입고차감'] > 0)]
-            if not to_save.empty:
-                sh = get_sheet()
-                ws = sh.worksheet("발주기록")
-                now = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-                # vendor_item(v_item)은 매핑값에서 가져옴
-                rows = [[now, str(r[item]), str(r[option]), "", int(to_i(r[avail])), int(r['기존리오더']), int(r['추가발주']) - int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[vendor])] for _, r in to_save.iterrows()]
-                ws.append_rows(rows)
-                st.success("✅ 저장 완료! 리오더 수치를 업데이트합니다.")
-                st.session_state.analyzed = False 
-                st.rerun()
+            if st.button("💾 내역 저장 및 수치 즉시 갱신", type="primary", use_container_width=True):
+                to_save = edit_df[(edit_df['추가발주'] > 0) | (edit_df['입고차감'] > 0)]
+                if not to_save.empty:
+                    sh = get_sheet()
+                    ws = sh.worksheet("발주기록")
+                    now = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
+                    # 저장 시 공급처 상품명(v_item_col)도 함께 저장
+                    rows = [[now, str(r[item]), str(r[option]), str(r.get(v_item_col, "")), int(to_i(r[avail])), int(r['기존리오더']), int(r['추가발주']) - int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[vendor])] for _, r in to_save.iterrows()]
+                    ws.append_rows(rows)
+                    st.success("✅ 저장 완료! 리오더 수치를 업데이트합니다.")
+                    st.session_state.analyzed = False 
+                    st.rerun()
+        except KeyError as e:
+            st.error(f"❌ 매핑 에러 발생: {e} 컬럼을 찾을 수 없습니다. 매핑 설정을 확인해주세요.")
 
         # 6-7단계 내역 조회
         st.divider()
@@ -199,13 +200,18 @@ if 'df_raw' in st.session_state:
             dt = st.date_input("날짜 선택")
             if st.button("검색 실행"):
                 sh = get_sheet()
-                logs = pd.DataFrame(sh.worksheet("발주기록").get_all_values())
-                logs.columns = logs.iloc[0]; logs = logs[1:]
-                st.dataframe(logs[logs.iloc[:,0].str.contains(dt.strftime('%Y-%m-%d'))].iloc[::-1])
+                if sh:
+                    logs = pd.DataFrame(sh.worksheet("발주기록").get_all_values())
+                    if not logs.empty:
+                        logs.columns = logs.iloc[0]; logs = logs[1:]
+                        st.dataframe(logs[logs.iloc[:,0].str.contains(dt.strftime('%Y-%m-%d'))].iloc[::-1], hide_index=True)
         with c7:
             st.subheader("7️⃣ 잔량 현황")
             if st.button("📊 현황 업데이트"):
-                sh = get_sheet(); raw = pd.DataFrame(sh.worksheet("발주기록").get_all_values())
-                raw.columns = raw.iloc[0]; raw = raw[1:]; raw['q'] = raw.iloc[:,6].apply(to_i)
-                v_sum = raw.groupby(raw.columns[-1])['q'].sum().reset_index()
-                for r in v_sum[v_sum['q']>0].itertuples(): st.metric(r[1], f"{int(r[2])}개")
+                sh = get_sheet()
+                if sh:
+                    raw = pd.DataFrame(sh.worksheet("발주기록").get_all_values())
+                    if not raw.empty:
+                        raw.columns = raw.iloc[0]; raw = raw[1:]; raw['q'] = raw.iloc[:, 6].apply(to_i)
+                        v_sum = raw.groupby(raw.columns[-1])['q'].sum().reset_index()
+                        for r in v_sum[v_sum['q']>0].itertuples(): st.metric(r[1], f"{int(r[2])}개")
