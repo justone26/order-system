@@ -112,21 +112,23 @@ if 'df_raw' in st.session_state:
         r_map = load_reorder_data()
         today = datetime.now(KST).date()
 
-        # [신상품 보정 로직]
+        # [수정] 일판매량 계산 후 반올림하여 정수로 변환
         def get_daily_avg(row):
             try:
                 r_dt = pd.to_datetime(row[reg_date]).date()
                 diff = (today - r_dt).days
                 days = max(1, min(diff, 7)) 
-                return round(to_i(row[t1w]) / days, 2)
+                # 반올림 처리 (.round() 사용)
+                return int(round(to_i(row[t1w]) / days))
             except: 
-                return round(to_i(row[t1w]) / 7, 2)
+                return int(round(to_i(row[t1w]) / 7))
 
         df['일판매량'] = df.apply(get_daily_avg, axis=1)
         df['clean_k'] = df.apply(lambda r: super_clean(r[item]) + super_clean(r[option]), axis=1)
         df['기존리오더'] = df['clean_k'].map(r_map).fillna(0).astype(int)
         
         av_val = pd.to_numeric(df[avail], errors='coerce').fillna(0)
+        # 반올림된 일판매량 기반 권장발주수량 계산
         df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (av_val + df['기존리오더'])).clip(lower=0).astype(int)
         
         def status_check(row):
@@ -159,9 +161,7 @@ if 'df_raw' in st.session_state:
         elif sel_s == "🚫 품절": disp = disp[disp['상태'] == "🚫 품절"]
         if q: disp = disp[disp[item].str.contains(q, case=False, na=False)]
 
-        # --- [사장님 요청 컬럼 순서 고정] ---
-        # 상태 => 공급처 => 상품명 => 옵션 => 공급쳐상품명 => 가용재고 => 리오더수량(기존리오더) 
-        # => 입고수량(입고차감) => 추가발주수량 => 3일판매 => 일판매량 => 권장발주수량 => 비고(메모)
+        # 컬럼 순서 (사장님 요청 순서 고정)
         safe = [
             '상태', vendor, item, option, v_item_col, 
             avail, '기존리오더', '입고차감', '추가발주', 
@@ -173,7 +173,7 @@ if 'df_raw' in st.session_state:
                 disp[safe], 
                 hide_index=True, 
                 use_container_width=True, 
-                key="final_v25_ordered",
+                key="final_v26_int",
                 column_config={
                     "상태": st.column_config.TextColumn("상태", width="small"),
                     vendor: st.column_config.TextColumn("공급처"),
@@ -182,7 +182,7 @@ if 'df_raw' in st.session_state:
                     "입고차감": st.column_config.NumberColumn("➖ 입고수량", step=1),
                     "추가발주": st.column_config.NumberColumn("➕ 추가발주", step=1),
                     t3d: st.column_config.NumberColumn("📅 3일판매"),
-                    "일판매량": st.column_config.NumberColumn("🔥 일판매량", format="%.2f"),
+                    "일판매량": st.column_config.NumberColumn("🔥 일판매량", format="%d"), # 정수 표기
                     "메모": st.column_config.TextColumn("비고", width="medium")
                 }
             )
@@ -199,9 +199,9 @@ if 'df_raw' in st.session_state:
                     st.session_state.analyzed = False 
                     st.rerun()
         except KeyError as e:
-            st.error(f"❌ 매핑 에러: {e} 컬럼을 찾을 수 없습니다. 2단계 매핑을 다시 확인해주세요.")
+            st.error(f"❌ 매핑 에러: {e} 컬럼을 찾을 수 없습니다.")
 
-        # 6-7단계 (하단)
+        # 6-7단계 검색 및 현황
         st.divider()
         c6, c7 = st.columns(2)
         with c6:
@@ -217,10 +217,7 @@ if 'df_raw' in st.session_state:
         with c7:
             st.subheader("7️⃣ 잔량 현황")
             if st.button("📊 현황 업데이트"):
-                sh = get_sheet()
-                if sh:
-                    raw = pd.DataFrame(sh.worksheet("발주기록").get_all_values())
-                    if not raw.empty:
-                        raw.columns = raw.iloc[0]; raw = raw[1:]; raw['q'] = raw.iloc[:, 6].apply(to_i)
-                        v_sum = raw.groupby(raw.columns[-1])['q'].sum().reset_index()
-                        for r in v_sum[v_sum['q']>0].itertuples(): st.metric(r[1], f"{int(r[2])}개")
+                sh = get_sheet(); raw = pd.DataFrame(sh.worksheet("발주기록").get_all_values())
+                raw.columns = raw.iloc[0]; raw = raw[1:]; raw['q'] = raw.iloc[:, 6].apply(to_i)
+                v_sum = raw.groupby(raw.columns[-1])['q'].sum().reset_index()
+                for r in v_sum[v_sum['q']>0].itertuples(): st.metric(r[1], f"{int(r[2])}개")
