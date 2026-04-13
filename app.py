@@ -181,44 +181,87 @@ if up_file:
 
 
 
-# 5단계 저장 버튼 바로 아래에 추가하세요
-        st.divider()
-        st.header("6️⃣ 발주서 다운로드 및 7️⃣ 작업 로그")
-        
-        col_6, col_7 = st.columns([1, 1])
-        
-        with col_6:
-            st.subheader("📄 발주서 내보내기")
-            # 현재 편집 중인 데이터(수량이 입력된 것만)를 엑셀로 변환
-            reorder_df = edited_df[(edited_df['입고차감'] != 0) | (edited_df['추가발주'] > 0)]
+st.divider()
+        st.header("6️⃣ 저장 내역 검색 및 7️⃣ 데이터 내보내기")
+
+        # 구글 시트에서 전체 기록 가져오기
+        sh = get_sheet()
+        if sh:
+            ws_log = sh.worksheet("발주기록")
+            raw_logs = ws_log.get_all_values()
             
-            if not reorder_df.empty:
-                # 엑셀 파일 생성을 위한 임시 버퍼
+            if len(raw_logs) > 1:
+                df_logs = pd.DataFrame(raw_logs[1:], columns=raw_logs[0])
+                
+                # 검색 필터 영역
+                search_col1, search_col2 = st.columns([1, 1])
+                with search_col1:
+                    q_item = st.text_input("🔎 검색 (상품명/옵션/공급처)", key="log_search_q")
+                with search_col2:
+                    # 날짜 검색 (오늘, 어제, 전체 등)
+                    q_date = st.date_input("📅 날짜 선택", value=None, key="log_date_q")
+
+                # 필터링 로직
+                filtered_logs = df_logs.copy()
+                if q_item:
+                    filtered_logs = filtered_logs[
+                        filtered_logs['상품명'].str.contains(q_item, case=False) | 
+                        filtered_logs['옵션'].str.contains(q_item, case=False) |
+                        filtered_logs['공급처'].str.contains(q_item, case=False)
+                    ]
+                if q_date:
+                    target_date = q_date.strftime('%Y-%m-%d')
+                    filtered_logs = filtered_logs[filtered_logs['날짜'].str.contains(target_date)]
+
+                # 6단계: 검색 결과 표출
+                st.subheader(f"📋 검색 결과 ({len(filtered_logs)}건)")
+                st.dataframe(filtered_logs, use_container_width=True, hide_index=True)
+
+                # 7단계: 내보내기 버튼
+                st.subheader("📥 검색 결과 다운로드")
                 import io
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    reorder_df.to_excel(writer, index=False, sheet_name='발주리스트')
+                csv_buffer = filtered_logs.to_csv(index=False).encode('utf-8-sig')
                 
                 st.download_button(
-                    label="📥 발주서 엑셀 다운로드",
-                    data=output.getvalue(),
-                    file_name=f"발주서_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    label="📂 검색된 내역 엑셀(CSV) 다운로드",
+                    data=csv_buffer,
+                    file_name=f"발주내역_검색결과_{datetime.now(KST).strftime('%m%d')}.csv",
+                    mime="text/csv",
                     use_container_width=True
                 )
             else:
-                st.info("💡 수량을 입력하면 다운로드 버튼이 활성화됩니다.")
+                st.info("💡 아직 저장된 발주 내역이 없습니다.")
 
-        with col_7:
-            st.subheader("🕒 최근 저장 내역 (로그)")
-            if st.button("🔄 최신 로그 불러오기", use_container_width=True):
-                sh = get_sheet()
-                if sh:
-                    ws_log = sh.worksheet("발주기록")
-                    recent_data = ws_log.get_all_values()
-                    if len(recent_data) > 1:
-                        # 최근 5개 행만 표시
-                        log_df = pd.DataFrame(recent_data[1:], columns=recent_data[0]).tail(5)
-                        st.table(log_df[['날짜', '상품명', '옵션', '발주수량']])
-                    else:
-                        st.write("기록된 내역이 없습니다.")
+
+# 7단계: 리오더 총수량 현황판 (6단계 아래에 추가)
+        st.divider()
+        st.header("7️⃣ 오늘의 리오더 발주 현황판")
+
+        # 구글 시트에서 오늘 날짜 데이터만 추출
+        today_str = datetime.now(KST).strftime('%Y-%m-%d')
+        df_today = df_logs[df_logs['날짜'].str.contains(today_str)]
+
+        if not df_today.empty:
+            # 1. 상단 요약 수치 (Metrics)
+            total_items = len(df_today)
+            # 수량 컬럼을 숫자로 변환 (발주수량 컬럼명 확인 필요, 여기선 '발주수량' 가정)
+            df_today['발주수량'] = df_today['발주수량'].apply(to_i)
+            total_qty = df_today['발주수량'].sum()
+            total_vendors = df_today['공급처'].nunique()
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("📦 총 발주 품목수", f"{total_items} 건")
+            m2.metric("🔢 총 발주 총수량", f"{total_qty} 개")
+            m3.metric("🏭 발주 공급처 수", f"{total_vendors} 곳")
+
+            # 2. 공급처별 발주 현황 요약 표
+            st.subheader("🏭 공급처별 발주 요약")
+            vendor_summary = df_today.groupby('공급처').agg({
+                '상품명': 'count',
+                '발주수량': 'sum'
+            }).rename(columns={'상품명': '품목 건수', '발주수량': '총 발주수량'}).reset_index()
+            
+            st.table(vendor_summary)
+
+        else:
+            st.warning(f"🔔 {today_str} 날짜로 저장된 발주 내역이 아직 없습니다.")
