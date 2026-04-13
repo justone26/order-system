@@ -293,53 +293,63 @@ if st.session_state.get('analyzed'):
         
                 
         
-        # --- 6️⃣단계: 전체 히스토리 관리 ---
-        st.divider()
-        st.header("📜 6단계: 전체 히스토리 관리")
-        
-        h1, h2, h3, h4 = st.columns([1.2, 0.8, 1.5, 1.5])
-        with h1:
-            today = datetime.now(KST).date()
-            d_range = st.date_input("🗓️ 1. 조회 범위", value=(today, today), key="v6_dr")
-        with h2:
-            st.write(""); st.write("")
-            search_trigger = st.button("🔍 2. 내역 조회", use_container_width=True, type="primary")
-
-        if 'v6_data' not in st.session_state: st.session_state.v6_data = None
-        if 'v6_sessions' not in st.session_state: st.session_state.v6_sessions = []
-
-        if search_trigger:
+    # ------------------------------------------------------------------
+# [5단계: 히스토리 모드 - 최근 발주 및 입고 기록 조회]
+# ------------------------------------------------------------------
+if st.session_state.get('analyzed'):
+    st.divider()
+    st.header("📜 5단계: 히스토리 모드 (최근 기록)")
+    
+    with st.expander("🕒 최근 발주 및 입고 기록 보기 (구글 시트 연동)", expanded=True):
+        try:
+            # 1. 구글 시트에서 '발주기록' 워크시트 가져오기
             sh = get_sheet()
-            if sh:
-                all_h = sh.worksheet("발주기록").get_all_values()
-                if len(all_h) > 1:
-                    df_all = pd.DataFrame(all_h[1:], columns=["발주시간", "상품명", "옵션", "공급처상품명", "가용재고", "리오더잔량", "추가발주", "발주권장", "메모", "업체명"])
-                    df_all["날짜_만"] = df_all["발주시간"].str.slice(0, 10)
-                    s_d = d_range[0].strftime('%Y-%m-%d'); e_d = d_range[1].strftime('%Y-%m-%d') if len(d_range)>1 else s_d
-                    df_filt = df_all[(df_all["날짜_만"] >= s_d) & (df_all["날짜_만"] <= e_d)].copy()
-                    st.session_state.v6_data = df_filt
-                    st.session_state.v6_sessions = sorted(df_filt["발주시간"].unique(), reverse=True)
-                else: st.info("저장된 내역이 없습니다.")
-
-        with h3: h_q = st.text_input("🔍 3. 상품명/옵션 검색", key="v6_q")
-        with h4:
-            if st.session_state.v6_sessions:
-                s_opts = ["📊 선택 범위 전체 합산"] + [f"{len(st.session_state.v6_sessions)-i}회차 ({t[5:16]})" for i, t in enumerate(st.session_state.v6_sessions)]
-                sel_label = st.selectbox("📦 4. 회차 선택", s_opts)
-            else: st.selectbox("📦 4. 회차 선택", ["조회 결과 없음"], disabled=True); sel_label = None
-
-        if st.session_state.v6_data is not None and sel_label:
-            df_disp = st.session_state.v6_data.copy()
-            for c in ["가용재고", "리오더잔량", "추가발주", "발주권장"]: df_disp[c] = pd.to_numeric(df_disp[c], errors='coerce').fillna(0)
+            ws_log = sh.worksheet("발주기록")
             
-            if sel_label == "📊 선택 범위 전체 합산":
-                df_disp = df_disp.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({"발주시간":"max", "가용재고":"last", "리오더잔량":"last", "추가발주":"sum", "발주권장":"last", "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))})
+            # 2. 데이터 읽기
+            log_data = ws_log.get_all_records()
+            
+            if log_data:
+                df_log = pd.DataFrame(log_data)
+                
+                # 3. 일시(Timestamp) 기준 역순 정렬 (최신순)
+                if '일시' in df_log.columns:
+                    df_log = df_log.sort_values(by='일시', ascending=False)
+                
+                # 4. 보기 좋게 필터링 기능 추가 (선택사항)
+                search_log = st.text_input("🔍 기록 내 검색 (상품명/옵션/공급처)", key="log_search")
+                if search_log:
+                    df_log = df_log[
+                        df_log['상품명'].astype(str).str.contains(search_log, case=False) |
+                        df_log['옵션'].astype(str).str.contains(search_log, case=False) |
+                        df_log['공급처'].astype(str).str.contains(search_log, case=False)
+                    ]
+                
+                # 5. 데이터 표시
+                st.dataframe(
+                    df_log.head(50), # 너무 많으면 무거우니 최신 50개만 표시
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "일시": st.column_config.TextColumn("기록일시"),
+                        "수량": st.column_config.NumberColumn("순발주량", format="%d"),
+                        "가용재고": st.column_config.NumberColumn("당시재고", format="%d"),
+                        "기존잔량": st.column_config.NumberColumn("기존잔량", format="%d")
+                    }
+                )
+                
+                if st.button("🔄 기록 새로고침", use_container_width=True):
+                    st.cache_data.clear()
+                    st.rerun()
+                    
             else:
-                t_time = st.session_state.v6_sessions[s_opts.index(sel_label)-1]
-                df_disp = df_disp[df_disp["발주시간"] == t_time].copy()
+                st.info("아직 기록된 발주 내역이 없습니다.")
+                
+        except Exception as e:
+            st.error(f"❌ 히스토리를 불러오는 중 오류 발생: {e}")
+            st.info("💡 구글 시트에 '발주기록'이라는 이름의 탭이 있는지 확인해 주세요.")
 
-            if h_q: df_disp = df_disp[df_disp["상품명"].str.contains(h_q, case=False) | df_disp["옵션"].str.contains(h_q, case=False)]
-            st.dataframe(df_disp[["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "가용재고", "리오더잔량", "추가발주", "발주권장", "메모"]], use_container_width=True, hide_index=True)
+        
 
         # --- 7️⃣단계: 실시간 리오더 최종 잔량 상황판 ---
         st.divider()
