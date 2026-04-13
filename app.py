@@ -351,49 +351,63 @@ if st.session_state.get('analyzed'):
 
         
 
-        # --- 7️⃣단계: 실시간 리오더 최종 잔량 상황판 ---
-        st.divider()
-        st.header("🚀 7단계: 실시간 리오더 최종 잔량 상황판")
+# ------------------------------------------------------------------
+# [6단계: 실시간 리오더 현황 - 구글 시트 연동]
+# ------------------------------------------------------------------
+# 에러 방지를 위한 변수 사전 선언 (NameError 해결)
+KST = timezone(timedelta(hours=9))
+now_now = datetime.now(KST)
+today_val = now_now.date()
+default_start = (now_now - timedelta(days=30)).date()
+
+st.divider()
+st.header("📊 6단계: 실시간 리오더 현황")
+
+with st.expander("📝 시트 데이터 기반 현재 리오더 잔량 확인", expanded=False):
+    try:
+        f1, f2 = st.columns([2, 1])
+        with f1:
+            # NameError 방지를 위해 사전에 정의한 변수 사용
+            dr = st.date_input(
+                "🗓️ 조회 기간", 
+                value=(default_start, today_val), 
+                key="v6_dr"
+            )
         
-        @st.cache_data(ttl=600)
-        def get_v7():
-            try:
-                data = get_sheet().worksheet("발주기록").get_all_values()
-                if len(data) > 1:
-                    df = pd.DataFrame(data[1:], columns=["발주시간", "상품명", "옵션", "공급처상품명", "가용재고", "기존리오더", "추가발주", "발주권장", "메모", "업체명"])
-                    df["기존리오더"] = pd.to_numeric(df["기존리오더"], errors='coerce').fillna(0).astype(int)
-                    df["추가발주"] = pd.to_numeric(df["추가발주"], errors='coerce').fillna(0).astype(int)
-                    df["최종잔량"] = df["기존리오더"] + df["추가발주"]
-                    df["날짜_순수"] = df["발주시간"].str.slice(0, 10)
-                    return df
-            except: return None
+        if len(dr) == 2:
+            start_d, end_d = dr
+            sh = get_sheet()
+            ws_log = sh.worksheet("발주기록")
+            log_data = ws_log.get_all_records()
 
-        df_v7 = get_v7()
-        if df_v7 is not None:
-            f1, f2, f3, f4 = st.columns([1.2, 0.6, 1.5, 1.2])
-            with f1: d7 = st.date_input("🗓️ 기간", value=((datetime.now(KST)-timedelta(days=30)).date(), today), key="v7_dr")
-            with f2:
-                st.write(""); st.write("")
-                if st.button("🔄 업데이트", key="v7_up"): st.cache_data.clear(); st.rerun()
-            with f3: q7 = st.text_input("🔍 검색", key="v7_qs")
-            with f4: v7 = st.selectbox("🏭 업체", ["전체 업체"] + sorted(df_v7["업체명"].unique().tolist()))
+            if log_data:
+                df_l = pd.DataFrame(log_data)
+                df_l['일시'] = pd.to_datetime(df_l['일시']).dt.date
+                
+                # 기간 필터링
+                mask = (df_l['일시'] >= start_d) & (df_l['일시'] <= end_d)
+                df_filtered = df_l.loc[mask]
 
-            df_f7 = df_v7.copy()
-            if isinstance(d7, (list, tuple)) and len(d7) == 2:
-                df_f7 = df_f7[(df_f7["날짜_순수"] >= d7[0].strftime('%Y-%m-%d')) & (df_f7["날짜_순수"] <= d7[1].strftime('%Y-%m-%d'))]
-            if v7 != "전체 업체": df_f7 = df_f7[df_f7["업체명"] == v7]
-            if q7: df_f7 = df_f7[df_f7["상품명"].str.contains(q7, case=False) | df_f7["옵션"].str.contains(q7, case=False)]
-
-            if not df_f7.empty:
-                df_res7 = df_f7.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({"발주시간":"max", "최종잔량":"sum", "메모": lambda x: " / ".join(dict.fromkeys(filter(None, x.astype(str))))})
-                df_res7["최종잔량"] = df_res7["최종잔량"].clip(lower=0)
+                if not df_filtered.empty:
+                    # 상품명+옵션별로 수량 합계 계산 (실시간 잔량)
+                    df_res = df_filtered.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+                    df_res.columns = ['상품명', '옵션', '현재리오더잔량']
+                    
+                    # 잔량이 0보다 큰 것만 표시
+                    df_res = df_res[df_res['현재리오더잔량'] > 0].sort_values(by='현재리오더잔량', ascending=False)
+                    
+                    st.dataframe(
+                        df_res,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "현재리오더잔량": st.column_config.NumberColumn("미입고 잔량", format="%d 📦")
+                        }
+                    )
+                else:
+                    st.info("선택한 기간 내에 발주 기록이 없습니다.")
+            else:
+                st.info("데이터가 없습니다.")
                 
-                df_v_sum = df_res7.groupby("업체명")["최종잔량"].sum().reset_index()
-                df_v_sum = df_v_sum[df_v_sum["최종잔량"] > 0].sort_values("최종잔량", ascending=False)
-                
-                v_cols = st.columns(4)
-                for i, r in enumerate(df_v_sum.itertuples()):
-                    with v_cols[i % 4]: st.metric(r.업체명, f"{int(r.최종잔량):,} 개")
-                
-                st.write("#### 📋 상세 리스트 (미입고)")
-                st.dataframe(df_res7[df_res7["최종잔량"] > 0].sort_values("발주시간", ascending=False), use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.error(f"❌ 6단계 오류 발생: {e}")
