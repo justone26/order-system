@@ -10,7 +10,7 @@ import io
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 v9.1")
+st.set_page_config(layout="wide", page_title="저스트원 v9.2")
 
 # [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
@@ -83,6 +83,7 @@ if up_file:
     cols = st.session_state.df_raw.columns.tolist()
     st.divider()
     
+    # 2단계(매핑) & 3단계(설정) - 5:5 비율 유지
     col_step2, col_step3 = st.columns([1, 1])
     with col_step2:
         st.header("2️⃣ 필드 매핑")
@@ -121,6 +122,7 @@ if up_file:
             st.session_state.analyzed_data = df.sort_values(by=['item_urgent_group', s_it, s_op], ascending=[False, True, True])
             st.session_state.final_mapping = {'vn':s_vn, 'it':s_it, 'op':s_op, 'vi':s_vi, 'av':s_av, 't3':s_t3, 'so':s_so}
 
+    # 4~5단계: 발주 편집 및 저장
     if 'analyzed_data' in st.session_state:
         st.divider()
         st.header("4️⃣~5️⃣ 발주 편집 및 저장")
@@ -151,9 +153,9 @@ if up_file:
                 ws_main.append_rows(rows)
                 st.success("✅ 구글 시트 저장 완료!")
 
+        # --- 6단계 (검색) 시작 ---
         st.divider()
-        col_6, col_7 = st.columns([1, 1])
-        
+        st.header("6️⃣ 저장 내역 검색")
         sh = get_sheet()
         if sh:
             ws_log = sh.worksheet("발주기록")
@@ -161,48 +163,49 @@ if up_file:
             if len(raw_logs) > 1:
                 df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
                 
-                with col_6:
-                    st.header("6️⃣ 내역 검색 및 다운로드")
-                    q_item = st.text_input("🔎 검색 (상품/공급처)")
-                    f_logs = df_logs.copy()
-                    
-                    # 컬럼 존재 확인 후 검색
-                    v_col = next((c for c in f_logs.columns if '공급처' in c), None)
-                    i_col = next((c for c in f_logs.columns if '상품명' in c), None)
-                    
-                    if q_item:
-                        conditions = []
-                        if v_col: conditions.append(f_logs[v_col].str.contains(q_item, case=False))
-                        if i_col: conditions.append(f_logs[i_col].str.contains(q_item, case=False))
-                        if conditions: f_logs = f_logs[np.logical_or.reduce(conditions)]
-                    
-                    st.dataframe(f_logs.tail(10), use_container_width=True, hide_index=True)
-                    csv = f_logs.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button("📂 결과 다운로드", data=csv, file_name="발주기록.csv", mime="text/csv", use_container_width=True)
+                s_col1, s_col2 = st.columns([2, 1])
+                with s_col1:
+                    q_item = st.text_input("🔎 검색어 입력 (상품명 또는 공급처)")
+                with s_col2:
+                    st.write("") # 버튼 위치 맞춤
+                    csv_data = df_logs.to_csv(index=False).encode('utf-8-sig')
+                    st.download_button("📂 전체 내역 CSV 다운로드", data=csv_data, file_name="발주기록_전체.csv", mime="text/csv", use_container_width=True)
 
-                with col_7:
-                    st.header("7️⃣ 리오더 총수량 현황판")
-                    today_str = datetime.now(KST).strftime('%Y-%m-%d')
-                    d_col = next((c for c in df_logs.columns if '날짜' in c), df_logs.columns[0])
-                    df_today = df_logs[df_logs[d_col].str.contains(today_str)]
+                f_logs = df_logs.copy()
+                v_col = next((c for c in f_logs.columns if '공급처' in c), None)
+                i_col = next((c for c in f_logs.columns if '상품명' in c), None)
+                
+                if q_item:
+                    conds = []
+                    if v_col: conds.append(f_logs[v_col].str.contains(q_item, case=False))
+                    if i_col: conds.append(f_logs[i_col].str.contains(q_item, case=False))
+                    if conds: f_logs = f_logs[np.logical_or.reduce(conds)]
+                
+                st.dataframe(f_logs.tail(20), use_container_width=True, hide_index=True)
+
+                # --- 7단계 (현황판) 시작 (6단계 아래에 배치) ---
+                st.divider()
+                st.header("7️⃣ 오늘의 리오더 발주 현황판")
+                today_str = datetime.now(KST).strftime('%Y-%m-%d')
+                d_col = next((c for c in df_logs.columns if '날짜' in c), df_logs.columns[0])
+                df_today = df_logs[df_logs[d_col].str.contains(today_str)]
+                
+                if not df_today.empty:
+                    df_today = df_today.copy()
+                    df_today['수량_num'] = df_today.iloc[:, 6].apply(to_i)
                     
-                    if not df_today.empty:
-                        # 수량은 7번째 컬럼(index 6), 공급처는 위에서 찾은 v_col 사용
-                        df_today = df_today.copy()
-                        df_today['수량_num'] = df_today.iloc[:, 6].apply(to_i)
-                        
-                        t_qty = df_today['수량_num'].sum()
-                        t_vnd = df_today[v_col].nunique() if v_col else 0
-                        
-                        m1, m2 = st.columns(2)
-                        m1.metric("오늘 총 수량", f"{t_qty} 개")
-                        m2.metric("발주처 수", f"{t_vnd} 곳")
-                        
-                        if v_col:
-                            v_sum = df_today.groupby(v_col)['수량_num'].sum().reset_index()
-                            v_sum.columns = ['공급처', '총 발주수량']
-                            st.table(v_sum)
-                    else:
-                        st.info("오늘 저장된 내역이 없습니다.")
+                    t_qty = df_today['수량_num'].sum()
+                    t_vnd = df_today[v_col].nunique() if v_col else 0
+                    
+                    m1, m2 = st.columns(2)
+                    m1.metric("오늘 총 발주수량", f"{t_qty} 개")
+                    m2.metric("오늘 발주처 수", f"{t_vnd} 곳")
+                    
+                    if v_col:
+                        v_sum = df_today.groupby(v_col)['수량_num'].sum().reset_index()
+                        v_sum.columns = ['🏭 공급처', '📦 총 발주수량']
+                        st.table(v_sum)
+                else:
+                    st.info("오늘 저장된 내역이 아직 없습니다.")
             else:
-                st.info("시트에 데이터가 없습니다.")
+                st.info("시트에 저장된 내역이 없습니다.")
