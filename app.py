@@ -217,52 +217,63 @@ if st.session_state.get('analyzed'):
             except Exception as e: st.error(f"저장 실패: {e}")
 
 # ------------------------------------------------------------------
-# [5~6단계: 무한 로딩 방지 및 API 보호 버전]
+# [5~6단계: 기록 및 리오더 현황 - KeyError 방어 버전]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.header("🕒 5~6단계: 기록 및 리오더 현황")
 
-    # 💡 해결책 1: 데이터를 세션에 딱 한 번만 담기
-    if 'master_log' not in st.session_state:
-        st.session_state.master_log = pd.DataFrame()
+    def load_master_data():
+        try:
+            sh = get_sheet()
+            if sh:
+                ws = sh.worksheet("발주기록")
+                # 데이터를 가져온 후 컬럼명의 공백을 제거하여 매칭 확률을 높입니다.
+                df_temp = pd.DataFrame(ws.get_all_records())
+                df_temp.columns = [c.strip() for c in df_temp.columns]
+                st.session_state.master_log = df_temp
+                st.success("✅ 동기화 완료!")
+        except Exception as e: 
+            st.error(f"로드 실패: {e}")
 
-    # 불러오기 버튼
-    if st.button("🔄 최신 기록 가져오기 (구글 시트 접속)", use_container_width=True, type="primary"):
-        with st.spinner("📡 구글 서버에서 데이터를 한 통 가져오고 있습니다..."):
-            try:
-                sh = get_sheet()
-                if sh:
-                    ws = sh.worksheet("발주기록")
-                    # 💡 해결책 2: 딱 필요한 데이터만 가져오거나 세션에 저장
-                    data = ws.get_all_records()
-                    st.session_state.master_log = pd.DataFrame(data)
-                    st.success("✅ 동기화 완료!")
-            except Exception as e:
-                st.error("📡 구글 API 점검 중이거나 할당량이 초과되었습니다. 1분 뒤에 시도해 주세요.")
+    if st.button("🔄 기록 및 리오더 데이터 불러오기", use_container_width=True, type="primary"):
+        load_master_data()
 
-    # 💡 해결책 3: 데이터가 세션에 있을 때만 화면을 그림 (검색 시 시트 접속 안 함)
-    if not st.session_state.master_log.empty:
+    if 'master_log' in st.session_state and not st.session_state.master_log.empty:
         m_df = st.session_state.master_log.copy()
         
-        with st.expander("📜 5단계: 최근 히스토리 (메모리 조회)", expanded=True):
-            # 검색창을 입력해도 시트 API를 호출하지 않음
-            h_search = st.text_input("🔍 상품명으로 내역 검색", key="final_h_search")
-            
+        # 날짜 처리
+        if '일시' in m_df.columns:
+            m_df['일시_dt'] = pd.to_datetime(m_df['일시'], errors='coerce').dt.date
+
+        # --- [5단계: 히스토리] ---
+        with st.expander("📜 5단계: 최근 히스토리", expanded=True):
+            h_search = st.text_input("🔍 검색어 입력 (상품명)", key="h_search_v10")
             df_h = m_df.copy()
             if h_search:
                 df_h = df_h[df_h['상품명'].astype(str).str.contains(h_search, case=False)]
             
-            # 시간대별 정렬 (최신순)
-            if '일시' in df_h.columns:
-                df_h = df_h.sort_values('일시', ascending=False)
-                
-            st.dataframe(df_h, use_container_width=True, hide_index=True)
-            
+            # 일시_dt 컬럼이 있을 때만 드랍하고 표시
+            display_h = df_h.drop(columns=['일시_dt']) if '일시_dt' in df_h.columns else df_h
+            st.dataframe(display_h.sort_values(by=display_h.columns[0], ascending=False), use_container_width=True, hide_index=True)
+
+        # --- [6단계: 실시간 리오더 잔량] ---
         with st.expander("📊 6단계: 실시간 리오더 잔량", expanded=True):
-            # 위에서 가져온 m_df를 그대로 재활용 (시트 접속 0번)
-            df_r = m_df.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
-            df_r = df_r[df_r['수량'] > 0].sort_values('수량', ascending=False)
-            st.dataframe(df_r, use_container_width=True, hide_index=True)
+            # ⭐ KeyError 방지: '수량' 컬럼이 있는지 확인 후 집계
+            target_col = '수량'
+            if target_col in m_df.columns:
+                # '수량' 데이터를 숫자로 강제 변환 (문자열 섞임 방지)
+                m_df[target_col] = pd.to_numeric(m_df[target_col], errors='coerce').fillna(0)
+                
+                df_r = m_df.groupby(['상품명', '옵션'])[target_col].sum().reset_index()
+                df_r.columns = ['상품명', '옵션', '미입고잔량']
+                
+                # 잔량이 0보다 큰 것만 표시
+                df_r = df_r[df_r['미입고잔량'] > 0].sort_values('미입고잔량', ascending=False)
+                st.dataframe(df_r, use_container_width=True, hide_index=True,
+                             column_config={"미입고잔량": st.column_config.NumberColumn("잔량", format="%d")})
+            else:
+                st.warning(f"⚠️ 시트에 '{target_col}' 컬럼이 보이지 않습니다. 시트 헤더를 확인해주세요.")
+                st.write("현재 인식된 컬럼명:", list(m_df.columns))
     else:
-        st.info("💡 위 [최신 기록 가져오기] 버튼을 눌러야 내역이 나타납니다. (자동 로딩 차단됨)")
+        st.info("💡 위 버튼을 눌러야 내역이 나타납니다.")
