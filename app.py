@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 v7.7")
+st.set_page_config(layout="wide", page_title="저스트원 v8.0")
 
 # [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
@@ -39,13 +39,22 @@ def auto_idx(cols, keys, exclude_keys=None):
         if any(k.upper() in c_str for k in keys): return i
     return 0
 
-# --- [메인 화면] ---
+# --- [메인 화면 영역] ---
 st.title("📦 저스트원 통합 재고 관리")
 
 # 1단계: 업로드
 st.header("1️⃣ 데이터 업로드")
 if 'reset_trigger' not in st.session_state: st.session_state.reset_trigger = 0
-up_file = st.file_uploader("📂 파일 업로드", type=['xlsx', 'xls', 'csv'], key=f"uploader_{st.session_state.reset_trigger}")
+
+col_up1, col_up2 = st.columns([8, 2])
+with col_up1:
+    up_file = st.file_uploader("📂 파일 업로드", type=['xlsx', 'xls', 'csv'], key=f"uploader_{st.session_state.reset_trigger}")
+with col_up2:
+    st.write("") # 간격 맞춤
+    st.write("") 
+    if st.button("🔄 전체 초기화", use_container_width=True):
+        for k in list(st.session_state.keys()): del st.session_state[k]
+        st.rerun()
 
 if up_file:
     if 'df_raw' not in st.session_state:
@@ -69,25 +78,31 @@ if up_file:
 
     cols = st.session_state.df_raw.columns.tolist()
     
-    # 2~3단계: 설정 영역 (상단 고정)
     st.divider()
-    st.header("2️⃣ 필드 매핑 및 3️⃣ 수치 설정")
-    c1, c2, c3 = st.columns([2, 2, 1])
-    with c1:
+    
+    # 2단계와 3단계를 좌우로 명확히 분리
+    col_step2, col_step3 = st.columns([1, 1])
+    
+    with col_step2:
+        st.header("2️⃣ 필드 매핑 (왼쪽)")
         s_it = st.selectbox("📦 상품명", cols, index=auto_idx(cols, ['상품명']), key="it_box")
         s_op = st.selectbox("🎨 옵션", cols, index=auto_idx(cols, ['옵션']), key="op_box")
         s_vn = st.selectbox("🏭 공급처", cols, index=auto_idx(cols, ['공급처']), key="vn_box")
         s_vi = st.selectbox("🆔 공급처 상품명", cols, index=auto_idx(cols, ['공급처상품명']), key="vi_box")
-    with c2:
         s_av = st.selectbox("✅ 가용재고", cols, index=auto_idx(cols, ['가용재고']), key="av_box")
         s_so = st.selectbox("🚫 품절여부", cols, index=auto_idx(cols, ['품절']), key="so_box")
         s_t3 = st.selectbox("🔥 3일 판매", cols, index=auto_idx(cols, ['3일']), key="t3_box")
         s_t7 = st.selectbox("📅 7일 판매", cols, index=auto_idx(cols, ['7일', '1주']), key="t7_box")
-    with c3:
-        lt = st.number_input("⏳ 리드타임", value=7, key="lt_val")
-        ss = st.number_input("🛡️ 안전재고", value=3, key="ss_val")
 
-    if st.button("📊 분석 실행", type="primary", use_container_width=True):
+    with col_step3:
+        st.header("3️⃣ 수치 설정 (오른쪽)")
+        lt = st.number_input("⏳ 리드타임 (입고 대기 기간)", value=7, key="lt_val")
+        ss = st.number_input("🛡️ 안전재고 (최소 유지 재고)", value=3, key="ss_val")
+        st.write("---")
+        st.info("💡 설정이 완료되면 아래 버튼을 눌러주세요.")
+        analyze_btn = st.button("📊 분석 실행", type="primary", use_container_width=True)
+
+    if analyze_btn:
         df = st.session_state.df_raw.copy()
         for c in [s_av, s_t3, s_t7]: df[c] = df[c].apply(to_i)
         
@@ -107,7 +122,7 @@ if up_file:
         st.session_state.analyzed_data = df.sort_values(by=['item_urgent_group', s_it, s_op], ascending=[False, True, True])
         st.session_state.final_mapping = {'vn':s_vn, 'it':s_it, 'op':s_op, 'vi':s_vi, 'av':s_av, 't3':s_t3, 'so':s_so}
 
-    # 4~5단계: 결과 영역 (들여쓰기 교정 완료)
+    # 4~5단계: 결과 편집 영역
     if 'analyzed_data' in st.session_state:
         st.divider()
         st.header("4️⃣~5️⃣ 발주 편집 및 저장")
@@ -131,6 +146,7 @@ if up_file:
         if search_q:
             df_view = df_view[df_view[m['it']].str.contains(search_q, case=False, na=False)]
 
+        # '상태' 컬럼을 '공급처' 앞으로 배치
         t_cols = ['상태', m['vn'], m['it'], m['op'], m['vi'], m['av'], '리오더 수량', '입고차감', '추가발주', m['t3'], '1일 판매량', '권장발주수량', '메모']
         a_cols = [c for c in t_cols if c in df_view.columns]
 
@@ -155,8 +171,3 @@ if up_file:
                 st.success("✅ 저장 성공!")
                 del st.session_state.analyzed_data
                 st.rerun()
-
-# [사이드바 초기화 버튼]
-if st.sidebar.button("🔄 전체 초기화"):
-    for k in list(st.session_state.keys()): del st.session_state[k]
-    st.rerun()
