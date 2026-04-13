@@ -152,36 +152,67 @@ if up_file:
                 rows = [[now_s, str(r[m['it']]), str(r[m['op']]), str(r[m['vi']]), 0, int(r['리오더 수량']), int(r['추가발주'])-int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[m['vn']])] for _, r in to_save.iterrows()]
                 ws_main.append_rows(rows)
                 st.success("✅ 구글 시트 저장 완료!")
+# --- 6단계 (검색 고도화) 시작 ---
+st.divider()
+st.header("6️⃣ 저장 내역 상세 검색")
 
-        # --- 6단계 (검색) 시작 ---
-        st.divider()
-        st.header("6️⃣ 저장 내역 검색")
-        sh = get_sheet()
-        if sh:
-            ws_log = sh.worksheet("발주기록")
-            raw_logs = ws_log.get_all_values()
-            if len(raw_logs) > 1:
-                df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
-                
-                s_col1, s_col2 = st.columns([2, 1])
-                with s_col1:
-                    q_item = st.text_input("🔎 검색어 입력 (상품명 또는 공급처)")
-                with s_col2:
-                    st.write("") # 버튼 위치 맞춤
-                    csv_data = df_logs.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button("📂 전체 내역 CSV 다운로드", data=csv_data, file_name="발주기록_전체.csv", mime="text/csv", use_container_width=True)
+sh = get_sheet()
+if sh:
+    ws_log = sh.worksheet("발주기록")
+    raw_logs = ws_log.get_all_values()
+    
+    if len(raw_logs) > 1:
+        # 헤더 공백 제거 및 데이터프레임 생성
+        df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
+        
+        # [검색 필터 상단 배치]
+        search_col1, search_col2, search_col3 = st.columns([1, 1.5, 2.5])
+        
+        with search_col1:
+            q_date = st.date_input("📅 1차: 날짜 선택", value=None, key="search_date")
+        with search_col2:
+            q_item_log = st.text_input("🔎 2차: 상품명 검색", placeholder="상품명 입력...", key="search_item")
+        with search_col3:
+            q_extra = st.text_input("📑 3차: 섹션 필터 (공급처/메모)", placeholder="공급처나 메모 키워드...", key="search_extra")
 
-                f_logs = df_logs.copy()
-                v_col = next((c for c in f_logs.columns if '공급처' in c), None)
-                i_col = next((c for c in f_logs.columns if '상품명' in c), None)
-                
-                if q_item:
-                    conds = []
-                    if v_col: conds.append(f_logs[v_col].str.contains(q_item, case=False))
-                    if i_col: conds.append(f_logs[i_col].str.contains(q_item, case=False))
-                    if conds: f_logs = f_logs[np.logical_or.reduce(conds)]
-                
-                st.dataframe(f_logs.tail(20), use_container_width=True, hide_index=True)
+        # 필터링 로직 실행
+        f_logs = df_logs.copy()
+        d_col = next((c for c in f_logs.columns if '날짜' in c), f_logs.columns[0])
+        i_col = next((c for c in f_logs.columns if '상품명' in c), None)
+        v_col = next((c for c in f_logs.columns if '공급처' in c), None)
+        m_col = next((c for c in f_logs.columns if '메모' in c), None)
+
+        if q_date:
+            f_logs = f_logs[f_logs[d_col].str.contains(q_date.strftime('%Y-%m-%d'))]
+        
+        if q_item_log:
+            if i_col:
+                f_logs = f_logs[f_logs[i_col].str.contains(q_item_log, case=False)]
+        
+        if q_extra:
+            # 공급처 또는 메모 컬럼에서 검색어 포함 여부 확인
+            cond_v = f_logs[v_col].str.contains(q_extra, case=False) if v_col else False
+            cond_m = f_logs[m_col].str.contains(q_extra, case=False) if m_col else False
+            f_logs = f_logs[cond_v | cond_m]
+
+        # 검색 결과 출력
+        st.write(f"✅ 총 **{len(f_logs)}**건이 검색되었습니다.")
+        st.dataframe(f_logs.tail(30), use_container_width=True, hide_index=True)
+
+        # [다운로드 버튼을 표 바로 아래에 배치]
+        if not f_logs.empty:
+            csv_data = f_logs.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 검색 결과 내역 다운로드 (CSV)",
+                data=csv_data,
+                file_name=f"발주기록_검색_{datetime.now(KST).strftime('%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+    else:
+        st.info("💡 아직 저장된 발주 내역이 없습니다.")
+
+        
 
                 # --- 7단계 (현황판) 시작 (6단계 아래에 배치) ---
                 st.divider()
