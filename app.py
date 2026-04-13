@@ -177,6 +177,5 @@ if up_file:
                 now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
                 rows = [[now_s, str(r[m['it']]), str(r[m['op']]), str(r[m['vi']]), 0, int(r['리오더 수량']), int(r['추가발주'])-int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[m['vn']])] for _, r in to_save.iterrows()]
                 ws_main.append_rows(rows)
-                st.success("✅ 저장 성공!")
-                del st.session_state.analyzed_data
-                st.rerun()
+                st.success("✅ 구글 시트에 저장되었습니다!")
+
