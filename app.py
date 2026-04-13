@@ -119,40 +119,85 @@ if up_file:
         st.session_state.analyzed = True
         st.success("📊 분석이 완료되었습니다! 아래에서 확인하세요.")
         st.rerun()
-    # --- [4~7단계 시작] ---
+
+
+
+    
+   # 3단계 분석 완료(st.session_state.analyzed == True) 후 실행
     if st.session_state.get('analyzed'):
-        # 4️⃣5️⃣단계: 편집 및 저장
         st.divider()
-        st.subheader("4️⃣~5️⃣ 발주 수량 편집 및 저장")
+        st.header("4️⃣~5️⃣ 발주 수량 편집 및 저장")
         
+        # 3단계에서 분석된 데이터 가져오기
         df_final = st.session_state.df_raw
+        
+        # [수정 포인트] 표에서 보여줄 컬럼들만 순서대로 정리
+        # 사장님이 2단계에서 선택한 실제 컬럼 이름들을 사용합니다.
+        display_cols = [
+            '상태', vendor, item, option, vendor_item, avail, 
+            '기존리오더', '권장발주수량', '추가발주', '입고차감', '메모'
+        ]
+        
+        # 실제 데이터에 있는 컬럼만 필터링 (에러 방지)
+        safe_cols = [c for c in display_cols if c in df_final.columns]
+
+        # 편집기 실행
         edited_df = st.data_editor(
-            df_final,
+            df_final[safe_cols], # 필요한 컬럼만 표에 노출
             column_config={
-                "추가발주": st.column_config.NumberColumn("➕ 추가발주"),
-                "입고차감": st.column_config.NumberColumn("➖ 입고차감"),
-                "메모": st.column_config.TextColumn("📝 메모")
+                "상태": st.column_config.TextColumn("상태", width="small"),
+                vendor: st.column_config.TextColumn("업체명", width="medium"),
+                item: st.column_config.TextColumn("상품명", width="large"),
+                option: st.column_config.TextColumn("옵션", width="medium"),
+                "추가발주": st.column_config.NumberColumn("➕ 추가발주", min_value=0, step=1),
+                "입고차감": st.column_config.NumberColumn("➖ 입고차감", min_value=0, step=1),
+                "메모": st.column_config.TextColumn("📝 메모", width="large")
             },
-            disabled=[c for c in df_final.columns if c not in ['추가발주', '입고차감', '메모']],
-            hide_index=True, use_container_width=True
+            disabled=[c for c in safe_cols if c not in ['추가발주', '입고차감', '메모']],
+            hide_index=True,
+            use_container_width=True,
+            key="final_editor_v11"
         )
 
-        if st.button("💾 일괄 저장"):
+        # 5단계: 저장 버튼
+        if st.button("💾 위 내역을 구글 시트로 일괄 저장", type="primary", use_container_width=True):
+            # 추가발주나 입고차감이 있는 행만 골라내기
             to_save = edited_df[(edited_df['추가발주'] > 0) | (edited_df['입고차감'] > 0)]
+            
             if not to_save.empty:
-                sh = get_sheet()
-                ws = sh.worksheet("발주기록")
-                now = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-                rows = [[
-                    now, str(r[item]), str(r[option]), str(r[vendor_item]), 
-                    int(to_i(r[avail])), int(r['기존리오더']), 
-                    int(r['추가발주']) - int(r['입고차감']), 
-                    int(r['권장발주수량']), str(r['메모']), str(r[vendor])
-                ] for _, r in to_save.iterrows()]
-                ws.append_rows(rows)
-                st.success("✅ 저장 완료!")
-                st.rerun()
+                try:
+                    sh = get_sheet()
+                    ws = sh.worksheet("발주기록")
+                    now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
+                    
+                    # 시트 저장용 데이터 구성 (순서 엄수)
+                    save_rows = []
+                    for _, r in to_save.iterrows():
+                        save_rows.append([
+                            now_s,              # A: 날짜
+                            str(r[item]),       # B: 상품명
+                            str(r[option]),     # C: 옵션
+                            str(r[vendor_item]),# D: 공급처상품명
+                            int(to_i(r[avail])),# E: 가용재고
+                            int(r['기존리오더']),# F: 기존리오더
+                            int(r['추가발주']) - int(r['입고차감']), # G: 변동수량 (핵심!)
+                            int(r['권장발주수량']),# H: 권장발주
+                            str(r['메모']),      # I: 메모
+                            str(r[vendor])      # J: 업체명
+                        ])
+                    
+                    ws.append_rows(save_rows)
+                    st.success(f"✅ {len(save_rows)}건 저장 완료! 수치를 갱신합니다.")
+                    
+                    # 수치 즉시 반영을 위해 분석 데이터 초기화 후 재실행
+                    st.session_state.analyzed = False
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 저장 중 오류 발생: {e}")
+            else:
+                st.warning("⚠️ 저장할 변경 내역(추가발주 또는 입고차감)이 없습니다.")
 
+        
         # 6️⃣단계: 저장 내역 상세 검색
         st.divider()
         st.subheader("6️⃣ 저장 내역 상세 검색")
