@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 통합 관리 v5.9")
+st.set_page_config(layout="wide", page_title="저스트원 통합 관리 v6.0")
 
 # [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
@@ -43,40 +43,53 @@ def auto_idx(cols, keys, exclude_keys=None):
 # --- [메인 화면 시작] ---
 st.title("📦 저스트원 통합 재고 관리")
 
-# 1단계: 업로드 및 초기화
+# 1단계: 업로드
 st.header("1️⃣ 데이터 업로드")
-up_file = st.file_uploader("📂 엑셀 또는 CSV 파일 업로드", type=['xlsx', 'xls', 'csv'])
 
-# [사장님 요청: 1단계 아래쪽 초기화 버튼]
-if st.button("🔄 전체 화면 초기화", help="업로드된 파일과 모든 설정값을 초기화합니다."):
+# 초기화 로직: 세션에 'reset_trigger'를 심어 file_uploader를 강제 초기화
+if 'reset_trigger' not in st.session_state:
+    st.session_state.reset_trigger = 0
+
+def reset_all():
+    # 모든 세션 상태 삭제
     for key in list(st.session_state.keys()):
         del st.session_state[key]
+    st.session_state.reset_trigger += 1 # file_uploader의 key값을 바꿔서 강제 초기화
     st.rerun()
 
+up_file = st.file_uploader("📂 엑셀 또는 CSV 파일 업로드", type=['xlsx', 'xls', 'csv'], key=f"uploader_{st.session_state.reset_trigger}")
+
+if st.button("🔄 전체 화면 초기화", help="업로드된 파일과 모든 설정값을 초기화합니다."):
+    reset_all()
+
+# 파일이 업로드된 경우에만 아래 2단계부터 노출
 if up_file:
-    # 데이터 로드 (파일이 바뀌었을 때만 실행)
-    if 'df_raw' not in st.session_state or st.session_state.get('last_uploaded') != up_file.name:
+    # 데이터 로드 (파일이 세션에 없을 때만 실행)
+    if 'df_raw' not in st.session_state:
         with st.spinner("🚀 구글 시트 잔량 동기화 중..."):
-            df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
-            df.columns = [str(c).strip() for c in df.columns]
-            st.session_state.df_raw = df.fillna("")
-            st.session_state.last_uploaded = up_file.name
-            
-            # 리오더 잔량 로드
-            sh = get_sheet()
-            if sh:
-                ws = sh.worksheet("발주기록")
-                all_vals = ws.get_all_values()
-                r_map = {}
-                if len(all_vals) > 1:
-                    for row in all_vals[1:]:
-                        key = super_clean(row[1]) + super_clean(row[2])
-                        r_map[key] = r_map.get(key, 0) + (to_i(row[5]) + to_i(row[6]))
-                st.session_state.r_map = r_map
+            try:
+                df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
+                df.columns = [str(c).strip() for c in df.columns]
+                st.session_state.df_raw = df.fillna("")
+                
+                # 리오더 잔량 로드
+                sh = get_sheet()
+                if sh:
+                    ws = sh.worksheet("발주기록")
+                    all_vals = ws.get_all_values()
+                    r_map = {}
+                    if len(all_vals) > 1:
+                        for row in all_vals[1:]:
+                            key = super_clean(row[1]) + super_clean(row[2])
+                            r_map[key] = r_map.get(key, 0) + (to_i(row[5]) + to_i(row[6]))
+                    st.session_state.r_map = r_map
+            except Exception as e:
+                st.error(f"파일 로드 중 오류 발생: {e}")
+                st.stop()
 
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 2단계: 매핑 (사장님 요청 레이아웃)
+    # 2단계: 매핑
     st.divider()
     st.header("2️⃣ 필드 매핑 설정")
     c_left, c_right = st.columns(2)
@@ -112,7 +125,6 @@ if up_file:
 
     # 분석 버튼
     if st.button("📊 분석 실행", type="primary", use_container_width=True):
-        # 실시간 계산 로직
         df = st.session_state.df_raw.copy()
         for c in [av, t3, t7, stk]: df[c] = df[c].apply(to_i)
         
@@ -128,7 +140,7 @@ if up_file:
         st.session_state.analyzed_data = df
         st.session_state.mapping_info = {'it':it, 'op':op, 'vn':vn, 'reg':reg}
 
-    # --- [4~7단계: 분석 결과 및 저장] ---
+    # 4단계: 결과 및 저장 (분석 데이터가 있을 때만 노출)
     if 'analyzed_data' in st.session_state:
         st.divider()
         st.header("4️⃣ 발주 편집 및 💾 최종 저장")
@@ -136,12 +148,10 @@ if up_file:
         
         edited_df = st.data_editor(
             st.session_state.analyzed_data[[m['vn'], m['it'], m['op'], '기존잔량', '입고차감', '발주권장', '추가발주', '메모', m['reg']]],
-            use_container_width=True,
-            hide_index=True,
-            key="main_editor",
+            use_container_width=True, hide_index=True, key="main_editor",
             column_config={
-                "입고차감": st.column_config.NumberColumn("📥 4단계: 입고(-)", help="입고 시 마이너스 처리됨"),
-                "추가발주": st.column_config.NumberColumn("➕ 5단계: 추가발주", help="추가 발주량"),
+                "입고차감": st.column_config.NumberColumn("📥 입고(-)", help="리오더 차감"),
+                "추가발주": st.column_config.NumberColumn("➕ 추가발주", help="추가 발주"),
                 "기존잔량": st.column_config.NumberColumn("📦 현재잔량", disabled=True),
                 "발주권장": st.column_config.NumberColumn("💡 권장", disabled=True)
             }
@@ -166,8 +176,7 @@ if up_file:
                     
                     ws_main.append_rows(rows)
                     ws_hist.append_rows(rows)
-                    st.success("✅ 저장이 완료되었습니다!")
-                    # 저장 후 분석 데이터만 삭제하여 초기화
+                    st.success("✅ 저장 완료!")
                     del st.session_state.analyzed_data
                     st.rerun()
             else:
