@@ -37,7 +37,7 @@ def get_sheet():
 
 # --- [메인 프로그램 시작] ---
 
-# 1️⃣단계: 파일 업로드 및 리오더 로드
+# 1️⃣단계: 파일 업로드 및 데이터 로드
 st.header("1️⃣ 파일 업로드 및 데이터 로드")
 up_file = st.file_uploader("엑셀 파일을 업로드하세요.", type=['xlsx', 'xls'])
 
@@ -92,72 +92,80 @@ if 'df_raw' in st.session_state:
         df = st.session_state.df_raw.copy()
         r_map = st.session_state.get('r_map', {})
         
-        # 기본 데이터 정제 및 리오더 매칭
+        # 1. 기본 가공
         df['clean_k'] = df.apply(lambda r: super_clean(r[item]) + super_clean(r[option]), axis=1)
         df['기존리오더'] = df['clean_k'].map(r_map).fillna(0).astype(int)
         
-        # 권장 발주량 계산
+        # 2. 권장 발주량 계산
         daily_avg = pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7
         df['권장발주수량'] = ((daily_avg * (lead_time + safety_stock)) - (pd.to_numeric(df[avail], errors='coerce').fillna(0) + df['기존리오더'])).clip(lower=0).astype(int)
         
-        # [품절] 상태 우선 반영
+        # 3. 개별 행의 상태값 정의
         def get_status(row):
             if "품절" in str(row[sold_out]): return "🚫 품절"
             return "🚨 긴급" if row['권장발주수량'] > 0 else "✅ 정상"
-        
         df['상태'] = df.apply(get_status, axis=1)
         
-        # [핵심 로직: 긴급 상품 묶음 처리]
-        # 긴급(🚨) 상태가 하나라도 있는 '상품명' 리스트 추출
-        emergency_items = df[df['상태'] == "🚨 긴급"][item].unique()
-        # 해당 상품명에 속하면 '우선순위' 그룹으로 지정
-        df['그룹'] = df[item].apply(lambda x: "1_긴급그룹" if x in emergency_items else "2_기타")
+        # 4. [중요!] 긴급 상품 묶음 로직
+        # 해당 상품명(Item) 안에 하나라도 '🚨 긴급'이 있는지 체크
+        is_emergency_item = df.groupby(item)['상태'].transform(lambda x: any(x == "🚨 긴급"))
         
+        # 정렬용 가상 열 생성 (긴급포함상품=0, 나머지=1)
+        df['sort_group'] = np.where(is_emergency_item, 0, 1)
+        
+        # 5. 후속 작업 열 생성
         df['추가발주'] = 0
         df['입고차감'] = 0
         df['메모'] = ""
         
-        # 정렬: 긴급그룹 우선 -> 상품명 -> 옵션 순
-        df = df.sort_values(by=['그룹', item, option], ascending=[True, True, True])
+        # 6. 최종 정렬: 긴급그룹 우선(0) -> 상품명(가나다) -> 옵션(S/M/L 등 가나다)
+        df = df.sort_values(by=['sort_group', item, option], ascending=[True, True, True])
 
         st.session_state.df_raw = df
         st.session_state.analyzed = True
         st.rerun()
 
-    # 4️⃣단계: 발주 편집 및 저장 (통합)
+    # 4️⃣단계: 발주 편집 및 저장
     if st.session_state.get('analyzed'):
         st.divider()
         st.header("4️⃣ 발주 수량 편집 및 저장")
         
         df_final = st.session_state.df_raw.copy()
         
-        # 필터 구성 (업체 필터 제거)
+        # 필터링 섹션
         f1, f2 = st.columns([1, 2])
-        sel_s = f1.selectbox("🚦 상태 필터", ["전체상품", "🚨 긴급", "✅ 정상", "🚫 품절"], key="v17_sel_s")
-        q_word = f2.text_input("🔎 상품명 검색", key="v17_q_word")
+        sel_s = f1.selectbox("🚦 상태 필터", ["전체상품", "🚨 긴급", "✅ 정상", "🚫 품절"], key="v18_sel_s")
+        q_word = f2.text_input("🔎 상품명 검색", key="v18_q_word")
 
-        # 필터 적용
         disp_df = df_final.copy()
-        if sel_s == "🚨 긴급": disp_df = disp_df[disp_df['상태'] == "🚨 긴급"]
-        elif sel_s == "✅ 정상": disp_df = disp_df[disp_df['상태'] == "✅ 정상"]
-        elif sel_s == "🚫 품절": disp_df = disp_df[disp_df['상태'] == "🚫 품절"]
+        
+        # 필터 적용 (긴급 필터 시에도 묶음 상품은 다 보여주기)
+        if sel_s == "🚨 긴급":
+            # 전체 데이터 중 '긴급 상품군'에 속하는 모든 행 필터링
+            disp_df = disp_df[disp_df['sort_group'] == 0]
+        elif sel_s == "✅ 정상":
+            disp_df = disp_df[disp_df['상태'] == "✅ 정상"]
+        elif sel_s == "🚫 품절":
+            disp_df = disp_df[disp_df['상태'] == "🚫 품절"]
         
         if q_word:
             disp_df = disp_df[disp_df[item].str.contains(q_word, case=False, na=False)]
 
+        # 컬럼 순서
         safe_cols = ['상태', vendor, item, option, vendor_item, avail, '기존리오더', '권장발주수량', '추가발주', '입고차감', '메모']
         
-        st.info("💡 긴급 상품은 모든 옵션(S/M/L/XL 등)이 함께 표시됩니다.")
+        st.info("📌 안내: 긴급 품목이 하나라도 있는 상품은 모든 옵션(정상 포함)이 함께 노출됩니다.")
         edited_df = st.data_editor(
             disp_df[safe_cols],
             column_config={
                 "상태": st.column_config.TextColumn("상태", width="small"),
                 vendor: st.column_config.TextColumn("업체명"),
+                item: st.column_config.TextColumn("상품명", width="large"),
                 "추가발주": st.column_config.NumberColumn("➕ 추가발주", step=1),
                 "입고차감": st.column_config.NumberColumn("➖ 입고차감", step=1),
             },
             disabled=[c for c in safe_cols if c not in ['추가발주', '입고차감', '메모']],
-            hide_index=True, use_container_width=True, key="v17_editor"
+            hide_index=True, use_container_width=True, key="v18_editor"
         )
 
         if st.button("💾 위 내역 일괄 저장", type="primary", use_container_width=True):
@@ -168,11 +176,11 @@ if 'df_raw' in st.session_state:
                 now = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
                 rows = [[now, str(r[item]), str(r[option]), str(r[vendor_item]), int(to_i(r[avail])), int(r['기존리오더']), int(r['추가발주']) - int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[vendor])] for _, r in to_save.iterrows()]
                 ws.append_rows(rows)
-                st.success("✅ 저장 완료!")
-                st.session_state.clear() # 최신 리오더 반영을 위해 초기화
+                st.success("✅ 저장 성공!")
+                st.session_state.clear()
                 st.rerun()
 
-        # 6-7단계 (검색 및 상황판)
+        # 6-7단계 (하단 고정)
         st.divider()
         c6, c7 = st.columns(2)
         with c6:
@@ -188,7 +196,7 @@ if 'df_raw' in st.session_state:
         with c7:
             st.subheader("7️⃣ 잔량 현황")
             if st.button("현황 업데이트"):
-                sh = get_sheet(); raw = pd.DataFrame(sh.worksheet("발주기록").get_all_values())
+                sh = get_sheet(); raw = pd.DataFrame(sh.worksheet("발view_values").get_all_values())
                 raw.columns = raw.iloc[0]; raw = raw[1:]
                 raw['q'] = raw.iloc[:, 6].apply(to_i)
                 v_sum = raw.groupby(raw.columns[-1])['q'].sum().reset_index()
