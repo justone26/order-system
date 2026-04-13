@@ -293,8 +293,8 @@ if st.session_state.get('analyzed'):
         
                 
         
-    # ------------------------------------------------------------------
-# [5단계: 히스토리 모드 - 최근 발주 및 입고 기록 조회]
+# ------------------------------------------------------------------
+# [5단계: 히스토리 모드 - UI 개선 버전]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -302,53 +302,77 @@ if st.session_state.get('analyzed'):
     
     with st.expander("🕒 최근 발주 및 입고 기록 보기 (구글 시트 연동)", expanded=True):
         try:
-            # 1. 구글 시트에서 '발주기록' 워크시트 가져오기
             sh = get_sheet()
             ws_log = sh.worksheet("발주기록")
-            
-            # 2. 데이터 읽기
             log_data = ws_log.get_all_records()
             
             if log_data:
                 df_log = pd.DataFrame(log_data)
+                # 날짜 형식을 계산 가능한 타입으로 변환
+                df_log['일시_dt'] = pd.to_datetime(df_log['일시']).dt.date
+
+                # --- 🎨 상단 검색바 레이아웃 (3컬럼) ---
+                c1, c2, c3 = st.columns([2, 2, 1])
                 
-                # 3. 일시(Timestamp) 기준 역순 정렬 (최신순)
-                if '일시' in df_log.columns:
-                    df_log = df_log.sort_values(by='일시', ascending=False)
+                with c1:
+                    # 달력 (최근 30일 기본값)
+                    log_date_range = st.date_input(
+                        "🗓️ 조회 기간",
+                        value=((datetime.now(KST) - timedelta(days=30)).date(), datetime.now(KST).date()),
+                        key="history_date_filter"
+                    )
                 
-                # 4. 보기 좋게 필터링 기능 추가 (선택사항)
-                search_log = st.text_input("🔍 기록 내 검색 (상품명/옵션/공급처)", key="log_search")
-                if search_log:
+                with c2:
+                    # 상품명 검색창
+                    search_txt = st.text_input("🔍 상품명 검색", placeholder="상품명 또는 옵션 입력", key="history_search_txt")
+                
+                with c3:
+                    # 버튼 배치를 위해 빈 공간 추가 후 버튼 배치
+                    st.write(" ") # 레이블 높이 맞춤용
+                    btn_search = st.button("🔎 검색하기", use_container_width=True)
+
+                # --- 🔍 필터링 로직 ---
+                # 1. 날짜 필터 (달력이 두 개 다 선택되었을 때만)
+                if isinstance(log_date_range, tuple) and len(log_date_range) == 2:
+                    start_date, end_date = log_date_range
+                    df_log = df_log[(df_log['일시_dt'] >= start_date) & (df_log['일시_dt'] <= end_date)]
+                
+                # 2. 텍스트 검색 (검색 버튼을 누르거나 엔터를 쳤을 때)
+                if search_txt:
                     df_log = df_log[
-                        df_log['상품명'].astype(str).str.contains(search_log, case=False) |
-                        df_log['옵션'].astype(str).str.contains(search_log, case=False) |
-                        df_log['공급처'].astype(str).str.contains(search_log, case=False)
+                        df_log['상품명'].astype(str).str.contains(search_txt, case=False) |
+                        df_log['옵션'].astype(str).str.contains(search_txt, case=False)
                     ]
+
+                # --- 📊 결과 표시 ---
+                # 최신순 정렬
+                df_log = df_log.sort_values(by='일시', ascending=False)
                 
-                # 5. 데이터 표시
+                # 불필요한 보조 컬럼 제거 후 표시
+                display_df = df_log.drop(columns=['일시_dt']) if '일시_dt' in df_log.columns else df_log
+
                 st.dataframe(
-                    df_log.head(50), # 너무 많으면 무거우니 최신 50개만 표시
+                    display_df,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "일시": st.column_config.TextColumn("기록일시"),
-                        "수량": st.column_config.NumberColumn("순발주량", format="%d"),
+                        "일시": st.column_config.TextColumn("날짜", width="medium"),
+                        "상품명": st.column_config.TextColumn("상품명", width="large"),
+                        "수량": st.column_config.NumberColumn("발주/입고", format="%d"),
                         "가용재고": st.column_config.NumberColumn("당시재고", format="%d"),
-                        "기존잔량": st.column_config.NumberColumn("기존잔량", format="%d")
+                        "기존잔량": st.column_config.NumberColumn("기존잔량", format="%d"),
+                        "권장수량": st.column_config.NumberColumn("권장발주", format="%d")
                     }
                 )
                 
-                if st.button("🔄 기록 새로고침", use_container_width=True):
+                if st.button("🔄 기록 새로고침", use_container_width=True, key="log_refresh_btn"):
                     st.cache_data.clear()
                     st.rerun()
-                    
             else:
-                st.info("아직 기록된 발주 내역이 없습니다.")
+                st.info("기록된 데이터가 없습니다.")
                 
         except Exception as e:
-            st.error(f"❌ 히스토리를 불러오는 중 오류 발생: {e}")
-            st.info("💡 구글 시트에 '발주기록'이라는 이름의 탭이 있는지 확인해 주세요.")
-
+            st.error(f"❌ 히스토리 로드 실패: {e}")
         
 
 # ------------------------------------------------------------------
