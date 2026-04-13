@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 통합 관리 v6.3")
+st.set_page_config(layout="wide", page_title="저스트원 v6.4")
 
 # [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
@@ -55,7 +55,7 @@ if st.button("🔄 전체 화면 초기화"):
 
 if up_file:
     if 'df_raw' not in st.session_state:
-        with st.spinner("🚀 데이터 로드 및 시트 동기화 중..."):
+        with st.spinner("🚀 데이터 로드 중..."):
             df = pd.read_csv(up_file) if up_file.name.endswith('.csv') else pd.read_excel(up_file)
             df.columns = [str(c).strip() for c in df.columns]
             st.session_state.df_raw = df.fillna("")
@@ -72,7 +72,7 @@ if up_file:
 
     cols = st.session_state.df_raw.columns.tolist()
 
-    # 2단계: 매핑
+    # 2단계: 매핑 (선택 즉시 세션에 저장하여 에러 방지)
     st.divider()
     st.header("2️⃣ 필드 매핑")
     c_left, c_right = st.columns(2)
@@ -90,6 +90,11 @@ if up_file:
         t3 = st.selectbox("🔥 3일 판매", cols, index=auto_idx(cols, ['3일'], exclude_keys=['1주', '7일']), key="sel_t3")
         t7 = st.selectbox("📅 7일 판매", cols, index=auto_idx(cols, ['7일', '1주'], exclude_keys=['3일']), key="sel_t7")
         reg = st.selectbox("📆 상품 등록일", cols, index=auto_idx(cols, ['등록일', '등록일자', '최초등록']), key="sel_reg")
+
+    # 매핑 정보를 세션에 즉시 고정 (KeyError 방지 핵심)
+    st.session_state.mapping_info = {
+        'it': it, 'op': op, 'vn': vn, 'reg': reg, 'av': av, 't3': t3, 'vi': vi
+    }
 
     # 3단계: 수치 설정
     st.divider()
@@ -110,20 +115,15 @@ if up_file:
         df['입고차감'] = 0
         df['추가발주'] = 0
         df['메모'] = ""
-        
-        # [수정포인트] 에러 방지를 위해 필요한 모든 매핑 키를 저장
-        st.session_state.mapping_info = {
-            'it': it, 'op': op, 'vn': vn, 'reg': reg, 'av': av, 't3': t3
-        }
         st.session_state.analyzed_data = df
 
     # --- [4~5단계: 편집 및 저장 영역] ---
     if 'analyzed_data' in st.session_state:
         st.divider()
         st.header("4️⃣~5️⃣ 발주 편집 및 저장")
-        m = st.session_state.mapping_info
+        m = st.session_state.mapping_info  # 이제 항상 안전하게 존재함
         
-        # 사장님 요청 순서 적용
+        # 사장님 요청 순서
         display_cols = [
             m['vn'], m['it'], m['op'], m['av'], '리오더 수량', 
             '입고차감', '추가발주', m['t3'], '1일 판매량', '권장발주수량', '메모'
@@ -133,8 +133,8 @@ if up_file:
             st.session_state.analyzed_data[display_cols],
             use_container_width=True, hide_index=True, key="main_editor",
             column_config={
-                "입고차감": st.column_config.NumberColumn("📥 입고(-)", help="입고량 입력 시 차감"),
-                "추가발주": st.column_config.NumberColumn("➕ 추가발주", help="신규 발주량"),
+                "입고차감": st.column_config.NumberColumn("📥 입고(-)", help="입고 시 마이너스 입력"),
+                "추가발주": st.column_config.NumberColumn("➕ 추가발주", help="신규 발주 수량"),
                 "리오더 수량": st.column_config.NumberColumn("📦 리오더 잔량", disabled=True),
                 "1일 판매량": st.column_config.NumberColumn("📈 일판매", disabled=True),
                 "권장발주수량": st.column_config.NumberColumn("💡 권장", disabled=True)
@@ -159,11 +159,10 @@ if up_file:
                     ws_main.append_rows(rows)
                     ws_hist.append_rows(rows)
                     st.success("✅ 저장 완료!")
-                    # 저장 후 분석 데이터 삭제하여 초기 상태 유도 (선택 사항)
                     del st.session_state.analyzed_data
                     st.rerun()
             else:
-                st.warning("⚠️ 변경된 데이터가 없습니다.")
+                st.warning("⚠️ 저장할 변경 데이터가 없습니다.")
 
 
         # --- [6단계: 히스토리 (최근 저장 내역)] ---
