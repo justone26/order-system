@@ -168,16 +168,14 @@ if st.session_state.get('analyzed'):
 
     df_disp = st.session_state.df_final.copy()
     
-    # 1. 필터 UI
+    # 1. 필터 UI (세트 보기 포함)
     f1, f2 = st.columns([1, 2])
     with f1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
     with f2: s_query = st.text_input("🔍 검색 (상품명/옵션)")
 
-    # 2. 필터 로직 (여기서 이름을 '권장발주수량'으로 통일)
+    # 필터 로직
     if f_mode == "🚨 발주필요(세트)":
-        # ⭐ '권장발주수량'이 0보다 큰 상품의 [상품명]을 모두 찾음
         need_items = df_disp[df_disp['권장발주수량'] > 0][itm_c].unique()
-        # 그 상품명에 속한 모든 옵션을 노출 (브라운이 걸리면 블랙도 같이 나옴)
         df_disp = df_disp[df_disp[itm_c].isin(need_items)]
     elif f_mode == "✅ 정상":
         df_disp = df_disp[df_disp['상태'] == "✅ 정상"]
@@ -188,40 +186,46 @@ if st.session_state.get('analyzed'):
         df_disp = df_disp[df_disp[itm_c].astype(str).str.contains(s_query, case=False) | 
                           df_disp[opt_c].astype(str).str.contains(s_query, case=False)]
 
-    # 3. 컬럼 순서 및 존재 보장
+    # 2. 컬럼 순서 설정
     disp_cols = [
         '상태', vnd_c, itm_c, opt_c, vit_c, avl_c, 
         '기존리오더', '입고차감', '추가발주', t3_c, 
         '일판매량', '권장발주수량', '비고(메모)'
     ]
-    for c in disp_cols:
-        if c not in df_disp.columns: df_disp[c] = 0
 
-    # 4. 에디터
-    with st.form("v4_final_stable_form"):
+    # 3. 통합 에디터 (수정 권한 제어)
+    with st.form("v4_final_protected_form"):
         edited_df = st.data_editor(
             df_disp[disp_cols],
             use_container_width=True,
             hide_index=True,
             column_config={
                 '상태': st.column_config.TextColumn("상태", disabled=True),
-                vnd_c: "공급처", itm_c: "상품명", opt_c: "옵션", vit_c: "공급처상품명",
+                vnd_c: st.column_config.TextColumn("공급처", disabled=True),
+                itm_c: st.column_config.TextColumn("상품명", disabled=True, width="medium"),
+                opt_c: st.column_config.TextColumn("옵션", disabled=True),
+                vit_c: st.column_config.TextColumn("공급처상품명", disabled=True),
                 avl_c: st.column_config.NumberColumn("가용재고", disabled=True, format="%d"),
-                "기존리오더": st.column_config.NumberColumn("📦 기존잔량", disabled=True, format="%d"),
-                "입고차감": st.column_config.NumberColumn("📥 입고(-)", min_value=0, format="%d"),
-                "추가발주": st.column_config.NumberColumn("➕ 발주(+)", min_value=0, format="%d"),
+                
+                # ⭐ [핵심 수정] 기존잔량 수정 불가 설정
+                "기존리오더": st.column_config.NumberColumn("📦 기존잔량", disabled=True, format="%d", help="구글 시트에서 계산된 리오더 잔량입니다. 수정 불가."),
+                
+                # ✍️ 수정 가능한 컬럼들
+                "입고차감": st.column_config.NumberColumn("📥 입고(-)", min_value=0, format="%d", help="들어온 수량을 입력하면 리오더에서 차감됩니다."),
+                "추가발주": st.column_config.NumberColumn("➕ 발주(+)", min_value=0, format="%d", help="새로 주문할 수량을 입력하세요."),
+                
                 t3_c: st.column_config.NumberColumn("3일판매", disabled=True, format="%d"),
                 "일판매량": st.column_config.NumberColumn("평균판매", disabled=True, format="%d"),
                 "권장발주수량": st.column_config.NumberColumn("💡 권장", disabled=True, format="%d"),
-                "비고(메모)": st.column_config.TextColumn("비고(메모)", width="medium")
+                "비고(메모)": st.column_config.TextColumn("비고(메모)", width="medium") # 메모는 수정 가능
             },
-            key="final_editor_ordered"
+            key="editor_v6_protected"
         )
         
         btn_save = st.form_submit_button("💾 데이터 최종 저장 및 시트 전송", use_container_width=True, type="primary")
 
+    # (저장 로직은 이전과 동일)
     if btn_save:
-        # 저장 로직 (생략하지 않고 포함)
         change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
         if not change_list.empty:
             try:
@@ -233,6 +237,7 @@ if st.session_state.get('analyzed'):
                     net_qty = int(r['추가발주']) - int(r['입고차감'])
                     m_txt = str(r['비고(메모)'])
                     if r['입고차감'] > 0 and r['추가발주'] == 0: m_txt = f"[입고차감] {m_txt}".strip()
+                    
                     rows.append([
                         now_s, str(r[itm_c]), str(r[opt_c]), str(r[vit_c]), 
                         int(r[avl_c]), int(r['기존리오더']), net_qty, 
