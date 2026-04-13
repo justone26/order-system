@@ -117,7 +117,7 @@ if 'df_raw' in st.session_state:
             try:
                 r_dt = pd.to_datetime(row[reg_date]).date()
                 diff = (today - r_dt).days
-                days = max(1, min(diff, 7)) # 2일이면 2로 나눔
+                days = max(1, min(diff, 7)) 
                 return round(to_i(row[t1w]) / days, 2)
             except: 
                 return round(to_i(row[t1w]) / 7, 2)
@@ -159,21 +159,31 @@ if 'df_raw' in st.session_state:
         elif sel_s == "🚫 품절": disp = disp[disp['상태'] == "🚫 품절"]
         if q: disp = disp[disp[item].str.contains(q, case=False, na=False)]
 
-        # --- [에러 방지 핵심: safe 리스트를 매핑 변수명으로 구성] ---
-        # 사용자가 선택한 컬럼명(item, option 등)을 직접 리스트에 넣어야 KeyError가 안 납니다.
-        safe = ['상태', vendor, item, option, '일판매량', t3d, avail, '기존리오더', '권장발주수량', '추가발주', '입고차감', '메모']
+        # --- [사장님 요청 컬럼 순서 고정] ---
+        # 상태 => 공급처 => 상품명 => 옵션 => 공급쳐상품명 => 가용재고 => 리오더수량(기존리오더) 
+        # => 입고수량(입고차감) => 추가발주수량 => 3일판매 => 일판매량 => 권장발주수량 => 비고(메모)
+        safe = [
+            '상태', vendor, item, option, v_item_col, 
+            avail, '기존리오더', '입고차감', '추가발주', 
+            t3d, '일판매량', '권장발주수량', '메모'
+        ]
         
         try:
             edit_df = st.data_editor(
                 disp[safe], 
                 hide_index=True, 
                 use_container_width=True, 
-                key="final_v24_fix",
+                key="final_v25_ordered",
                 column_config={
-                    "일판매량": st.column_config.NumberColumn("🔥 일판매량", format="%.2f"),
-                    t3d: st.column_config.NumberColumn("📅 3일합계"),
+                    "상태": st.column_config.TextColumn("상태", width="small"),
+                    vendor: st.column_config.TextColumn("공급처"),
+                    item: st.column_config.TextColumn("상품명", width="large"),
+                    v_item_col: st.column_config.TextColumn("공급처상품명"),
+                    "입고차감": st.column_config.NumberColumn("➖ 입고수량", step=1),
                     "추가발주": st.column_config.NumberColumn("➕ 추가발주", step=1),
-                    "입고차감": st.column_config.NumberColumn("➖ 입고차감", step=1),
+                    t3d: st.column_config.NumberColumn("📅 3일판매"),
+                    "일판매량": st.column_config.NumberColumn("🔥 일판매량", format="%.2f"),
+                    "메모": st.column_config.TextColumn("비고", width="medium")
                 }
             )
 
@@ -183,16 +193,15 @@ if 'df_raw' in st.session_state:
                     sh = get_sheet()
                     ws = sh.worksheet("발주기록")
                     now = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-                    # 저장 시 공급처 상품명(v_item_col)도 함께 저장
-                    rows = [[now, str(r[item]), str(r[option]), str(r.get(v_item_col, "")), int(to_i(r[avail])), int(r['기존리오더']), int(r['추가발주']) - int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[vendor])] for _, r in to_save.iterrows()]
+                    rows = [[now, str(r[item]), str(r[option]), str(r[v_item_col]), int(to_i(r[avail])), int(r['기존리오더']), int(r['추가발주']) - int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[vendor])] for _, r in to_save.iterrows()]
                     ws.append_rows(rows)
                     st.success("✅ 저장 완료! 리오더 수치를 업데이트합니다.")
                     st.session_state.analyzed = False 
                     st.rerun()
         except KeyError as e:
-            st.error(f"❌ 매핑 에러 발생: {e} 컬럼을 찾을 수 없습니다. 매핑 설정을 확인해주세요.")
+            st.error(f"❌ 매핑 에러: {e} 컬럼을 찾을 수 없습니다. 2단계 매핑을 다시 확인해주세요.")
 
-        # 6-7단계 내역 조회
+        # 6-7단계 (하단)
         st.divider()
         c6, c7 = st.columns(2)
         with c6:
