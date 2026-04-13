@@ -166,13 +166,20 @@ if st.session_state.get('analyzed'):
     # 매핑된 원본 컬럼명들
     vnd_c, itm_c, opt_c, vit_c, avl_c, t3_c = p['vn'], p['it'], p['op'], p['vi'], p['av'], p['t3']
 
-    # 1. 필터 및 UI
+    # 1. 데이터 준비
+    df_disp = st.session_state.df_final.copy()
+    
+    # [중요] 에러 방지: 데이터 타입 강제 변환 (숫자여야 하는 컬럼들)
+    numeric_cols = [avl_c, '기존리오더', '입고차감', '추가발주', t3_c, '일판매량', '권장발주수량']
+    for col in numeric_cols:
+        if col in df_disp.columns:
+            df_disp[col] = pd.to_numeric(df_disp[col], errors='coerce').fillna(0)
+
+    # 2. 필터 UI
     f1, f2 = st.columns([1, 2])
     with f1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요", "✅ 정상", "🚫 품절"], index=1)
     with f2: s_query = st.text_input("🔍 검색 (상품명/옵션)")
 
-    df_disp = st.session_state.df_final.copy()
-    
     # 필터 적용
     if f_mode == "🚨 발주필요": df_disp = df_disp[df_disp['상태'] == "🚨 발주필요"]
     elif f_mode == "✅ 정상": df_disp = df_disp[df_disp['상태'] == "✅ 정상"]
@@ -182,45 +189,44 @@ if st.session_state.get('analyzed'):
         df_disp = df_disp[df_disp[itm_c].astype(str).str.contains(s_query, case=False) | 
                           df_disp[opt_c].astype(str).str.contains(s_query, case=False)]
 
-    # ⭐ [변경 순서 반영]: 요청하신 순서대로 리스트 작성
-    # 상태 → 공급처 → 상품명 → 옵션 → 공급처상품명 → 가용재고 → 기존리오더 → 입고차감 → 추가발주 → 3일판매 → 일판매량 → 권장발주수량 → 비고(메모)
+    # 3. 컬럼 순서 설정
     disp_cols = [
         '상태', vnd_c, itm_c, opt_c, vit_c, avl_c, 
         '기존리오더', '입고차감', '추가발주', t3_c, 
         '일판매량', '권장발주수량', '비고(메모)'
     ]
 
-    # 컬럼 누락 방지 체크
-    for c in disp_cols:
-        if c not in df_disp.columns: df_disp[c] = 0
-
+    # 4. 통합 에디터 (컬럼 타입 설정 최적화)
     with st.form("v4_integrated_form"):
         edited_df = st.data_editor(
             df_disp[disp_cols], 
             use_container_width=True,
             hide_index=True,
             column_config={
+                # 문자열 컬럼
                 '상태': st.column_config.TextColumn("상태", disabled=True),
                 vnd_c: st.column_config.TextColumn("공급처", disabled=True),
                 itm_c: st.column_config.TextColumn("상품명", disabled=True, width="medium"),
                 opt_c: st.column_config.TextColumn("옵션", disabled=True),
                 vit_c: st.column_config.TextColumn("공급처상품명", disabled=True),
-                avl_c: st.column_config.NumberColumn("가용재고", disabled=True),
-                "기존리오더": st.column_config.NumberColumn("📦 기존잔량", disabled=True),
-                "입고차감": st.column_config.NumberColumn("📥 입고(-)", min_value=0),
-                "추가발주": st.column_config.NumberColumn("➕ 발주(+)", min_value=0),
-                t3_c: st.column_config.NumberColumn("3일판매", disabled=True),
+                # 숫자 컬럼 (NumberColumn으로 통일)
+                avl_c: st.column_config.NumberColumn("가용재고", disabled=True, format="%d"),
+                "기존리오더": st.column_config.NumberColumn("📦 기존잔량", disabled=True, format="%d"),
+                "입고차감": st.column_config.NumberColumn("📥 입고(-)", min_value=0, format="%d"),
+                "추가발주": st.column_config.NumberColumn("➕ 발주(+)", min_value=0, format="%d"),
+                t3_c: st.column_config.NumberColumn("3일판매", disabled=True, format="%d"),
                 "일판매량": st.column_config.NumberColumn("평균판매", disabled=True, format="%.1f"),
-                "권장발주수량": st.column_config.NumberColumn("💡 권장", disabled=True),
+                "권장발주수량": st.column_config.NumberColumn("💡 권장", disabled=True, format="%d"),
+                # 메모
                 "비고(메모)": st.column_config.TextColumn("비고(메모)", width="medium")
             },
-            key="final_editor_ordered"
+            key="final_editor_v5" # 키를 변경하여 캐시 충돌 방지
         )
         
         btn_save = st.form_submit_button("💾 데이터 최종 저장 및 시트 전송", use_container_width=True, type="primary")
 
+    # 5. 저장 로직 (이전과 동일)
     if btn_save:
-        # 입고 혹은 발주 값이 있는 것만 추림
         change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
         if not change_list.empty:
             try:
@@ -244,7 +250,7 @@ if st.session_state.get('analyzed'):
                 time.sleep(1)
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ 오류: {e}")
+                st.error(f"❌ 저장 실패: {e}")
                 
         
         # --- 6️⃣단계: 전체 히스토리 관리 ---
