@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 # 1. 환경 설정
 KST = timezone(timedelta(hours=9))
-st.set_page_config(layout="wide", page_title="저스트원 v7.2")
+st.set_page_config(layout="wide", page_title="저스트원 v7.3")
 
 # [새로고침 방지]
 components.html("<script>window.onbeforeunload = function() { return '변경사항이 저장되지 않을 수 있습니다.'; };</script>", height=0)
@@ -39,10 +39,10 @@ def auto_idx(cols, keys, exclude_keys=None):
         if any(k.upper() in c_str for k in keys): return i
     return 0
 
-# --- [상단 고정 영역: 1~3단계] ---
+# --- [메인 화면 영역] ---
 st.title("📦 저스트원 통합 재고 관리")
 
-# 1단계: 업로드
+# 1단계: 업로드 (항상 표시)
 st.header("1️⃣ 데이터 업로드")
 if 'reset_trigger' not in st.session_state: st.session_state.reset_trigger = 0
 up_file = st.file_uploader("📂 파일 업로드", type=['xlsx', 'xls', 'csv'], key=f"uploader_{st.session_state.reset_trigger}")
@@ -65,10 +65,9 @@ if up_file:
 
     cols = st.session_state.df_raw.columns.tolist()
     
+    # 2~3단계: 매핑 및 설정 (항상 표시)
     st.divider()
     st.header("2️⃣ 필드 매핑 및 3️⃣ 수치 설정")
-    
-    # 설정창 레이아웃 고정
     c1, c2, c3 = st.columns([2, 2, 1])
     with c1:
         s_it = st.selectbox("📦 상품명", cols, index=auto_idx(cols, ['상품명']), key="it_box")
@@ -84,8 +83,7 @@ if up_file:
         lt = st.number_input("⏳ 리드타임", value=7, key="lt_val")
         ss = st.number_input("🛡️ 안전재고", value=3, key="ss_val")
 
-    # 분석 버튼 (이 버튼을 눌러도 위 설정창은 그대로 유지됩니다)
-    if st.button("📊 분석 및 결과 보기", type="primary", use_container_width=True):
+    if st.button("📊 분석 실행", type="primary", use_container_width=True):
         df = st.session_state.df_raw.copy()
         for c in [s_av, s_t3, s_t7]: df[c] = df[c].apply(to_i)
         
@@ -102,25 +100,23 @@ if up_file:
         df['추가발주'] = 0
         df['메모'] = ""
         
-        # 정렬 후 세션 저장
         st.session_state.analyzed_data = df.sort_values(by=['item_urgent_group', s_it, s_op], ascending=[False, True, True])
         st.session_state.final_mapping = {'vn':s_vn, 'it':s_it, 'op':s_op, 'vi':s_vi, 'av':s_av, 't3':s_t3, 'so':s_so}
 
-    # --- [하단 결과 영역: 4~5단계] ---
+    # --- [4~5단계 결과 영역] ---
     if 'analyzed_data' in st.session_state:
-        st.divider()
+        st.divider() # 이 부분의 들여쓰기를 수정했습니다.
         st.header("4️⃣~5️⃣ 발주 편집 및 저장")
         
         m = st.session_state.final_mapping
         
-        # 필터/검색 UI
+        # 필터 레이아웃
         f1, f2 = st.columns([3, 2])
         with f1:
-            f_type = st.radio("🔍 필터 선택", ["전체", "🚨 긴급(묶음)", "✅ 정상", "🚫 품절"], horizontal=True, key="filter_radio")
+            f_type = st.radio("🔍 필터", ["전체", "🚨 긴급(묶음)", "✅ 정상", "🚫 품절"], horizontal=True, key="f_radio")
         with f2:
-            search_q = st.text_input("🔎 상품명 검색", key="search_input")
+            search_q = st.text_input("🔎 상품명 검색", key="s_input")
 
-        # 필터링 적용
         df_view = st.session_state.analyzed_data.copy()
         if f_type == "🚨 긴급(묶음)":
             df_view = df_view[df_view['item_urgent_group'] == True]
@@ -131,11 +127,9 @@ if up_file:
         if search_q:
             df_view = df_view[df_view[m['it']].str.contains(search_q, case=False, na=False)]
 
-        # 컬럼 순서 및 존재 확인
         target_cols = ['상태', m['vn'], m['it'], m['op'], m['vi'], m['av'], '리오더 수량', '입고차감', '추가발주', m['t3'], '1일 판매량', '권장발주수량', '메모']
         available_cols = [c for c in target_cols if c in df_view.columns]
 
-        # 데이터 에디터
         edited_df = st.data_editor(
             df_view[available_cols],
             use_container_width=True, hide_index=True, key="main_editor",
@@ -143,11 +137,10 @@ if up_file:
                 "상태": st.column_config.TextColumn("📊 상태", width="small"),
                 "입고차감": st.column_config.NumberColumn("📥 입고(-)", format="%d"),
                 "추가발주": st.column_config.NumberColumn("➕ 추가", format="%d"),
-                "권장발주수량": st.column_config.NumberColumn("💡 권장", disabled=True)
             }
         )
 
-        if st.button("💾 변경사항 일괄 저장", type="primary", use_container_width=True):
+        if st.button("💾 일괄 저장", type="primary", use_container_width=True):
             to_save = edited_df[(edited_df['입고차감'] != 0) | (edited_df['추가발주'] > 0)]
             if not to_save.empty:
                 sh = get_sheet()
@@ -155,11 +148,11 @@ if up_file:
                 now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
                 rows = [[now_s, str(r[m['it']]), str(r[m['op']]), str(r[m['vi']]), 0, int(r['리오더 수량']), int(r['추가발주'])-int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[m['vn']])] for _, r in to_save.iterrows()]
                 ws_main.append_rows(rows)
-                st.success("✅ 구글 시트 저장 완료!")
+                st.success("✅ 저장 완료!")
                 del st.session_state.analyzed_data
                 st.rerun()
 
-# 초기화 버튼은 가장 하단에 배치하거나 사이드바에 두어 실수 방지
+# 초기화 버튼
 if st.sidebar.button("🔄 전체 초기화"):
     for key in list(st.session_state.keys()): del st.session_state[key]
     st.rerun()
