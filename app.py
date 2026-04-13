@@ -146,12 +146,41 @@ if up_file:
         if st.button("💾 일괄 저장", type="primary", use_container_width=True):
             to_save = edited_df[(edited_df['입고차감'] != 0) | (edited_df['추가발주'] > 0)]
             if not to_save.empty:
-                sh = get_sheet()
-                ws_main = sh.worksheet("발주기록")
-                now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-                rows = [[now_s, str(r[m['it']]), str(r[m['op']]), str(r[m['vi']]), 0, int(r['리오더 수량']), int(r['추가발주'])-int(r['입고차감']), int(r['권장발주수량']), str(r['메모']), str(r[m['vn']])] for _, r in to_save.iterrows()]
-                ws_main.append_rows(rows)
-                st.success("✅ 구글 시트 저장 완료!")
+                try:
+                    sh = get_sheet()
+                    ws_main = sh.worksheet("발주기록")
+                    now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M')
+                    
+                    # 저장할 행 생성
+                    rows = [[
+                        now_s, 
+                        str(r[m['it']]), 
+                        str(r[m['op']]), 
+                        str(r[m['vi']]), 
+                        0, 
+                        int(r['리오더 수량']), 
+                        int(r['추가발주']) - int(r['입고차감']), # 이 값이 리오더 수량에 합산됨
+                        int(r['권장발주수량']), 
+                        str(r['메모']), 
+                        str(r[m['vn']])
+                    ] for _, r in to_save.iterrows()]
+                    
+                    ws_main.append_rows(rows)
+                    st.success("✅ 구글 시트에 성공적으로 저장되었습니다!")
+                    
+                    # 🔥 [핵심] 저장 후 리오더 수량(r_map)을 즉시 다시 계산하기 위해 세션 비우기
+                    if 'r_map' in st.session_state:
+                        del st.session_state.r_map
+                    
+                    # 화면을 새로고침하여 상단 분석 수치에 즉시 반영
+                    st.rerun() 
+                    
+                except Exception as e:
+                    st.error(f"❌ 저장 중 오류 발생: {e}")
+            else:
+                st.warning("⚠️ 저장할 변경 내역(입고차감 또는 추가발주)이 없습니다.")
+
+        
                 
 # --- [공통 데이터 로드] ---
         st.divider()
