@@ -209,15 +209,14 @@ if up_file:
 st.divider()
 st.header("6️⃣ 저장 내역 상세 검색")
 
-# 상단 필터 배치
+# 상단 필터 레이아웃
 c1, c2, c3 = st.columns([1, 1, 1])
 with c1:
-    q_date_6 = st.date_input("📅 조회 날짜 선택", value=datetime.now(KST).date(), key="date_6")
+    q_date_6 = st.date_input("📅 조회 날짜 선택", value=datetime.now(KST).date(), key="date_6_v9")
 with c2:
     st.write("") # 간격 맞춤
-    btn_load_6 = st.button("🚀 데이터 조회하기", use_container_width=True, type="primary", key="btn_6")
+    btn_load_6 = st.button("🚀 데이터 조회하기", use_container_width=True, type="primary", key="btn_6_v9")
 
-# 버튼 클릭 시에만 구글 시트 접근
 if btn_load_6:
     sh = get_sheet()
     if sh:
@@ -225,22 +224,39 @@ if btn_load_6:
         raw = ws.get_all_values()
         if len(raw) > 1:
             df_6 = pd.DataFrame(raw[1:], columns=[c.strip() for c in raw[0]])
-            # 날짜 정제
+            
+            # 날짜 필터링을 위한 전처리
             df_6['pure_date'] = df_6.iloc[:, 0].str.split(' ').str[0]
             target_s = q_date_6.strftime('%Y-%m-%d')
-            
-            # 해당 날짜 필터링
             res_6 = df_6[df_6['pure_date'] == target_s].copy()
             
             if not res_6.empty:
-                # 사장님이 요청한 컬럼 순서로 정리 (열 번호 기준 또는 이름 기준)
-                # 날짜(0), 업체(9), 상품(1), 옵션(2), 공급처상품(3), 가용(4), 기존(5), 입고(6), 추가(6), 권장(7), 메모(8)
-                # 시트 구조에 맞춰 index를 조정하세요.
-                st.write(f"✅ {target_s} 내역 조회 결과")
-                st.dataframe(res_6.iloc[::-1], use_container_width=True, hide_index=True)
+                # [사장님 요청 컬럼 순서 정리]
+                # 날짜 => 업체명 => 상품명 => 옵션 => 공급처상품명 => 가용재고 => 기존리오더 => 입고수량 => 추가발주 => 권장발주 => 메모
+                # 시트의 실제 헤더 명칭과 똑같아야 합니다. (G열은 상황에 따라 '수량' 혹은 '입고수량'으로 표시)
                 
-                csv_6 = res_6.to_csv(index=False).encode('utf-8-sig')
-                st.download_button("📥 검색 결과 다운로드", data=csv_6, file_name=f"발주내역_{target_s}.csv", use_container_width=True)
+                # 1. 시트의 컬럼명을 유연하게 매칭
+                d_col = res_6.columns[0]  # 날짜
+                v_col = res_6.columns[-1] # 업체명(공급처)
+                qty_col = res_6.columns[6] # G열 (입고수량/추가발주 합산값)
+                
+                ordered_cols = [
+                    d_col, v_col, "상품명", "옵션", "공급처상품명", 
+                    "가용재고", "기존리오더", qty_col, "추가발주", "권장발주수량", "메모"
+                ]
+                
+                # 실제 존재하는 컬럼만 필터링 (에러 방지 및 끝부분 보조컬럼 미노출)
+                final_cols = [c for c in ordered_cols if c in res_6.columns]
+                
+                st.write(f"✅ {target_s} 내역 조회 결과 (최신순)")
+                st.dataframe(
+                    res_6[final_cols].iloc[::-1], 
+                    use_container_width=True, 
+                    hide_index=True
+                )
+                
+                csv_6 = res_6[final_cols].to_csv(index=False).encode('utf-8-sig')
+                st.download_button("📥 현재 결과 CSV 다운로드", data=csv_6, file_name=f"발주내역_{target_s}.csv", use_container_width=True)
             else:
                 st.info("해당 날짜에 저장된 데이터가 없습니다.")
 
@@ -250,11 +266,11 @@ if btn_load_6:
 st.divider()
 st.header("7️⃣ 실시간 리오더 최종 잔량 상황판")
 
-c1_7, c2_7 = st.columns([1, 1])
+c1_7, c2_7 = st.columns([2, 1])
 with c1_7:
-    st.write("오늘 기준 미입고된 잔량을 집계합니다.")
+    st.info("💡 '현황판 업데이트' 버튼을 누르면 전체 기간의 미입고 잔량을 집계합니다. (합산 잔량이 0 이하인 품목은 자동 제외)")
 with c2_7:
-    btn_load_7 = st.button("📊 현황판 업데이트", use_container_width=True, key="btn_7")
+    btn_load_7 = st.button("📊 현황판 업데이트", use_container_width=True, key="btn_7_v9", type="secondary")
 
 if btn_load_7:
     sh = get_sheet()
@@ -263,22 +279,29 @@ if btn_load_7:
         raw = ws.get_all_values()
         if len(raw) > 1:
             df_7 = pd.DataFrame(raw[1:], columns=[c.strip() for c in raw[0]])
-            # 업체명(마지막열), 추가발주(index 6) 수량 계산
-            df_7['qty'] = df_7.iloc[:, 6].apply(to_i)
-            v_col = df_7.columns[-1] # 보통 공급처/업체명
             
-            # 최종 잔량 제로화 및 합산 로직
-            v_sum = df_7.groupby(v_col)['qty'].sum().reset_index()
-            v_sum = v_sum[v_sum['qty'] > 0] # 미입고 잔량만
+            # 수량(G열)과 기존리오더(F열) 수치화
+            df_7['qty_val'] = df_7.iloc[:, 6].apply(to_i) # 추가발주 및 차감액
+            v_col_7 = df_7.columns[-1] # 업체명
             
-            if not v_sum.empty:
-                cols_7 = st.columns(4)
-                for i, r in enumerate(v_sum.itertuples()):
-                    with cols_7[i % 4]:
-                        st.metric(label=str(r[1]), value=f"{int(r[2])} 개")
+            # 상세 그룹화 (업체/상품/옵션별 잔량 합산)
+            # 여기서는 상품명(index 1), 옵션(index 2) 등을 사용
+            df_sum = df_7.groupby([v_col_7, df_7.columns[1], df_7.columns[2]], as_index=False)['qty_val'].sum()
+            
+            # 잔량이 0보다 큰(미입고) 데이터만 추출
+            df_remain = df_sum[df_sum['qty_val'] > 0].copy()
+            df_remain.columns = ['업체명', '상품명', '옵션', '미입고잔량']
+            
+            if not df_remain.empty:
+                # 업체별 총량 대시보드
+                st.write("### 🏭 업체별 미입고 합계")
+                v_metrics = df_remain.groupby('업체명')['미입고잔량'].sum().reset_index()
+                m_cols = st.columns(4)
+                for idx, r in enumerate(v_metrics.itertuples()):
+                    with m_cols[idx % 4]:
+                        st.metric(r.업체명, f"{int(r.미입고잔량):,} 개")
                 
-                st.write("#### 📋 상세 미입고 리스트 (수량 > 0)")
-                # 상세 리스트 그룹화 출력...
-                st.table(v_sum) 
+                st.write("#### 📋 상세 미입고 리스트")
+                st.dataframe(df_remain.sort_values('미입고잔량', ascending=False), use_container_width=True, hide_index=True)
             else:
-                st.success("✅ 모든 리오더 입고가 완료되어 잔량이 없습니다!")
+                st.success("🎉 현재 모든 리오더가 입고 완료되어 잔량이 없습니다!")
