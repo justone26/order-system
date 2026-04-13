@@ -217,7 +217,7 @@ if st.session_state.get('analyzed'):
             except Exception as e: st.error(f"저장 실패: {e}")
 
 # ------------------------------------------------------------------
-# [5~6단계: 기록 및 리오더 현황 - KeyError 방어 버전]
+# [5~6단계: 기록 및 리오더 현황 - 시트 헤더 맞춤 버전]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -228,13 +228,13 @@ if st.session_state.get('analyzed'):
             sh = get_sheet()
             if sh:
                 ws = sh.worksheet("발주기록")
-                # 데이터를 가져온 후 컬럼명의 공백을 제거하여 매칭 확률을 높입니다.
                 df_temp = pd.DataFrame(ws.get_all_records())
+                # 헤더 공백 제거 및 세션 저장
                 df_temp.columns = [c.strip() for c in df_temp.columns]
                 st.session_state.master_log = df_temp
-                st.success("✅ 동기화 완료!")
+                st.success("✅ 구글 시트 데이터 로드 완료!")
         except Exception as e: 
-            st.error(f"로드 실패: {e}")
+            st.error(f"📡 시트 로드 실패: {e}")
 
     if st.button("🔄 기록 및 리오더 데이터 불러오기", use_container_width=True, type="primary"):
         load_master_data()
@@ -242,38 +242,40 @@ if st.session_state.get('analyzed'):
     if 'master_log' in st.session_state and not st.session_state.master_log.empty:
         m_df = st.session_state.master_log.copy()
         
-        # 날짜 처리
-        if '일시' in m_df.columns:
-            m_df['일시_dt'] = pd.to_datetime(m_df['일시'], errors='coerce').dt.date
+        # 날짜 컬럼 처리 (시트의 '날짜' 컬럼 기준)
+        date_col = '날짜' if '날짜' in m_df.columns else m_df.columns[0]
+        m_df['일시_dt'] = pd.to_datetime(m_df[date_col], errors='coerce').dt.date
 
-        # --- [5단계: 히스토리] ---
-        with st.expander("📜 5단계: 최근 히스토리", expanded=True):
-            h_search = st.text_input("🔍 검색어 입력 (상품명)", key="h_search_v10")
+        # --- [5단계: 히스토리 모드] ---
+        with st.expander("📜 5단계: 최근 히스토리 조회", expanded=True):
+            h_search = st.text_input("🔍 상품명 검색", key="final_search_input")
             df_h = m_df.copy()
             if h_search:
                 df_h = df_h[df_h['상품명'].astype(str).str.contains(h_search, case=False)]
             
-            # 일시_dt 컬럼이 있을 때만 드랍하고 표시
-            display_h = df_h.drop(columns=['일시_dt']) if '일시_dt' in df_h.columns else df_h
-            st.dataframe(display_h.sort_values(by=display_h.columns[0], ascending=False), use_container_width=True, hide_index=True)
+            # 최신순 정렬하여 표시
+            st.dataframe(df_h.sort_values(by=date_col, ascending=False).drop(columns=['일시_dt'], errors='ignore'), 
+                         use_container_width=True, hide_index=True)
 
         # --- [6단계: 실시간 리오더 잔량] ---
-        with st.expander("📊 6단계: 실시간 리오더 잔량", expanded=True):
-            # ⭐ KeyError 방지: '수량' 컬럼이 있는지 확인 후 집계
-            target_col = '수량'
-            if target_col in m_df.columns:
-                # '수량' 데이터를 숫자로 강제 변환 (문자열 섞임 방지)
-                m_df[target_col] = pd.to_numeric(m_df[target_col], errors='coerce').fillna(0)
+        with st.expander("📊 6단계: 현재 미입고 리오더 잔량", expanded=True):
+            # ⭐ 사장님 시트 헤더인 '추가발주' 컬럼을 사용합니다.
+            target_qty_col = '추가발주' 
+            
+            if target_qty_col in m_df.columns:
+                # 숫자 변환
+                m_df[target_qty_col] = pd.to_numeric(m_df[target_qty_col], errors='coerce').fillna(0)
                 
-                df_r = m_df.groupby(['상품명', '옵션'])[target_col].sum().reset_index()
+                # 집계 (상품명 + 옵션 기준)
+                df_r = m_df.groupby(['상품명', '옵션'])[target_qty_col].sum().reset_index()
                 df_r.columns = ['상품명', '옵션', '미입고잔량']
                 
-                # 잔량이 0보다 큰 것만 표시
+                # 잔량이 있는 것만 표시
                 df_r = df_r[df_r['미입고잔량'] > 0].sort_values('미입고잔량', ascending=False)
+                
                 st.dataframe(df_r, use_container_width=True, hide_index=True,
-                             column_config={"미입고잔량": st.column_config.NumberColumn("잔량", format="%d")})
+                             column_config={"미입고잔량": st.column_config.NumberColumn("잔량", format="%d 📦")})
             else:
-                st.warning(f"⚠️ 시트에 '{target_col}' 컬럼이 보이지 않습니다. 시트 헤더를 확인해주세요.")
-                st.write("현재 인식된 컬럼명:", list(m_df.columns))
+                st.warning(f"⚠️ 시트에서 '{target_qty_col}' 컬럼을 찾을 수 없습니다. 헤더 이름을 확인해주세요.")
     else:
-        st.info("💡 위 버튼을 눌러야 내역이 나타납니다.")
+        st.info("💡 위 버튼을 클릭하면 구글 시트의 최신 기록을 가져옵니다.")
