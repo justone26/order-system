@@ -58,40 +58,67 @@ if up_file:
     t3day = c2.selectbox("3일 발주합계", cols, index=find_idx(cols, ['3일']))
     t1week = c2.selectbox("7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
-    # --- [3단계: 분석 설정 - 사장님 틀 유지] ---
+# --- [3단계: 분석 설정 및 실행] ---
     st.subheader("⚙️ 3단계: 분석 설정")
     col_lt, col_ss = st.columns(2)
-    lead_time = col_lt.number_input("리드타임 (일)", value=10)
-    safety_stock = col_ss.number_input("안전재고 (일 수)", value=7)
+    lead_time = col_lt.number_input("리드타임 (일)", value=10, key="v3_lt_final")
+    safety_stock = col_ss.number_input("안전재고 (일 수)", value=7, key="v3_ss_final")
 
-    if st.button("🚀 분석 실행"):
+    if st.button("🚀 분석 실행", type="primary", use_container_width=True):
+        # 1. 원본 데이터 복사
         df = st.session_state.df_raw.copy()
         
-        # 리오더 수량 실시간 반영
+        # 2. 구글 시트에서 기존 리오더 수량 가져오기 (에러 방지 로직)
         sh = get_sheet()
         r_map = {}
         if sh:
-            ws = sh.worksheet("발주기록")
-            logs = ws.get_all_values()
-            if len(logs) > 1:
-                df_l = pd.DataFrame(logs[1:], columns=logs[0])
-                df_l['k'] = df_l.apply(lambda r: super_clean(r[1]) + super_clean(r[2]), axis=1)
-                r_map = df_l.groupby('k').apply(lambda x: x.iloc[:, 6].apply(to_i).sum()).to_dict()
+            try:
+                ws = sh.worksheet("발주기록")
+                logs = ws.get_all_values()
+                
+                if len(logs) > 1: # 데이터가 있을 때만
+                    df_l = pd.DataFrame(logs[1:], columns=[c.strip() for c in logs[0]])
+                    
+                    # iloc를 사용하여 열 순서로 안전하게 접근 (1:상품명, 2:옵션, 6:변동수량)
+                    if df_l.shape[1] >= 7:
+                        df_l['k'] = df_l.apply(lambda r: super_clean(r.iloc[1]) + super_clean(r.iloc[2]), axis=1)
+                        # G열(인덱스 6) 수량을 합산하여 리오더 맵 생성
+                        r_map = df_l.groupby('k').apply(lambda x: x.iloc[:, 6].apply(to_i).sum()).to_dict()
+                else:
+                    st.info("💡 발주기록이 비어있어 기존 리오더를 0으로 시작합니다.")
+            except Exception as e:
+                st.warning(f"⚠️ 시트 연동 중 알림: {e}")
 
+        # 3. 데이터 가공 및 수식 적용
+        # 상품명+옵션으로 고유 키 생성
         df['clean_k'] = df.apply(lambda r: super_clean(r[item]) + super_clean(r[option]), axis=1)
+        
+        # 기존 리오더 매칭
         df['기존리오더'] = df['clean_k'].map(r_map).fillna(0).astype(int)
         
-        daily_avg = pd.to_numeric(df[t1week], errors='coerce').fillna(0) / 7
-        df['권장발주수량'] = ((daily_avg * lead_time) + (daily_avg * safety_stock) - (pd.to_numeric(df[avail], errors='coerce').fillna(0) + df['기존리오더'])).clip(lower=0).astype(int)
+        # 일평균 판매량 계산 (7일 우선, 없으면 3일)
+        avail_val = pd.to_numeric(df[avail], errors='coerce').fillna(0)
+        t1w_val = pd.to_numeric(df[t1week], errors='coerce').fillna(0)
+        t3d_val = pd.to_numeric(df[t3day], errors='coerce').fillna(0)
         
+        # 판매량 기반 권장 발주량 계산
+        daily_avg = t1w_val / 7
+        df['권장발주수량'] = ((daily_avg * lead_time) + (daily_avg * safety_stock) - (avail_val + df['기존리오더'])).clip(lower=0).astype(int)
+        
+        # 편집을 위한 기본 열 생성
         df['추가발주'] = 0
         df['입고차감'] = 0
         df['메모'] = ""
         
+        # 정렬 로직: 권장발주가 있는(🚨긴급) 품목을 위로
+        df['상태'] = df['권장발주수량'].apply(lambda x: "🚨 긴급" if x > 0 else "✅ 정상")
+        df = df.sort_values(by=['상태', item], ascending=[False, True])
+
+        # 4. 결과 저장 및 화면 갱신
         st.session_state.df_raw = df
         st.session_state.analyzed = True
+        st.success("📊 분석이 완료되었습니다! 아래에서 확인하세요.")
         st.rerun()
-
     # --- [4~7단계 시작] ---
     if st.session_state.get('analyzed'):
         # 4️⃣5️⃣단계: 편집 및 저장
