@@ -292,53 +292,67 @@ if st.session_state.get('analyzed'):
 
         
                 
-  # ------------------------------------------------------------------
-# [5단계 & 6단계: 데이터 통합 로드 및 무한 로딩 방어]
+# ------------------------------------------------------------------
+# [5단계 & 6단계: 데이터 통합 로드 및 무한 로딩 방어 - 최적화 버전]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.header("🕒 5~6단계: 기록 및 리오더 현황")
 
-    # 1. 통합 데이터 로드 함수 (캐시 적용)
-    @st.cache_data(ttl=300) # 5분간 시트 재접속 방지
-    def fetch_all_logs():
-        try:
-            sh = get_sheet()
-            ws = sh.worksheet("발주기록")
-            return pd.DataFrame(ws.get_all_records())
-        except:
-            return pd.DataFrame()
+    # 1. 시트 접속 함수 (st.cache_data 대신 session_state만 활용하여 제어)
+    def fetch_logs_to_session():
+        with st.spinner("📡 구글 시트에서 데이터를 안전하게 가져오고 있습니다..."):
+            try:
+                sh = get_sheet()
+                if sh:
+                    ws = sh.worksheet("발주기록")
+                    # 가져온 데이터를 세션에 직접 저장
+                    st.session_state.master_log = pd.DataFrame(ws.get_all_records())
+                    st.toast("✅ 최신 기록 동기화 완료!")
+            except Exception as e:
+                st.error(f"데이터 로드 실패: {e}")
 
-    # 2. 통합 컨트롤러 (버튼 클릭 시에만 로드)
+    # 2. 버튼 컨트롤 (버튼을 누를 때만 함수 실행)
     if st.button("🔄 시트 데이터 불러오기 / 새로고침", use_container_width=True, type="primary"):
-        st.session_state.master_log = fetch_all_logs()
-        st.toast("데이터를 성공적으로 가져왔습니다!")
+        fetch_logs_to_session()
 
-    # 데이터가 로드된 경우에만 5, 6단계 표시
+    # 3. 데이터가 있을 때만 화면 구성
     if 'master_log' in st.session_state and not st.session_state.master_log.empty:
+        # 필터링을 위한 복사본 생성
         master_df = st.session_state.master_log.copy()
-        master_df['일시_dt'] = pd.to_datetime(master_df['일시']).dt.date
+        
+        # 날짜 변환 (에러 방지용)
+        try:
+            master_df['일시_dt'] = pd.to_datetime(master_df['일시']).dt.date
+        except:
+            master_df['일시_dt'] = datetime.now(KST).date()
 
         # --- [5단계: 히스토리 모드] ---
         with st.expander("📜 5단계: 최근 발주/입고 히스토리", expanded=True):
             c1, c2 = st.columns([2, 2])
             with c1:
-                h_dr = st.date_input("조회 기간", value=((datetime.now(KST)-timedelta(days=7)).date(), datetime.now(KST).date()), key="h_dr_v8")
+                # NameError 방지를 위해 사전에 계산된 값 사용
+                h_dr = st.date_input("조회 기간", 
+                                    value=((datetime.now(KST)-timedelta(days=7)).date(), datetime.now(KST).date()), 
+                                    key="h_dr_final")
             with c2:
-                h_search = st.text_input("상품명 검색", key="h_search_v8")
+                h_search = st.text_input("상품명 검색", key="h_search_final")
             
-            # 필터링
+            # 메모리 내 필터링 (시트 공격 안 함)
             df_h = master_df.copy()
             if isinstance(h_dr, tuple) and len(h_dr) == 2:
                 df_h = df_h[(df_h['일시_dt'] >= h_dr[0]) & (df_h['일시_dt'] <= h_dr[1])]
-            if h_search:
-                df_h = df_h[df_h['상품명'].str.contains(h_search, case=False) | df_h['옵션'].str.contains(h_search, case=False)]
             
-            st.dataframe(df_h.sort_values('일시', ascending=False).drop(columns=['일시_dt']), use_container_width=True, hide_index=True)
+            if h_search:
+                df_h = df_h[df_h['상품명'].astype(str).str.contains(h_search, case=False) | 
+                            df_h['옵션'].astype(str).str.contains(h_search, case=False)]
+            
+            st.dataframe(df_h.sort_values('일시', ascending=False).drop(columns=['일시_dt']), 
+                         use_container_width=True, hide_index=True)
 
         # --- [6단계: 실시간 리오더 현황] ---
         with st.expander("📊 6단계: 현재 미입고 리오더 잔량", expanded=True):
-            # 전체 기간 혹은 특정 기간 동안의 [수량] 합계가 0보다 큰 것 = 리오더 잔량
+            # 메모리 내 집계
             df_r = master_df.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
             df_r.columns = ['상품명', '옵션', '미입고잔량']
             df_r = df_r[df_r['미입고잔량'] > 0].sort_values('미입고잔량', ascending=False)
@@ -346,12 +360,11 @@ if st.session_state.get('analyzed'):
             st.dataframe(df_r, use_container_width=True, hide_index=True, 
                          column_config={"미입고잔량": st.column_config.NumberColumn("잔량", format="%d 📦")})
     else:
-        st.info("💡 위 [시트 데이터 불러오기] 버튼을 누르면 기록과 리오더 현황이 나타납니다.")
+        st.info("💡 위 [시트 데이터 불러오기] 버튼을 눌러야 기록 조회가 시작됩니다 (구글 시트 과부하 방지)")
 
-    # 3. 무한 로딩 탈출 비상 버튼
-    if st.button("♻️ 화면 강제 초기화 (로딩 멈추기)"):
+    # 4. 무한 로딩 탈출용 완전 초기화 버튼
+    if st.button("♻️ 화면 강제 초기화 (로딩이 멈추지 않을 때만 클릭)"):
+        # 모든 세션과 캐시를 날림
+        st.session_state.clear()
         st.cache_data.clear()
-        for key in st.session_state.keys():
-            if key in ['master_log', 'cached_log']:
-                del st.session_state[key]
         st.rerun()
