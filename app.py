@@ -153,7 +153,7 @@ if up_file:
                 ws_main.append_rows(rows)
                 st.success("✅ 구글 시트 저장 완료!")
                 
-# --- 6단계 & 7단계 통합 영역 (회차별 필터 기능 추가) ---
+# --- 6단계 & 7단계 통합 영역 (에러 방지 및 회차 필터 최적화) ---
         st.divider()
         sh = get_sheet()
         if sh:
@@ -161,13 +161,13 @@ if up_file:
             raw_logs = ws_log.get_all_values()
             
             if len(raw_logs) > 1:
-                # 데이터프레임 생성 및 날짜 컬럼 형식 정리
+                # 데이터프레임 생성 및 날짜 형식 정리
                 df_logs = pd.DataFrame(raw_logs[1:], columns=[c.strip() for c in raw_logs[0]])
                 d_col = next((c for c in df_logs.columns if '날짜' in c), df_logs.columns[0])
                 
-                # 날짜와 시간 분리 (저장된 형식이 '2023-10-27 09:30' 일 경우)
+                # 날짜/시간 분리 및 정렬을 위한 전처리
                 df_logs['pure_date'] = df_logs[d_col].str.split(' ').str[0]
-                df_logs['pure_time'] = df_logs[d_col].str.split(' ').str[1].str[:5] # HH:MM 만 추출
+                df_logs['pure_time'] = df_logs[d_col].str.split(' ').str[1].str[:5]
 
                 st.header("6️⃣ 저장 내역 히스토리 검색")
                 
@@ -175,63 +175,65 @@ if up_file:
                 s_col1, s_col2, s_col3 = st.columns([1, 1.5, 1.5])
                 
                 with s_col1:
-                    # 1차: 날짜 선택 (기본값 오늘)
-                    q_date = st.date_input("📅 1차: 날짜 선택", value=datetime.now(KST), key="search_date")
-                    target_date_str = q_date.strftime('%Y-%m-%d')
+                    # 에러 방지: 기본값을 오늘로 설정
+                    q_date = st.date_input("📅 1차: 날짜 선택", value=datetime.now(KST).date(), key="search_date")
+                    # 날짜가 정상적으로 선택되었을 때만 문자열 변환
+                    target_date_str = q_date.strftime('%Y-%m-%d') if q_date else ""
                 
-                # 날짜로 먼저 필터링 (시간 필터를 만들기 위함)
-                f_logs = df_logs[df_logs['pure_date'] == target_date_str]
+                # 날짜 필터링 우선 적용
+                f_logs = df_logs[df_logs['pure_date'] == target_date_str] if target_date_str else df_logs
 
                 with s_col3:
-                    # 3차: 시간대별 회차 선택 (해당 날짜에 저장된 시간들만 추출)
-                    if not f_logs.empty:
-                        time_list = sorted(f_logs['pure_time'].unique())
+                    # 3차: 시간대별 회차 선택 (최신순 정렬)
+                    if not f_logs.empty and target_date_str:
+                        time_list = sorted(f_logs['pure_time'].unique(), reverse=True)
                         q_time = st.selectbox(f"⏰ 3차: 저장 회차 선택 ({len(time_list)}회)", ["전체 보기"] + time_list, key="time_filter")
                     else:
-                        st.selectbox("⏰ 3차: 저장 회차 선택", ["내역 없음"], disabled=True)
-                        q_time = "전체 보기"
+                        q_time = st.selectbox("⏰ 3차: 저장 회차 선택", ["내역 없음"], disabled=True)
 
                 with s_col2:
-                    # 2차: 상품명 검색 (타이핑 최소화용)
                     q_item_log = st.text_input("🔎 2차: 상품명 검색", placeholder="검색어 입력...", key="search_item_input")
 
-                # 최종 필터링 적용
-                if q_time != "전체 보기":
-                    f_logs = f_logs[f_logs['pure_time'] == q_time]
+                # 최종 필터링 결과 생성
+                display_df = f_logs.copy()
+                if q_time != "전체 보기" and q_time != "내역 없음":
+                    display_df = display_df[display_df['pure_time'] == q_time]
                 
                 if q_item_log:
-                    i_col = next((c for c in f_logs.columns if '상품명' in c), None)
+                    i_col = next((c for c in display_df.columns if '상품명' in c), None)
                     if i_col:
-                        f_logs = f_logs[f_logs[i_col].str.contains(q_item_log, case=False)]
+                        display_df = display_df[display_df[i_col].str.contains(q_item_log, case=False)]
 
-                # 히스토리 표 출력 (최신순)
-                st.dataframe(f_logs.iloc[::-1], use_container_width=True, hide_index=True)
+                # 히스토리 출력 (최신순 정렬)
+                st.dataframe(display_df.iloc[::-1], use_container_width=True, hide_index=True)
 
-                # 다운로드 버튼
-                if not f_logs.empty:
-                    csv_data = f_logs.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button(f"📥 {q_time} 내역 다운로드 (CSV)", data=csv_data, file_name=f"발주내역_{target_date_str}_{q_time}.csv", use_container_width=True)
+                # 다운로드 버튼 (동적으로 이름 변경)
+                if not display_df.empty:
+                    csv_data = display_df.to_csv(index=False).encode('utf-8-sig')
+                    file_name = f"발주기록_{target_date_str}_{q_time.replace(':','시')}분.csv"
+                    st.download_button("📥 현재 화면 내역 다운로드 (CSV)", data=csv_data, file_name=file_name, use_container_width=True)
 
-                # --- 7단계: 현황판 (위에서 필터링된 내역 기준) ---
+                # --- 7단계: 현황판 ---
                 st.divider()
-                st.header(f"7️⃣ {q_time} 발주 요약 현황판")
+                st.header(f"7️⃣ {q_time if q_time != '전체 보기' else '오늘'} 발주 요약 현황판")
                 
-                if not f_logs.empty:
-                    v_col = next((c for c in f_logs.columns if '공급처' in c), None)
-                    f_logs['수량_num'] = f_logs.iloc[:, 6].apply(to_i)
+                if not display_df.empty:
+                    v_col = next((c for c in display_df.columns if '공급처' in c), None)
+                    # 수량 계산 (G열 기준)
+                    display_df['수량_num'] = display_df.iloc[:, 6].apply(to_i)
                     
-                    t_qty = f_logs['수량_num'].sum()
-                    t_vnd = f_logs[v_col].nunique() if v_col else 0
+                    t_qty = display_df['수량_num'].sum()
+                    t_vnd = display_df[v_col].nunique() if v_col else 0
                     
                     m1, m2 = st.columns(2)
-                    m1.metric("선택 회차 총 수량", f"{t_qty} 개")
-                    m2.metric("선택 회차 공급처 수", f"{t_vnd} 곳")
+                    m1.metric("📦 선택 범위 총 수량", f"{t_qty} 개")
+                    m2.metric("🏭 선택 범위 공급처 수", f"{t_vnd} 곳")
                     
                     if v_col:
-                        v_sum = f_logs.groupby(v_col)['수량_num'].sum().reset_index()
-                        v_sum.columns = ['🏭 공급처', '📦 합계 수량']
+                        v_sum = display_df.groupby(v_col)['수량_num'].sum().reset_index()
+                        v_sum.columns = ['공급처', '총 수량 합계']
                         st.table(v_sum)
                 else:
-                    st.info("선택한 조건에 맞는 내역이 없습니다.")
+                    st.info("검색 조건에 맞는 발주 데이터가 없습니다.")
             else:
-                st.info("시트에 저장된 내역이 없습니다.")
+                st.info("구글 시트에 저장된 내역이 없습니다.")
