@@ -292,113 +292,66 @@ if st.session_state.get('analyzed'):
 
         
                 
-    # --- 6️⃣단계: 전체 히스토리 관리 ---
-        st.divider()
-        st.header("📜 6단계: 전체 히스토리 관리")
-        
-        h1, h2, h3, h4 = st.columns([1.2, 0.8, 1.5, 1.5])
-        with h1:
-            today = datetime.now(KST).date()
-            d_range = st.date_input("🗓️ 1. 조회 범위", value=(today, today), key="v6_dr")
-        with h2:
-            st.write(""); st.write("")
-            search_trigger = st.button("🔍 2. 내역 조회", use_container_width=True, type="primary")
-
-        if 'v6_data' not in st.session_state: st.session_state.v6_data = None
-        if 'v6_sessions' not in st.session_state: st.session_state.v6_sessions = []
-
-        if search_trigger:
-            sh = get_sheet()
-            if sh:
-                all_h = sh.worksheet("발주기록").get_all_values()
-                if len(all_h) > 1:
-                    df_all = pd.DataFrame(all_h[1:], columns=["발주시간", "상품명", "옵션", "공급처상품명", "가용재고", "리오더잔량", "추가발주", "발주권장", "메모", "업체명"])
-                    df_all["날짜_만"] = df_all["발주시간"].str.slice(0, 10)
-                    s_d = d_range[0].strftime('%Y-%m-%d'); e_d = d_range[1].strftime('%Y-%m-%d') if len(d_range)>1 else s_d
-                    df_filt = df_all[(df_all["날짜_만"] >= s_d) & (df_all["날짜_만"] <= e_d)].copy()
-                    st.session_state.v6_data = df_filt
-                    st.session_state.v6_sessions = sorted(df_filt["발주시간"].unique(), reverse=True)
-                else: st.info("저장된 내역이 없습니다.")
-
-        with h3: h_q = st.text_input("🔍 3. 상품명/옵션 검색", key="v6_q")
-        with h4:
-            if st.session_state.v6_sessions:
-                s_opts = ["📊 선택 범위 전체 합산"] + [f"{len(st.session_state.v6_sessions)-i}회차 ({t[5:16]})" for i, t in enumerate(st.session_state.v6_sessions)]
-                sel_label = st.selectbox("📦 4. 회차 선택", s_opts)
-            else: st.selectbox("📦 4. 회차 선택", ["조회 결과 없음"], disabled=True); sel_label = None
-
-        if st.session_state.v6_data is not None and sel_label:
-            df_disp = st.session_state.v6_data.copy()
-            for c in ["가용재고", "리오더잔량", "추가발주", "발주권장"]: df_disp[c] = pd.to_numeric(df_disp[c], errors='coerce').fillna(0)
-            
-            if sel_label == "📊 선택 범위 전체 합산":
-                df_disp = df_disp.groupby(["업체명", "상품명", "옵션", "공급처상품명"], as_index=False).agg({"발주시간":"max", "가용재고":"last", "리오더잔량":"last", "추가발주":"sum", "발주권장":"last", "메모": lambda x: " / ".join(set(filter(None, x.astype(str))))})
-            else:
-                t_time = st.session_state.v6_sessions[s_opts.index(sel_label)-1]
-                df_disp = df_disp[df_disp["발주시간"] == t_time].copy()
-
-            if h_q: df_disp = df_disp[df_disp["상품명"].str.contains(h_q, case=False) | df_disp["옵션"].str.contains(h_q, case=False)]
-            st.dataframe(df_disp[["발주시간", "업체명", "상품명", "옵션", "공급처상품명", "가용재고", "리오더잔량", "추가발주", "발주권장", "메모"]], use_container_width=True, hide_index=True)
-            
-
-
+  # ------------------------------------------------------------------
+# [5단계 & 6단계: 데이터 통합 로드 및 무한 로딩 방어]
 # ------------------------------------------------------------------
-# [6단계: 실시간 리오더 현황 - 구글 시트 연동]
-# ------------------------------------------------------------------
-# 에러 방지를 위한 변수 사전 선언 (NameError 해결)
-KST = timezone(timedelta(hours=9))
-now_now = datetime.now(KST)
-today_val = now_now.date()
-default_start = (now_now - timedelta(days=30)).date()
+if st.session_state.get('analyzed'):
+    st.divider()
+    st.header("🕒 5~6단계: 기록 및 리오더 현황")
 
-st.divider()
-st.header("📊 6단계: 실시간 리오더 현황")
-
-with st.expander("📝 시트 데이터 기반 현재 리오더 잔량 확인", expanded=False):
-    try:
-        f1, f2 = st.columns([2, 1])
-        with f1:
-            # NameError 방지를 위해 사전에 정의한 변수 사용
-            dr = st.date_input(
-                "🗓️ 조회 기간", 
-                value=(default_start, today_val), 
-                key="v6_dr"
-            )
-        
-        if len(dr) == 2:
-            start_d, end_d = dr
+    # 1. 통합 데이터 로드 함수 (캐시 적용)
+    @st.cache_data(ttl=300) # 5분간 시트 재접속 방지
+    def fetch_all_logs():
+        try:
             sh = get_sheet()
-            ws_log = sh.worksheet("발주기록")
-            log_data = ws_log.get_all_records()
+            ws = sh.worksheet("발주기록")
+            return pd.DataFrame(ws.get_all_records())
+        except:
+            return pd.DataFrame()
 
-            if log_data:
-                df_l = pd.DataFrame(log_data)
-                df_l['일시'] = pd.to_datetime(df_l['일시']).dt.date
-                
-                # 기간 필터링
-                mask = (df_l['일시'] >= start_d) & (df_l['일시'] <= end_d)
-                df_filtered = df_l.loc[mask]
+    # 2. 통합 컨트롤러 (버튼 클릭 시에만 로드)
+    if st.button("🔄 시트 데이터 불러오기 / 새로고침", use_container_width=True, type="primary"):
+        st.session_state.master_log = fetch_all_logs()
+        st.toast("데이터를 성공적으로 가져왔습니다!")
 
-                if not df_filtered.empty:
-                    # 상품명+옵션별로 수량 합계 계산 (실시간 잔량)
-                    df_res = df_filtered.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
-                    df_res.columns = ['상품명', '옵션', '현재리오더잔량']
-                    
-                    # 잔량이 0보다 큰 것만 표시
-                    df_res = df_res[df_res['현재리오더잔량'] > 0].sort_values(by='현재리오더잔량', ascending=False)
-                    
-                    st.dataframe(
-                        df_res,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "현재리오더잔량": st.column_config.NumberColumn("미입고 잔량", format="%d 📦")
-                        }
-                    )
-                else:
-                    st.info("선택한 기간 내에 발주 기록이 없습니다.")
-            else:
-                st.info("데이터가 없습니다.")
-                
-    except Exception as e:
-        st.error(f"❌ 6단계 오류 발생: {e}")
+    # 데이터가 로드된 경우에만 5, 6단계 표시
+    if 'master_log' in st.session_state and not st.session_state.master_log.empty:
+        master_df = st.session_state.master_log.copy()
+        master_df['일시_dt'] = pd.to_datetime(master_df['일시']).dt.date
+
+        # --- [5단계: 히스토리 모드] ---
+        with st.expander("📜 5단계: 최근 발주/입고 히스토리", expanded=True):
+            c1, c2 = st.columns([2, 2])
+            with c1:
+                h_dr = st.date_input("조회 기간", value=((datetime.now(KST)-timedelta(days=7)).date(), datetime.now(KST).date()), key="h_dr_v8")
+            with c2:
+                h_search = st.text_input("상품명 검색", key="h_search_v8")
+            
+            # 필터링
+            df_h = master_df.copy()
+            if isinstance(h_dr, tuple) and len(h_dr) == 2:
+                df_h = df_h[(df_h['일시_dt'] >= h_dr[0]) & (df_h['일시_dt'] <= h_dr[1])]
+            if h_search:
+                df_h = df_h[df_h['상품명'].str.contains(h_search, case=False) | df_h['옵션'].str.contains(h_search, case=False)]
+            
+            st.dataframe(df_h.sort_values('일시', ascending=False).drop(columns=['일시_dt']), use_container_width=True, hide_index=True)
+
+        # --- [6단계: 실시간 리오더 현황] ---
+        with st.expander("📊 6단계: 현재 미입고 리오더 잔량", expanded=True):
+            # 전체 기간 혹은 특정 기간 동안의 [수량] 합계가 0보다 큰 것 = 리오더 잔량
+            df_r = master_df.groupby(['상품명', '옵션'])['수량'].sum().reset_index()
+            df_r.columns = ['상품명', '옵션', '미입고잔량']
+            df_r = df_r[df_r['미입고잔량'] > 0].sort_values('미입고잔량', ascending=False)
+            
+            st.dataframe(df_r, use_container_width=True, hide_index=True, 
+                         column_config={"미입고잔량": st.column_config.NumberColumn("잔량", format="%d 📦")})
+    else:
+        st.info("💡 위 [시트 데이터 불러오기] 버튼을 누르면 기록과 리오더 현황이 나타납니다.")
+
+    # 3. 무한 로딩 탈출 비상 버튼
+    if st.button("♻️ 화면 강제 초기화 (로딩 멈추기)"):
+        st.cache_data.clear()
+        for key in st.session_state.keys():
+            if key in ['master_log', 'cached_log']:
+                del st.session_state[key]
+        st.rerun()
