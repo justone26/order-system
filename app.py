@@ -164,38 +164,46 @@ if st.session_state.get('analyzed'):
     p = st.session_state.p
     vnd_c, itm_c, opt_c, vit_c, avl_c, t3_c = p['vn'], p['it'], p['op'], p['vi'], p['av'], p['t3']
 
-    # 1. 필터 적용
-    df_disp = st.session_state.df_final.copy()
-    
+    # 1. 필터 UI
     f1, f2 = st.columns([1, 2])
-    with f1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요", "✅ 정상", "🚫 품절"], index=1)
+    with f1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
     with f2: s_query = st.text_input("🔍 검색 (상품명/옵션)")
 
-    if f_mode == "🚨 발주필요": df_disp = df_disp[df_disp['상태'] == "🚨 발주필요"]
-    elif f_mode == "✅ 정상": df_disp = df_disp[df_disp['상태'] == "✅ 정상"]
-    elif f_mode == "🚫 품절": df_disp = df_disp[df_disp['상태'] == "🚫 품절"]
+    df_disp = st.session_state.df_final.copy()
+    
+    # 2. [핵심 로직] 세트 필터링 적용
+    if f_mode == "🚨 발주필요(세트)":
+        # (1) 먼저 발주가 필요한(권장수량 > 0) 상품명 리스트를 뽑습니다.
+        need_order_items = df_disp[df_disp['발주권장'] > 0][itm_c].unique()
+        # (2) 그 상품명에 해당하는 모든 옵션을 다 보여줍니다.
+        df_disp = df_disp[df_disp[itm_c].isin(need_order_items)]
+        # (3) 품절 상품은 제외하고 싶으시면 아래 주석을 해제하세요.
+        # df_disp = df_disp[~df_disp['상태'].str.contains("품절")]
 
+    elif f_mode == "✅ 정상":
+        df_disp = df_disp[df_disp['상태'] == "✅ 정상"]
+    elif f_mode == "🚫 품절":
+        df_disp = df_disp[df_disp['상태'] == "🚫 품절"]
+
+    # 검색어 필터
     if s_query:
         df_disp = df_disp[df_disp[itm_c].astype(str).str.contains(s_query, case=False) | 
                           df_disp[opt_c].astype(str).str.contains(s_query, case=False)]
 
-    # 2. [핵심] 컬럼 순서 설정 및 존재 확인
-    # 상태 → 공급처 → 상품명 → 옵션 → 공급처상품명 → 가용재고 → 기존리오더 → 입고차감 → 추가발주 → 3일판매 → 일판매량 → 권장발주수량 → 비고(메모)
+    # 3. 컬럼 순서 및 존재 확인 (이전과 동일)
     disp_cols = [
         '상태', vnd_c, itm_c, opt_c, vit_c, avl_c, 
         '기존리오더', '입고차감', '추가발주', t3_c, 
         '일판매량', '권장발주수량', '비고(메모)'
     ]
-
-    # 🚨 KeyError 방지: disp_cols에 선언된 이름이 df_disp에 없으면 강제로 빈 컬럼 생성
     for col_name in disp_cols:
         if col_name not in df_disp.columns:
             df_disp[col_name] = "" if "메모" in col_name else 0
 
-    # 3. 통합 에디터 실행
-    with st.form("v4_final_form"):
+    # 4. 에디터 실행
+    with st.form("v4_set_view_form"):
         edited_df = st.data_editor(
-            df_disp[disp_cols], # 이제 모든 컬럼이 존재하므로 KeyError가 나지 않습니다.
+            df_disp[disp_cols],
             use_container_width=True,
             hide_index=True,
             column_config={
@@ -209,15 +217,16 @@ if st.session_state.get('analyzed'):
                 "입고차감": st.column_config.NumberColumn("📥 입고(-)", min_value=0, format="%d"),
                 "추가발주": st.column_config.NumberColumn("➕ 발주(+)", min_value=0, format="%d"),
                 t3_c: st.column_config.NumberColumn("3일판매", disabled=True, format="%d"),
-                "일판매량": st.column_config.NumberColumn("평균판매", disabled=True, format="%.1f"),
+                "일판매량": st.column_config.NumberColumn("평균판매", disabled=True, format="%d"), # 정수 표시
                 "권장발주수량": st.column_config.NumberColumn("💡 권장", disabled=True, format="%d"),
                 "비고(메모)": st.column_config.TextColumn("비고(메모)", width="medium")
             },
-            key="editor_final_stable"
+            key="editor_set_view"
         )
         
         btn_save = st.form_submit_button("💾 데이터 최종 저장 및 시트 전송", use_container_width=True, type="primary")
 
+    # (저장 로직은 이전과 동일하므로 생략)
     if btn_save:
         # 변경된 데이터만 필터링
         change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
