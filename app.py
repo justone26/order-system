@@ -376,7 +376,7 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (조회 버튼 제거 & 실시간 필터링)
+# 5️⃣단계: 전체 히스토리 기록 (에러 방지 안전장치 & 실시간 필터링)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
     st.divider()
@@ -406,14 +406,25 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
         m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce')
         m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
         
-        # 🛠️ UI 레이아웃: 조회 버튼을 삭제하고 3컬럼으로 넓게 배치
+        # 🚨 [에러 수정] 날짜가 없는 행은 제외하고 최소/최대 날짜를 계산합니다.
+        valid_dates = m_df_5['날짜_only'].dropna()
+        
+        if not valid_dates.empty:
+            min_date = valid_dates.min()
+            max_date = valid_dates.max()
+        else:
+            # 날짜 데이터가 아예 없는 경우 오늘 날짜를 기본값으로 사용
+            min_date = datetime.now(KST).date()
+            max_date = datetime.now(KST).date()
+        
+        # UI 레이아웃
         c1, c2, c3 = st.columns([1.5, 1.5, 1.2]) 
         
         with c1: 
-            # 달력 날짜만 바꿔도 즉시 반영됩니다.
+            # 🚨 안전하게 계산된 날짜 범위를 넣어줍니다.
             sel_dates_5 = st.date_input(
                 "📅 조회 날짜 범위", 
-                [m_df_5['날짜_only'].min(), m_df_5['날짜_only'].max()], 
+                [min_date, max_date], 
                 key="h_date_v15"
             )
         with c2: 
@@ -422,7 +433,7 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
             t_opts = ["전체 회차"] + sorted(m_df_5['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
             h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_v15")
 
-        # 필터링 로직 (버튼 클릭 여부 상관없이 항상 실행)
+        # 필터링 로직
         df_dis = m_df_5.copy()
         
         # 1. 기간 필터
@@ -431,14 +442,13 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
         
         # 2. 상품명 검색
         if h_name_5:
-            # 특정 컬럼이 아니라 전체 행에서 검색 (사장님 기존 로직 유지)
             df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
             
         # 3. 회차 선택
         if h_time_5 != "전체 회차":
             df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
-        # ✨ 정렬: 최신 발주시간이 무조건 위로 오도록 정렬
+        # ✨ 정렬: 최신 순서대로
         df_dis = df_dis.sort_values(by='날짜_dt', ascending=False)
 
         st.dataframe(
@@ -448,7 +458,6 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
         )
     else:
         st.info("💡 히스토리 내역이 없습니다. 4단계에서 데이터를 먼저 저장해주세요.")
-
 
 # ------------------------------------------------------------------
 # 6️⃣단계: 실시간 리오더 현황판 (업체별 요약 + 기간 자동조회)
