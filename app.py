@@ -334,8 +334,6 @@ if st.session_state.get('analyzed'):
                             r['기존리오더'],     # G: 기존리오더
                             i_val,              # H: 입고차감
                             q_val,              # I: 추가발주
-                            r[p['t3']],         # J: 3일 발주합계
-                            r['일판매량'],       # K: 일판매량
                             r['권장발주수량'],   # L: 권장발주수량
                             final_memo          # M: 비고(처리내역)
                         ])
