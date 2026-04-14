@@ -328,16 +328,15 @@ if st.session_state.get('analyzed'):
                 
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (명칭 통일: 비고(처리내역))
+# 5️⃣단계: 전체 히스토리 기록 (명칭 통일 버전)
 # ------------------------------------------------------------------
 st.divider()
 st.header("📜 5단계: 전체 히스토리 기록")
 
-# 버튼 클릭 시 데이터 로드
-if st.button("🔄 히스토리 시트 불러오기", use_container_width=True, key="h_refresh_final_v13"):
+# 1. 데이터 로드 버튼
+if st.button("🔄 히스토리 시트 불러오기", use_container_width=True, key="h_refresh_final"):
     try:
         sh = get_sheet()
-        # ✅ 한글 "히스토리" 시트를 호출합니다.
         ws_hist = sh.worksheet("히스토리")
         raw_data = ws_hist.get_all_values()
         
@@ -345,8 +344,8 @@ if st.button("🔄 히스토리 시트 불러오기", use_container_width=True, 
             h_df = pd.DataFrame(raw_data[1:], columns=[c.strip() for c in raw_data[0]])
             h_df = h_df.loc[:, ~h_df.columns.duplicated()]
             
-            # ✅ [명칭 통일] 시트의 '메모' 또는 '비고' 컬럼을 '비고(처리내역)'으로 통일
-            h_df.rename(columns={'메모': '비고(처리내역)', '비고': '비고(처리내역)'}, errors='ignore', inplace=True)
+            # ✅ [명칭 통일] 시트의 컬럼이 무엇이든 화면에는 '비고(처리내역)'으로 표시
+            h_df.rename(columns={'메모': '비고(처리내역)', '비고': '비고(처리내역)', '비고(메모)': '비고(처리내역)'}, errors='ignore', inplace=True)
             
             st.session_state.db_history = h_df
             st.success("✅ 히스토리 데이터를 가져왔습니다.")
@@ -356,33 +355,31 @@ if st.button("🔄 히스토리 시트 불러오기", use_container_width=True, 
     except Exception as e:
         st.error(f"히스토리 로드 실패: {e}")
 
-# 데이터가 세션에 있을 경우 필터 UI 노출
+# 2. 필터 및 출력 UI
 if 'db_history' in st.session_state and not st.session_state.db_history.empty:
     m_df_5 = st.session_state.db_history.copy()
     
-    # 날짜 컬럼 자동 찾기 및 변환
+    # 날짜 처리
     date_col_5 = next((c for c in m_df_5.columns if '날짜' in c), m_df_5.columns[0])
     m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[date_col_5], errors='coerce')
     m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
     valid_df_5 = m_df_5.dropna(subset=['날짜_dt']).copy()
     
     if not valid_df_5.empty:
-        # 상단 필터 레이아웃
         c1, c2, c3 = st.columns(3)
         with c1: 
-            sel_dates_5 = st.date_input("📅 조회 날짜 범위", [valid_df_5['날짜_only'].min(), valid_df_5['날짜_only'].max()], key="h_date_v13")
+            sel_dates_5 = st.date_input("📅 조회 날짜 범위", [valid_df_5['날짜_only'].min(), valid_df_5['날짜_only'].max()], key="h_date_input")
         with c2: 
-            h_name_5 = st.text_input("🔍 상품명 검색", key="h_name_v13")
+            h_name_5 = st.text_input("🔍 상품명 검색", key="h_name_input")
         with c3: 
             t_options_5 = ["전체 회차"] + sorted(valid_df_5['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
-            h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_options_5, key="h_time_v13")
+            h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_options_5, key="h_time_select")
 
-        # 필터 적용
+        # 필터 적용 로직
         df_display_5 = valid_df_5.copy()
         if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
             df_display_5 = df_display_5[(df_display_5['날짜_only'] >= sel_dates_5[0]) & (df_display_5['날짜_only'] <= sel_dates_5[1])]
         
-        # 상품명 컬럼 존재 확인 후 필터링
         name_col = next((c for c in df_display_5.columns if '상품명' in c), None)
         if h_name_5 and name_col:
             df_display_5 = df_display_5[df_display_5[name_col].astype(str).str.contains(h_name_5, case=False)]
@@ -390,7 +387,7 @@ if 'db_history' in st.session_state and not st.session_state.db_history.empty:
         if h_time_5 != "전체 회차":
             df_display_5 = df_display_5[df_display_5['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
-        # 데이터프레임 출력 (최신순 정렬 및 불필요 컬럼 제거)
+        # 최종 출력
         st.dataframe(
             df_display_5.sort_values('날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only']), 
             use_container_width=True, 
@@ -398,13 +395,14 @@ if 'db_history' in st.session_state and not st.session_state.db_history.empty:
         )
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (명칭 통일: 비고(처리내역))
+# 6️⃣단계: 실시간 리오더 현황판 (명칭 통일 버전)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.header("📊 6단계: 실시간 리오더 현황판")
 
-    if st.button("🔄 실시간 장부 데이터 동기화", use_container_width=True, type="secondary", key="sync_v13"):
+    # 1. 동기화 버튼
+    if st.button("🔄 실시간 장부 데이터 동기화", use_container_width=True, type="secondary", key="sync_final"):
         with st.spinner("📡 '발주기록' 시트 분석 중..."):
             try:
                 sh = get_sheet()
@@ -418,16 +416,15 @@ if st.session_state.get('analyzed'):
             except Exception as e:
                 st.error(f"데이터 로드 실패: {e}")
 
+    # 2. 데이터 집계 및 출력
     if 'master_log' in st.session_state and not st.session_state.master_log.empty:
         m_df = st.session_state.master_log.copy()
         
-        # ✅ 시트 컬럼 탐색 및 명칭 통일 준비
+        # 컬럼 자동 매칭
         qty_col = next((c for c in ['추가발주', '발주수량'] if c in m_df.columns), '추가발주')
-        in_col = next((c for c in ['입고수량', '입고차감', '입고'] if c in m_df.columns), '입고수량')
+        in_col = next((c for c in ['입고수량', '입고차감'] if c in m_df.columns), '입고수량')
         date_col = next((c for c in ['날짜', '등록일'] if c in m_df.columns), '날짜')
-        # 시트의 메모 컬럼을 찾아서 내부적으로 처리
         memo_col = next((c for c in ['비고(처리내역)', '메모', '비고'] if c in m_df.columns), '메모')
-        
         v_col = next((c for c in ['업체명', '공급처'] if c in m_df.columns), '업체명')
         vi_col = next((c for c in ['공급처상품명', '매입상품명'] if c in m_df.columns), '공급처상품명')
 
@@ -435,15 +432,13 @@ if st.session_state.get('analyzed'):
         m_df['날짜_only'] = m_df['날짜_dt'].dt.date
         m_df = m_df.dropna(subset=['날짜_dt'])
 
-        # --- [필터 UI] ---
+        # 필터 레이아웃
         f1, f2, f3 = st.columns([1.5, 1.5, 1])
-        with f1:
-            r_date = st.date_input("📅 현황 확인 기간", [m_df['날짜_only'].min(), m_df['날짜_only'].max()], key="r_date_v13")
-        with f2:
-            r_name = st.text_input("🔍 상품명 검색", key="r_name_v13")
+        with f1: r_date = st.date_input("📅 확인 기간", [m_df['날짜_only'].min(), m_df['날짜_only'].max()], key="r_date_final")
+        with f2: r_name = st.text_input("🔍 상품명 검색", key="r_name_final")
         with f3:
             v_list = ["전체 업체"] + sorted([str(v) for v in m_df[v_col].unique() if str(v).strip()])
-            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="r_vendor_v13")
+            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="r_vendor_final")
 
         df_6 = m_df.copy()
         if isinstance(r_date, (list, tuple)) and len(r_date) == 2:
@@ -459,19 +454,18 @@ if st.session_state.get('analyzed'):
             
             group_cols = [c for c in [v_col, '상품명', '옵션', vi_col, '날짜_only'] if c in df_6.columns]
             
-            # 1. 일자별 요약
+            # 일자별 그룹화
             daily_summary = df_6.groupby(group_cols).agg({
                 qty_col: 'sum',
                 in_col: 'sum',
                 memo_col: lambda x: " ".join(dict.fromkeys([str(i).strip() for i in x if str(i).strip() and str(i).lower() != 'nan']))
             }).reset_index()
 
-            # 2. 일자별 텍스트 포맷팅
+            # 일자별 텍스트 생성
             def format_daily_text(row):
                 d_str = row['날짜_only'].strftime('%m/%d')
                 q_val, i_val = int(row[qty_col]), int(row[in_col])
                 u_memo = str(row[memo_col]).strip()
-                # 자동 생성된 [04/14 5발주] 형태의 중복 방지를 위해 클리닝
                 clean_memo = u_memo.split(']')[-1].strip() if ']' in u_memo else u_memo
                 
                 parts = []
@@ -484,7 +478,7 @@ if st.session_state.get('analyzed'):
 
             daily_summary['일자별메모'] = daily_summary.apply(format_daily_text, axis=1)
 
-            # 3. 상품별 최종 합산
+            # 최종 합산
             final_group = [k for k in group_cols if k != '날짜_only']
             summary = daily_summary.groupby(final_group).agg({
                 '일자별메모': lambda x: " / ".join([i for i in x if i]),
@@ -496,7 +490,7 @@ if st.session_state.get('analyzed'):
             summary['리오더 잔량'] = summary[qty_col] - summary[in_col]
             summary = summary[summary['리오더 잔량'] > 0].sort_values('리오더 잔량', ascending=False)
 
-            # ✅ [명칭 통일] 최종 출력 컬럼명을 '비고(처리내역)'으로 확정
+            # 컬럼명 최종 변경
             summary.rename(columns={
                 '날짜_only': '최근기록일', 
                 qty_col: '총발주수량', 
@@ -507,4 +501,4 @@ if st.session_state.get('analyzed'):
             display_cols = ['최근기록일', v_col, '상품명', '옵션', vi_col, '총발주수량', '총입고수량', '리오더 잔량', '비고(처리내역)']
             st.dataframe(summary[[c for c in display_cols if c in summary.columns]], use_container_width=True, hide_index=True)
         else:
-            st.info("💡 선택한 조건에 해당하는 리오더 내역이 없습니다.")
+            st.info("💡 리오더 잔량이 있는 내역이 없습니다.")
