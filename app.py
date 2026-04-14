@@ -396,74 +396,140 @@ else:
     
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (입고/발주 시트 기반 실시간 계산)
+# 6️⃣단계: 실시간 리오더 현황판 (요청 컬럼 순서 및 상세 수량 버전)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
-    st.header("📊 6단계: 실시간 리오더 현황판 (미입고 잔량)")
+    st.header("📊 6단계: 실시간 리오더 현황판")
 
-    if st.button("🔄 실시간 시트 데이터 동기화", use_container_width=True, key="sync_v11"):
-        with st.spinner("📡 입고/발주 장부를 분석 중..."):
+    # [실시간 업데이트 버튼]
+    if st.button("🔄 실시간 장부 데이터 동기화", use_container_width=True, type="secondary"):
+        with st.spinner("📡 최신 장부 데이터를 가져오는 중..."):
             try:
                 sh = get_sheet()
-                # 두 시트 데이터를 모두 가져옴
-                df_in = pd.DataFrame(sh.worksheet("입고기록").get_all_records())
-                df_qty = pd.DataFrame(sh.worksheet("발주기록").get_all_records())
-                
-                # 컬럼 공백 제거
-                df_in.columns = [c.strip() for c in df_in.columns]
-                df_qty.columns = [c.strip() for c in df_qty.columns]
-                
-                st.session_state.df_in_all = df_in
-                st.session_state.df_qty_all = df_qty
-                st.success("✅ 실시간 장부 동기화 완료!")
+                ws_log = sh.worksheet("발주기록")
+                df_refresh = pd.DataFrame(ws_log.get_all_records())
+                df_refresh.columns = [c.strip() for c in df_refresh.columns]
+                st.session_state.master_log = df_refresh
+                st.success("✅ 최신 데이터로 업데이트되었습니다!")
                 st.rerun()
             except Exception as e:
                 st.error(f"데이터 로드 실패: {e}")
 
-    if 'df_qty_all' in st.session_state and 'df_in_all' in st.session_state:
-        # 데이터 복사
-        in_all = st.session_state.df_in_all.copy()
-        qty_all = st.session_state.df_qty_all.copy()
+    if 'master_log' in st.session_state and not st.session_state.master_log.empty:
+        m_df = st.session_state.master_log.copy()
         
-        # 수량 컬럼 찾기 (유연한 대응)
-        in_num_col = next((c for c in ['입고수량', '수량', '입고'] if c in in_all.columns), None)
-        qty_num_col = next((c for c in ['발주수량', '수량', '발주'] if c in qty_all.columns), None)
+        # 1. 컬럼 매칭 (안전하게 존재 여부 확인)
+        qty_col = next((c for c in ['추가발주수량', '추가발주', '발주수량', '발주'] if c in m_df.columns), None)
+        in_col = next((c for c in ['입고수량', '입고차감', '입고'] if c in m_df.columns), None)
+        date_col = next((c for c in ['날짜', '등록일'] if c in m_df.columns), '날짜')
+        memo_col = next((c for c in ['메모', '비고'] if c in m_df.columns), None)
+        v_col = next((c for c in ['업체명', '공급처'] if c in m_df.columns), None)
+        vi_col = next((c for c in ['공급처상품명', '매입상품명'] if c in m_df.columns), None)
 
-        # 기준 키 (업체, 상품명, 옵션)
-        base_keys = ['업체명', '상품명', '옵션', '공급처상품명']
+        m_df['날짜_dt'] = pd.to_datetime(m_df[date_col], errors='coerce') if date_col in m_df.columns else pd.to_datetime(datetime.now())
+        m_df['날짜_only'] = m_df['날짜_dt'].dt.date
+
+        # --- [상단 필터] ---
+        f1, f2, f3 = st.columns([1.5, 1.5, 1])
+        with f1:
+            r_date = st.date_input("📅 내역 확인 기간", [m_df['날짜_only'].min(), m_df['날짜_only'].max()], key="r_date_v9")
+        with f2:
+            r_name = st.text_input("🔍 상품명 검색", key="r_name_v9")
+        with f3:
+            v_list = ["전체 업체"] + sorted([str(v) for v in m_df[v_col].unique() if v]) if v_col else ["전체 업체"]
+            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="r_vendor_v9")
+
+        # --- [데이터 필터링] ---
+        df_6 = m_df.copy()
+        if isinstance(r_date, (list, tuple)) and len(r_date) == 2:
+            df_6 = df_6[(df_6['날짜_only'] >= r_date[0]) & (df_6['날짜_only'] <= r_date[1])]
+        if r_name:
+            df_6 = df_6[df_6['상품명'].astype(str).str.contains(r_name, case=False)]
+        if v_col and r_vendor != "전체 업체":
+            df_6 = df_6[df_6[v_col] == r_vendor]
+
+        # --- [안전한 일자별 합산 집계] ---
+        group_daily = [c for c in [v_col, '상품명', '옵션', vi_col, '날짜_only'] if c and c in df_6.columns]
         
-        # 1. 발주 합계 계산
-        qty_sum = qty_all.groupby(base_keys).agg({
-            qty_num_col: 'sum',
-            '날짜': 'max',
-            '메모': lambda x: " / ".join(dict.fromkeys([str(i) for i in x if str(i).strip()]))
-        }).reset_index()
+        agg_dict = {}
+        if qty_col: agg_dict[qty_col] = 'sum'
+        if in_col: agg_dict[in_col] = 'sum'
+        if memo_col: agg_dict[memo_col] = lambda x: " ".join(dict.fromkeys([str(i).strip() for i in x if str(i).strip() and str(i).lower() != 'nan']))
 
-        # 2. 입고 합계 계산
-        in_sum = in_all.groupby(base_keys)[in_num_col].sum().reset_index()
+        if not df_6.empty and agg_dict:
+            daily_summary = df_6.groupby(group_daily).agg(agg_dict).reset_index()
 
-        # 3. 데이터 병합 (잔량 계산)
-        summary = pd.merge(qty_sum, in_sum, on=base_keys, how='left').fillna(0)
-        summary['리오더 잔량'] = summary[qty_num_col] - summary[in_num_col]
-        
-        # 잔량 있는 것만 필터링
-        summary = summary[summary['리오더 잔량'] > 0].sort_values('리오더 잔량', ascending=False)
+            # 일자별 텍스트 생성 (메모란에 들어갈 내용)
+            def format_daily_text(row):
+                d_str = row['날짜_only'].strftime('%m/%d')
+                q_val = int(pd.to_numeric(row[qty_col], errors='coerce')) if qty_col and qty_col in row else 0
+                i_val = int(pd.to_numeric(row[in_col], errors='coerce')) if in_col and in_col in row else 0
+                u_memo = row[memo_col] if memo_col and memo_col in row else ""
+                parts = []
+                if q_val > 0: parts.append(f"{q_val}발주")
+                if i_val > 0: parts.append(f"-{i_val}입고")
+                if not parts: return ""
+                res = f"[{d_str} " + " ".join(parts) + "]"
+                if u_memo: res += f" {u_memo}"
+                return res
 
-        # 컬럼명 정리 및 순서 배치 (사장님 요청 순서)
-        summary.rename(columns={'날짜': '최근기록일', qty_num_col: '총발주량', in_num_col: '입고수량', '메모': '비고(처리내역)'}, inplace=True)
-        summary['발주수량'] = summary['총발주량'] # 요청하신 셀 구성을 위해 복사
-        
-        order = ['최근기록일', '업체명', '상품명', '옵션', '공급처상품명', '총발주량', '입고수량', '발주수량', '리오더 잔량', '비고(처리내역)']
-        final_6 = summary[[c for c in order if c in summary.columns]]
+            daily_summary['일자별메모'] = daily_summary.apply(format_daily_text, axis=1)
 
-        # 엑셀 다운로드
-        import io
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            final_6.to_excel(writer, index=False)
-        st.download_button("📥 현재 잔량 현황 엑셀 다운로드", output.getvalue(), "reorder_status.xlsx", "application/vnd.ms-excel")
+            # --- [최종 품목별 합계 집계] ---
+            final_group = [k for k in group_daily if k != '날짜_only']
+            final_agg = {'일자별메모': lambda x: " / ".join([i for i in x if i]), '날짜_only': 'max'}
+            if qty_col: final_agg[qty_col] = 'sum'
+            if in_col: final_agg[in_col] = 'sum'
 
-        st.dataframe(final_6, use_container_width=True, hide_index=True)
+            summary = daily_summary.groupby(final_group).agg(final_agg).reset_index()
+            
+            # 수량 계산 (총발주, 총입고, 리오더 잔량)
+            out_total = pd.to_numeric(summary[qty_col]).fillna(0) if qty_col else 0
+            in_total = pd.to_numeric(summary[in_col]).fillna(0) if in_col else 0
+            summary['리오더 잔량'] = out_total - in_total
+            
+            # 잔량이 있는 것만 표시
+            summary = summary[summary['리오더 잔량'] > 0].sort_values('리오더 잔량', ascending=False)
+
+            # --- [컬럼명 정리 및 순서 재배치] ---
+            # 사장님 요청 순서: 최근기록일 => 업체명 => 상품명 => 옵션 => 공급처상품명 => 총발주량 => 입고수량 => 발주수량 => 비고
+            summary.rename(columns={
+                '날짜_only': '최근기록일',
+                qty_col: '발주수량', # 기간 내 발주합계
+                in_col: '입고수량',  # 기간 내 입고합계
+                '일자별메모': '비고(처리내역)'
+            }, inplace=True)
+            
+            # 총발주량은 여기서 '발주수량'과 동일하게 보거나, 별도 계산이 필요할 경우 추가
+            summary['총발주량'] = summary['발주수량'] 
+
+            display_order = ['최근기록일', v_col, '상품명', '옵션', vi_col, '총발주량', '입고수량', '발주수량', '리오더 잔량', '비고(처리내역)']
+            final_df = summary[[c for c in display_order if c in summary.columns]]
+
+            # --- [엑셀 다운로드 버튼] ---
+            import io
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                final_df.to_excel(writer, index=False, sheet_name='리현황')
+            st.download_button(
+                label="📥 현재 현황 엑셀 다운로드",
+                data=output.getvalue(),
+                file_name=f"리오더현황_{datetime.now().strftime('%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            # --- [테이블 출력] ---
+            st.dataframe(
+                final_df, use_container_width=True, hide_index=True,
+                column_config={
+                    "리오더 잔량": st.column_config.NumberColumn("잔량", format="%d 📦"),
+                    "총발주량": st.column_config.NumberColumn("총발주", format="%d"),
+                    "입고수량": st.column_config.NumberColumn("입고", format="%d"),
+                    "발주수량": st.column_config.NumberColumn("발주", format="%d")
+                }
+            )
+        else:
+            st.info("조회된 데이터가 없거나 컬럼이 부족합니다.")
     else:
-        st.info("💡 위 업데이트 버튼을 눌러 입고/발주 시트 데이터를 불러오세요.")
+        st.info("💡 위 업데이트 버튼을 눌러 최신 장부 데이터를 불러오세요.")
