@@ -134,7 +134,7 @@ if 'df_raw' in st.session_state:
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
 # ------------------------------------------------------------------
-    # 3️⃣단계: 분석 설정 및 실행 (발주기록 시트 통합 및 명칭 통일 버전)
+    # 3️⃣단계: 분석 설정 및 실행 (5단계 초기화 및 명칭 통일 버전)
     # ------------------------------------------------------------------
     st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정 및 실행")
@@ -151,6 +151,10 @@ if 'df_raw' in st.session_state:
 
         with st.spinner("📊 발주기록 시트 분석 및 잔량 계산 중..."):
             try:
+                # 🔥 [추가] 분석을 새로 시작할 때 기존 5단계 히스토리 화면을 초기화(삭제)합니다.
+                if 'db_history' in st.session_state:
+                    del st.session_state.db_history
+
                 df = st.session_state.df_raw.copy()
                 today = datetime.now(KST).date()
                 sh = get_sheet()
@@ -205,14 +209,14 @@ if 'df_raw' in st.session_state:
                 
                 df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[sold_out]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
                 
-                # ✅ [핵심 수정] 4~6단계 공통 명칭으로 통일하여 초기화
+                # ✅ [명칭 통일] 4~6단계 공통 명칭 초기화
                 df['입고차감'] = 0  
                 df['추가발주'] = 0
-                df['비고(처리내역)'] = "" # 🚨 이 이름으로 통일해야 4단계에서 KeyError가 안 납니다.
+                df['비고(처리내역)'] = "" 
                 
                 st.session_state.df_final = df
                 st.session_state.analyzed = True
-                st.success("✅ 분석 완료! '비고(처리내역)' 컬럼으로 통합 준비되었습니다.")
+                st.success("✅ 분석 완료! 히스토리 데이터가 초기화되었습니다.")
                 st.rerun()
                 
             except Exception as e:
