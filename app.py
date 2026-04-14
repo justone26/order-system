@@ -52,20 +52,49 @@ def get_sheet():
         return None
 
 def load_reorder_data():
-    """3단계 분석 시 리오더 잔량을 가져오는 함수"""
+    """발주시트와 입고시트를 대조하여 진짜 리오더 잔량을 계산하는 함수"""
     r_map = {}
     sh = get_sheet()
-    if sh:
-        try:
-            ws = sh.worksheet("발주기록")
-            logs = ws.get_all_values()
-            if len(logs) > 1:
-                df_l = pd.DataFrame(logs[1:], columns=[c.strip() for c in logs[0]])
-                # 수량 컬럼은 7번째(인덱스 6)라고 가정
-                df_l['k'] = df_l.apply(lambda r: super_clean(r.iloc[1]) + super_clean(r.iloc[2]), axis=1)
-                r_map = df_l.groupby('k').apply(lambda x: x.iloc[:, 6].apply(to_i).sum()).to_dict()
-        except: pass
+    if not sh:
+        return r_map
+
+    try:
+        # 1. 발주기록 가져오기
+        ws_qty = sh.worksheet("발주기록")
+        qty_logs = ws_qty.get_all_values()
+        
+        # 2. 입고기록 가져오기
+        ws_in = sh.worksheet("입고기록")
+        in_logs = ws_in.get_all_values()
+
+        # 데이터가 있을 때만 계산 시작
+        if len(qty_logs) > 1:
+            # 발주 데이터 정리
+            df_qty = pd.DataFrame(qty_logs[1:], columns=[c.strip() for c in qty_logs[0]])
+            # 키 생성 (상품명 + 옵션)
+            df_qty['k'] = df_qty.apply(lambda r: super_clean(r['상품명']) + super_clean(r['옵션']), axis=1)
+            # 발주 총합 (수량 컬럼명 확인 필요: '발주수량' 혹은 6번 인덱스)
+            qty_series = df_qty.groupby('k')['발주수량'].apply(lambda x: x.apply(to_i).sum())
+
+            # 입고 데이터 정리
+            in_series = pd.Series()
+            if len(in_logs) > 1:
+                df_in = pd.DataFrame(in_logs[1:], columns=[c.strip() for c in in_logs[0]])
+                df_in['k'] = df_in.apply(lambda r: super_clean(r['상품명']) + super_clean(r['옵션']), axis=1)
+                in_series = df_in.groupby('k')['입고수량'].apply(lambda x: x.apply(to_i).sum())
+
+            # 3. 잔량 계산 (발주합계 - 입고합계)
+            # 입고 데이터가 없는 키는 0으로 처리
+            final_reorder = qty_series.sub(in_series, fill_value=0)
+            
+            # 마이너스 재고는 0으로 처리하고 딕셔너리로 변환
+            r_map = final_reorder.clip(lower=0).to_dict()
+
+    except Exception as e:
+        print(f"리오더 잔량 계산 중 오류 발생: {e}")
+        
     return r_map
+    
 
 # --- [메인 로직 시작] ---
 
@@ -105,7 +134,7 @@ if 'df_raw' in st.session_state:
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
 # ------------------------------------------------------------------
-    # 3️⃣단계: 분석 설정 및 실행
+    # 3️⃣단계: 분석 설정 및 실행 (발주/입고 실시간 잔량 계산 포함)
     # ------------------------------------------------------------------
     st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정")
@@ -118,33 +147,58 @@ if 'df_raw' in st.session_state:
             'av': avail, 't3': t3d, 't7': t1w, 'lt': lt, 'ss': ss, 'rd': reg_date
         }
 
-        with st.spinner("📊 구글 시트 동기화 및 데이터 분석 중..."):
+        with st.spinner("📊 구글 시트(발주/입고) 동기화 및 실시간 잔량 분석 중..."):
             try:
                 # 1. 기초 데이터 로드
                 df = st.session_state.df_raw.copy()
                 today = datetime.now(KST).date()
 
-                # 2. 구글 시트 장부 로드 (5, 6단계용)
+                # 2. 구글 시트 로드 및 잔량 계산 엔진
                 sh = get_sheet()
-                ws_log = sh.worksheet("발주기록")
-                df_master = pd.DataFrame(ws_log.get_all_records())
-                df_master.columns = [c.strip() for c in df_master.columns]
-                st.session_state.master_log = df_master 
+                
+                # [발주기록 로드]
+                ws_qty = sh.worksheet("발주기록")
+                df_qty = pd.DataFrame(ws_qty.get_all_records())
+                df_qty.columns = [c.strip() for c in df_qty.columns]
+                
+                # [입고기록 로드]
+                ws_in = sh.worksheet("입고기록")
+                df_in = pd.DataFrame(ws_in.get_all_records())
+                df_in.columns = [c.strip() for c in df_in.columns]
 
-                # 3. 기존 리오더 잔량 계산 (r_map)
-                q_col = '추가발주수량' if '추가발주수량' in df_master.columns else '추가발주'
-                df_master[q_col] = pd.to_numeric(df_master[q_col], errors='coerce').fillna(0)
-                r_map = df_master.groupby(['상품명', '옵션'])[q_col].sum().to_dict()
+                # 5, 6단계 활용을 위해 master_log 저장 (발주기록 기준)
+                st.session_state.master_log = df_qty 
 
-                # 4. 분석 계산 로직
+                # 3. 실시간 리오더 잔량 계산 (발주합계 - 입고합계)
+                # 발주 수량 합산 (컬럼명은 시트에 맞게 자동 선택)
+                q_num_col = '추가발주수량' if '추가발주수량' in df_qty.columns else ('발주수량' if '발주수량' in df_qty.columns else '추가발주')
+                df_qty[q_num_col] = pd.to_numeric(df_qty[q_num_col], errors='coerce').fillna(0)
+                qty_sum = df_qty.groupby(['상품명', '옵션'])[q_num_col].sum()
+
+                # 입고 수량 합산
+                i_num_col = '입고수량' if '입고수량' in df_in.columns else '입고'
+                if not df_in.empty and i_num_col in df_in.columns:
+                    df_in[i_num_col] = pd.to_numeric(df_in[i_num_col], errors='coerce').fillna(0)
+                    in_sum = df_in.groupby(['상품명', '옵션'])[i_num_col].sum()
+                else:
+                    in_sum = pd.Series()
+
+                # 최종 잔량 계산 (발주 - 입고)
+                # fill_value=0을 써서 한쪽에만 데이터가 있어도 에러 안 나게 처리
+                r_map = qty_sum.sub(in_sum, fill_value=0).clip(lower=0).to_dict()
+
+                # 4. 분석 계산 로직 적용
                 df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
                 df[t1w] = pd.to_numeric(df[t1w], errors='coerce').fillna(0).astype(int)
                 
+                # 계산된 r_map에서 잔량 가져오기 함수
                 def get_reorder_val(row):
-                    return r_map.get((row[item], row[option]), 0)
+                    return int(r_map.get((row[item], row[option]), 0))
                 
-                df['기존리오더'] = df.apply(get_reorder_val, axis=1).fillna(0).astype(int)
+                # '기존리오더' 컬럼에 실시간 잔량 주입
+                df['기존리오더'] = df.apply(get_reorder_val, axis=1)
 
+                # 일판매량 및 권장발주수량 계산
                 def get_daily_avg(row):
                     try:
                         r_dt = pd.to_datetime(row[reg_date]).date()
@@ -153,22 +207,26 @@ if 'df_raw' in st.session_state:
                     except: return int(round(pd.to_numeric(row[t1w]) / 7, 0))
 
                 df['일판매량'] = df.apply(get_daily_avg, axis=1)
+                
+                # 권장발주수량 공식: (일판 * (LT+SS)) - (가용재고 + 기존 실시간 잔량)
                 df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[avail] + df['기존리오더'])).clip(lower=0).astype(int)
                 
                 df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[sold_out]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
                 
-                # 4단계용 기본값 세팅
+                # 4단계 화면용 기본값 세팅
                 df['입고차감'] = 0
                 df['추가발주'] = 0
                 df['비고(메모)'] = ""
                 
                 st.session_state.df_final = df
                 st.session_state.analyzed = True
-                st.success("✅ 분석 및 장부 업데이트 완료!")
+                st.success("✅ 실시간 장부 대조 및 분석이 완료되었습니다!")
                 st.rerun()
+                
             except Exception as e:
-                st.error(f"분석 오류: {e}")
-
+                st.error(f"분석 중 오류 발생: {e}")
+                st.info("💡 구글 시트에 '발주기록'과 '입고기록' 시트가 있는지 확인해주세요.")
+                
 # ------------------------------------------------------------------
 # 4️⃣단계: 입고 관리 및 최종 저장 (3중 시트 전송 버전)
 # ------------------------------------------------------------------
