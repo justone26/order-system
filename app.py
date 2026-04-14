@@ -98,37 +98,39 @@ def load_reorder_data():
 
 # --- [메인 로직 시작] ---
 
-# --- [메인 로직 시작] ---
-
 # ------------------------------------------------------------------
 # 1️⃣단계: 파일 업로드 및 데이터 로드
 # ------------------------------------------------------------------
 st.header("1️⃣ 파일 업로드 및 데이터 로드")
 up_file = st.file_uploader("엑셀 파일을 업로드하세요.", type=['xlsx', 'xls'])
 
-# ✅ 초기화 버튼 로직
+# ✅ 초기화 버튼: 세션을 비우고 '초기화 상태'임을 명시합니다.
 if st.button("🔄 현재 화면 데이터 초기화", use_container_width=True):
-    # 세션의 모든 데이터를 삭제합니다.
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    # 💡 중요: 초기화 직후에는 아래의 if up_file 로직이 작동하지 않도록 강제로 한 번 더 멈춰줍니다.
-    st.success("✅ 모든 데이터가 초기화되었습니다. 업로드 창의 X를 눌러 파일을 완전히 제거할 수 있습니다.")
+    st.session_state.just_reset = True  # 초기화 직후임을 알리는 플래그
+    st.success("✅ 모든 데이터가 초기화되었습니다.")
     st.rerun()
 
-# 💡 수정 포인트: 초기화 버튼을 누른 직후에는 'df_raw'가 세션에 없으므로 
-# 아래 로직이 실행되어 다시 2~3단계가 생기는 것을 방지합니다.
+# 파일 로드 로직
 if up_file:
-    # 파일을 새로 올렸거나, 초기화 버튼을 누르지 않은 상태에서만 로드
-    if 'df_raw' not in st.session_state:
+    # 초기화 버튼을 누른 직후가 아닐 때만 로드 실행
+    if 'df_raw' not in st.session_state and not st.session_state.get('just_reset'):
         st.session_state.df_raw = pd.read_excel(up_file)
         st.session_state.analyzed = False
         st.success("✅ 파일 로드 완료!")
-        st.rerun() # 로드 완료 후 화면을 한 번 정리해줍니다.
+        st.rerun()
+    
+    # 만약 파일을 새로 올리면 초기화 플래그 해제
+    if st.session_state.get('just_reset'):
+        if st.button("🔼 새로 로드하기 (파일이 이미 업로드됨)", use_container_width=True):
+            del st.session_state.just_reset
+            st.rerun()
 
 # ------------------------------------------------------------------
-# 2️⃣단계 & 3️⃣단계: 데이터가 세션에 '실제로 존재할 때만' 나타나도록 감쌉니다.
+# 2️⃣단계 & 3️⃣단계: 데이터가 세션에 존재할 때만 나타남
 # ------------------------------------------------------------------
-if 'df_raw' in st.session_state:
+if 'df_raw' in st.session_state and not st.session_state.get('just_reset'):
     st.divider()
     df_work = st.session_state.df_raw
     cols = df_work.columns.tolist()
@@ -162,9 +164,9 @@ if 'df_raw' in st.session_state:
             'av': avail, 't3': t3d, 't7': t1w, 'lt': lt, 'ss': ss, 'rd': reg_date
         }
 
-        with st.spinner("📊 발주기록 시트 분석 및 잔량 계산 중..."):
+        with st.spinner("📊 분석 진행 중..."):
             try:
-                # 분석 실행 시 5단계 히스토리 세션 초기화
+                # 분석 시작 시 5단계 데이터 초기화
                 if 'db_history' in st.session_state:
                     del st.session_state.db_history
 
@@ -172,6 +174,7 @@ if 'df_raw' in st.session_state:
                 today = datetime.now(KST).date()
                 sh = get_sheet()
                 
+                # 데이터 로드 함수
                 def get_clean_df(name):
                     ws = sh.worksheet(name)
                     data = ws.get_all_values()
@@ -194,7 +197,7 @@ if 'df_raw' in st.session_state:
                         final_res = qty_sum.sub(in_sum, fill_value=0).clip(lower=0)
                         r_map = final_res.to_dict()
 
-                # [중략: 분석 계산 로직은 이전과 동일]
+                # 분석 계산
                 df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
                 df[t1w] = pd.to_numeric(df[t1w], errors='coerce').fillna(0).astype(int)
                 
@@ -225,7 +228,7 @@ if 'df_raw' in st.session_state:
                 st.rerun()
                 
             except Exception as e:
-                st.error(f"⚠️ 분석 오류: {e}")
+                st.error(f"⚠️ 오류: {e}")
                 
                 
 # ------------------------------------------------------------------
