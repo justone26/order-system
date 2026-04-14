@@ -427,12 +427,12 @@ if st.session_state.get('analyzed'):
 
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (화면 표시 + A~I 열 순서 완결)
+# 6️⃣단계: 실시간 리오더 현황판 (지정된 9개 컬럼 전용)
 # ------------------------------------------------------------------
 def render_step6():
     st.markdown("### 📈 6단계: 실시간 리오더 현황판")
     
-    # 1. 데이터 로드 및 캐시 관리
+    # 1. 시트 데이터 로드
     if 'master_log' not in st.session_state:
         try:
             sh = get_sheet()
@@ -440,28 +440,22 @@ def render_step6():
             raw_data = ws_qty.get_all_records()
             st.session_state.master_log = pd.DataFrame(raw_data)
         except Exception as e:
-            st.error(f"데이터를 불러올 수 없습니다: {e}")
+            st.error(f"시트를 불러올 수 없습니다: {e}")
             return
 
     df_log = st.session_state.master_log.copy()
 
     if not df_log.empty:
-        # 수치형 변환 (F, G, H열 데이터 보정)
-        num_cols = ['기존리오더', '추가발주', '입고수량']
-        for col in num_cols:
-            if col in df_log.columns:
-                df_log[col] = pd.to_numeric(df_log[col], errors='coerce').fillna(0)
-
-        # 2. [UI] 상단 필터 및 검색
+        # 2. [UI] 상단 필터
         c1, c2, c3 = st.columns([1.5, 2, 1])
         with c1:
             v_list = ["전체"] + sorted(df_log['공급처'].unique().tolist())
-            sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_v_final_call")
+            sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_v_strict")
         with c2:
-            sel_s = st.text_input("🔍 상품명 검색", key="s6_s_final_call")
+            sel_s = st.text_input("🔍 상품명 검색", key="s6_s_strict")
         with c3:
             st.write(" ")
-            if st.button("🔄 현황판 새로고침", use_container_width=True, key="s6_refresh_btn"):
+            if st.button("🔄 현황판 새로고침", use_container_width=True):
                 if 'master_log' in st.session_state: del st.session_state.master_log
                 st.rerun()
 
@@ -470,55 +464,39 @@ def render_step6():
         if sel_v != "전체": df_dash = df_dash[df_dash['공급처'] == sel_v]
         if sel_s: df_dash = df_dash[df_dash['상품명'].str.contains(sel_s, case=False)]
 
-        # 3. [데이터 집계] 상품명/옵션별 합산 및 잔량 계산
-        summary = df_dash.groupby(['공급처', '상품명', '옵션']).agg({
-            '날짜': 'max',          # A열
-            '공급처상품명': 'first', # E열
-            '기존리오더': 'sum',    # F열
-            '추가발주': 'sum',      # G열
-            '입고수량': 'sum',      # H열
-            '메모': 'last'          # I열
-        }).reset_index()
-        
-        # 잔량 수식: (기존 + 추가) - 입고
-        summary['리오더잔량'] = (summary['기존리오더'] + summary['추가발주'] - summary['입고수량']).apply(lambda x: max(0, int(x)))
-
-        # 4. [UI] 상단 메트릭
+        # 3. [상단 요약] 사장님 시트 컬럼 기준 합계
         m1, m2, m3 = st.columns(3)
-        total_order = int(summary['기존리오더'].sum() + summary['추가발주'].sum())
-        total_in = int(summary['입고수량'].sum())
-        total_remain = int(summary['리오더잔량'].sum())
-
-        m1.markdown(f"📋 **누적 총 발주**\n## {total_order}개")
-        m2.markdown(f"📥 **누적 총 입고**\n## {total_in}개")
-        m3.markdown(f"⏳ **미입고 잔량**\n## {total_remain}개")
-
-        # 5. [UI] 상세 테이블 (사장님 요청 순서 강제 배치)
-        st.markdown("### 📝 상세 현황 리스트 (시트 순서 일치)")
+        # 기존리오더와 추가발주를 합친 것이 실제 총 발주량
+        t_order = pd.to_numeric(df_dash['기존리오더'], errors='coerce').sum() + \
+                  pd.to_numeric(df_dash['추가발주'], errors='coerce').sum()
+        t_in = pd.to_numeric(df_dash['입고수량'], errors='coerce').sum()
         
-        # 요청하신 열 순서: 날짜 | 공급처 | 상품명 | 옵션 | 공급처상품명 | 기존 | 추가 | 입고 | 잔량 | 메모
-        display_order = [
+        m1.metric("📋 누적 총 발주", f"{int(t_order)}개")
+        m2.metric("📥 누적 총 입고", f"{int(t_in)}개")
+        m3.metric("⏳ 미입고 잔량", f"{int(t_order - t_in)}개")
+
+        # 4. [표시 영역] 사장님이 말씀하신 딱 9개 순서 그대로
+        # 순서: 날짜 | 공급처 | 상품명 | 옵션 | 공급처상품명 | 기존리오더 | 추가발주 | 입고수량 | 메모
+        target_cols = [
             '날짜', '공급처', '상품명', '옵션', '공급처상품명', 
-            '기존리오더', '추가발주', '입고수량', '리오더잔량', '메모'
+            '기존리오더', '추가발주', '입고수량', '메모'
         ]
         
+        st.markdown("### 📝 상세 현황 리스트")
         st.dataframe(
-            summary[display_order], 
+            df_dash[target_cols], 
             use_container_width=True, 
             hide_index=True,
             column_config={
                 "날짜": st.column_config.TextColumn("날짜"),
-                "기존리오더": st.column_config.NumberColumn("기존", format="%d"),
-                "추가발주": st.column_config.NumberColumn("추가", format="%d"),
-                "입고수량": st.column_config.NumberColumn("입고", format="%d"),
-                "리오더잔량": st.column_config.NumberColumn("✅잔량", format="%d")
+                "기존리오더": st.column_config.NumberColumn("기존리오더", format="%d"),
+                "추가발주": st.column_config.NumberColumn("추가발주", format="%d"),
+                "입고수량": st.column_config.NumberColumn("입고수량", format="%d")
             }
         )
     else:
-        st.info("데이터가 없습니다. 4단계에서 저장을 먼저 진행해 주세요.")
+        st.info("데이터가 없습니다.")
 
-# ------------------------------------------------------------------
-# 🚨 [중요] 6단계 화면 호출 (이게 없으면 화면에 안 나옵니다!)
-# ------------------------------------------------------------------
+# 🚨 실행부
 if st.session_state.get('analyzed'):
     render_step6()
