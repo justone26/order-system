@@ -234,7 +234,7 @@ if 'df_raw' in st.session_state:
                 
                 
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (히스토리 순서 완벽 교정본)
+# 4️⃣단계: 입고 관리 및 최종 저장 (상품별 묶음 저장 + 순서 교정)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -260,7 +260,7 @@ if st.session_state.get('analyzed'):
     if s_query:
         df_temp = df_temp[df_temp[p['it']].str.contains(s_query, case=False) | df_temp[p['op']].str.contains(s_query, case=False)]
 
-    # 화면에 보여줄 순서 (상태 포함)
+    # 화면에 보여줄 순서
     disp_cols = [
         '상태', p['vn'], p['it'], p['op'], p['vi'], p['av'], 
         '기존리오더', '입고차감', '추가발주', p['t3'], 
@@ -291,11 +291,14 @@ if st.session_state.get('analyzed'):
         btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
-        # 수치(입고 또는 발주)가 입력된 데이터만 필터링
-        change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
+        # 1. 수치(입고 또는 발주)가 입력된 데이터만 추출
+        change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)].copy()
         
         if not change_list.empty:
-            with st.spinner("🚀 구글 시트로 전송 및 히스토리 갱신 중..."):
+            # ✅ [수정] 저장 전 상품명과 옵션으로 정렬하여 묶어줌 (a-1, a-2 순서)
+            change_list = change_list.sort_values(by=[p['it'], p['op']])
+
+            with st.spinner("🚀 상품별로 분류하여 구글 시트 전송 중..."):
                 try:
                     sh = get_sheet()
                     ws_qty = sh.worksheet("발주기록")
@@ -318,13 +321,13 @@ if st.session_state.get('analyzed'):
                         auto_memo = f"[{time_short} " + " ".join(parts) + "]"
                         final_memo = f"{auto_memo} {user_memo}".strip()
                         
-                        # 1. 발주기록 시트용 데이터 (기존 내부 로직 순서 유지)
+                        # 1. 발주기록 시트용 (기존 내부 순서 유지)
                         rows_qty.append([
                             now_s, r[p['it']], r[p['op']], r[p['vi']], r[p['av']], 
                             r['기존리오더'], q_val, r['권장발주수량'], final_memo, r[p['vn']], i_val
                         ])
                         
-                        # ✅ 2. 히스토리 시트용 데이터 (상태 제외, 시간 삽입, 이미지 순서 일치)
+                        # ✅ 2. 히스토리 시트용 (시간순/상품별 묶음 저장)
                         # 순서: A(시간), B(공급처), C(상품명), D(옵션), E(공급처명), F(가용재고), G(기존리오더), H(입고), I(발주), J(권장수량), K(비고)
                         rows_hist.append([
                             now_s,              # A: 발주시간
@@ -334,9 +337,9 @@ if st.session_state.get('analyzed'):
                             r[p['vi']],         # E: 공급처상품명
                             r[p['av']],         # F: 가용재고
                             r['기존리오더'],     # G: 기존리오더
-                            i_val,              # H: 입고수량 (수정완료)
-                            q_val,              # I: 추가발주 (수정완료)
-                            r['권장발주수량'],   # J: 권장수량 (수정완료)
+                            i_val,              # H: 입고수량
+                            q_val,              # I: 추가발주
+                            r['권장발주수량'],   # J: 권장수량
                             final_memo          # K: 비고(처리내역)
                         ])
                     
@@ -344,11 +347,11 @@ if st.session_state.get('analyzed'):
                     if rows_qty: ws_qty.append_rows(rows_qty)
                     if rows_hist: ws_hist.append_rows(rows_hist)
                     
-                    # 5단계 데이터 강제 초기화 (최신 데이터 로드용)
+                    # 5단계 데이터 새로고침
                     if 'db_history' in st.session_state:
                         del st.session_state.db_history
                     
-                    st.success(f"✅ 저장 완료! (발주기록 {len(rows_qty)}건 / 히스토리 {len(rows_hist)}건)")
+                    st.success(f"✅ 저장 완료! 상품별로 정렬되었습니다. ({len(rows_hist)}건)")
                     time.sleep(1)
                     st.rerun() 
                     
