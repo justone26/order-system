@@ -98,6 +98,8 @@ def load_reorder_data():
 
 # --- [메인 로직 시작] ---
 
+# --- [메인 로직 시작] ---
+
 # ------------------------------------------------------------------
 # 1️⃣단계: 파일 업로드 및 데이터 로드
 # ------------------------------------------------------------------
@@ -105,20 +107,22 @@ st.header("1️⃣ 파일 업로드 및 데이터 로드")
 up_file = st.file_uploader("엑셀 파일을 업로드하세요.", type=['xlsx', 'xls'])
 
 if st.button("🔄 현재 화면 데이터 초기화", use_container_width=True):
-    # 세션 내의 모든 데이터를 삭제하여 4, 5, 6단계를 화면에서 지웁니다.
+    # 세션 내의 모든 데이터를 삭제하여 2~6단계까지 화면에서 완전히 지웁니다.
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    st.success("✅ 모든 데이터가 초기화되었습니다.")
+    st.success("✅ 모든 데이터가 초기화되었습니다. 새로 시작하려면 파일을 다시 업로드해주세요.")
     st.rerun()
 
+# 💡 핵심: 파일이 업로드되었고, 세션에 데이터가 살아있을 때만 하위 단계를 보여줍니다.
 if up_file:
     if 'df_raw' not in st.session_state:
         st.session_state.df_raw = pd.read_excel(up_file)
         st.session_state.analyzed = False
         st.success("✅ 파일 로드 완료!")
-        
 
-# 2️⃣~3️⃣단계: 매핑 및 분석 실행
+# ------------------------------------------------------------------
+# 2️⃣단계: 매핑 및 분석 실행 (데이터가 있을 때만 노출)
+# ------------------------------------------------------------------
 if 'df_raw' in st.session_state:
     st.divider()
     df_work = st.session_state.df_raw
@@ -139,8 +143,8 @@ if 'df_raw' in st.session_state:
         t3d = st.selectbox("9. 3일 발주합계", cols, index=find_idx(cols, ['3일']))
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
-# ------------------------------------------------------------------
-    # 3️⃣단계: 분석 설정 및 실행 (5단계 초기화 및 명칭 통일 버전)
+    # ------------------------------------------------------------------
+    # 3️⃣단계: 분석 설정 및 실행
     # ------------------------------------------------------------------
     st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정 및 실행")
@@ -157,7 +161,7 @@ if 'df_raw' in st.session_state:
 
         with st.spinner("📊 발주기록 시트 분석 및 잔량 계산 중..."):
             try:
-                # 🔥 [추가] 분석을 새로 시작할 때 기존 5단계 히스토리 화면을 초기화(삭제)합니다.
+                # 분석을 새로 시작할 때 기존 5단계 히스토리 데이터 초기화
                 if 'db_history' in st.session_state:
                     del st.session_state.db_history
 
@@ -165,7 +169,6 @@ if 'df_raw' in st.session_state:
                 today = datetime.now(KST).date()
                 sh = get_sheet()
                 
-                # [함수] 데이터 로드 및 정리
                 def get_clean_df(name):
                     ws = sh.worksheet(name)
                     data = ws.get_all_values()
@@ -174,26 +177,20 @@ if 'df_raw' in st.session_state:
                         return res.loc[:, ~res.columns.duplicated()]
                     return pd.DataFrame()
 
-                # 시트 로드 (발주기록 통합 분석)
                 df_master = get_clean_df("발주기록")
                 st.session_state.master_log = df_master 
 
                 r_map = {}
                 if not df_master.empty:
                     it_c, op_c, q_c, in_c = '상품명', '옵션', '추가발주', '입고수량'
-                    
                     if it_c in df_master.columns and op_c in df_master.columns:
                         df_master[q_c] = pd.to_numeric(df_master[q_c], errors='coerce').fillna(0)
                         df_master[in_c] = pd.to_numeric(df_master[in_c], errors='coerce').fillna(0)
-                        
                         qty_sum = df_master.groupby([it_c, op_c])[q_c].sum()
                         in_sum = df_master.groupby([it_c, op_c])[in_c].sum()
-                        
-                        # 잔량 계산
                         final_res = qty_sum.sub(in_sum, fill_value=0).clip(lower=0)
                         r_map = final_res.to_dict()
 
-                # 분석 계산 로직
                 df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
                 df[t1w] = pd.to_numeric(df[t1w], errors='coerce').fillna(0).astype(int)
                 
@@ -212,23 +209,21 @@ if 'df_raw' in st.session_state:
 
                 df['일판매량'] = df.apply(get_daily_avg, axis=1)
                 df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[avail] + df['기존리오더'])).clip(lower=0).astype(int)
-                
                 df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[sold_out]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
                 
-                # ✅ [명칭 통일] 4~6단계 공통 명칭 초기화
+                # 명칭 통일 초기화
                 df['입고차감'] = 0  
                 df['추가발주'] = 0
                 df['비고(처리내역)'] = "" 
                 
                 st.session_state.df_final = df
                 st.session_state.analyzed = True
-                st.success("✅ 분석 완료! 히스토리 데이터가 초기화되었습니다.")
+                st.success("✅ 분석 완료!")
                 st.rerun()
                 
             except Exception as e:
                 st.error(f"⚠️ 분석 오류: {e}")
-                st.info("💡 '발주기록' 시트에 '상품명', '옵션', '추가발주', '입고수량' 컬럼이 있는지 확인해주세요.")
-
+                
                 
 # ------------------------------------------------------------------
 # 4️⃣단계: 입고 관리 및 최종 저장 (명칭 통일: 비고(처리내역))
@@ -338,38 +333,33 @@ if st.session_state.get('analyzed'):
                 
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (자동 로드 및 프레임 상시 노출)
+# 5️⃣단계: 전체 히스토리 기록 (프레임 상시 유지)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.header("📜 5단계: 전체 히스토리 기록")
 
-    # [1] 데이터 자동 로드 로직 (세션에 데이터가 없을 때만 실행)
+    # [자동 로드] 세션에 데이터가 없을 때만 시트에서 가져옴
     if 'db_history' not in st.session_state:
-        with st.spinner("📡 히스토리 데이터를 자동으로 불러오는 중..."):
-            try:
-                sh = get_sheet()
-                ws_hist = sh.worksheet("히스토리")
-                raw_data = ws_hist.get_all_values()
-                
-                if len(raw_data) > 1:
-                    h_df = pd.DataFrame(raw_data[1:], columns=[c.strip() for c in raw_data[0]])
-                    h_df = h_df.loc[:, ~h_df.columns.duplicated()]
-                    # 명칭 통일
-                    h_df.rename(columns={'메모': '비고(처리내역)', '비고': '비고(처리내역)', '비고(메모)': '비고(처리내역)'}, errors='ignore', inplace=True)
-                    st.session_state.db_history = h_df
-                else:
-                    st.session_state.db_history = pd.DataFrame() # 빈 데이터프레임 생성
-            except Exception as e:
-                st.error(f"히스토리 로드 실패: {e}")
+        try:
+            sh = get_sheet()
+            ws_hist = sh.worksheet("히스토리")
+            raw_data = ws_hist.get_all_values()
+            if len(raw_data) > 1:
+                h_df = pd.DataFrame(raw_data[1:], columns=[c.strip() for c in raw_data[0]])
+                h_df.rename(columns={'메모': '비고(처리내역)', '비고': '비고(처리내역)', '비고(메모)': '비고(처리내역)'}, errors='ignore', inplace=True)
+                st.session_state.db_history = h_df
+            else:
                 st.session_state.db_history = pd.DataFrame()
+        except:
+            st.session_state.db_history = pd.DataFrame()
 
-    # [2] 필터 UI 구성 (데이터 존재 여부와 상관없이 무조건 노출)
+    # [UI 프레임] 데이터 유무와 상관없이 항상 노출
     m_df_5 = st.session_state.get('db_history', pd.DataFrame()).copy()
     
-    # 기본 날짜 설정 (데이터가 없으면 오늘 날짜 기준)
-    default_start = datetime.now(KST).date()
-    default_end = datetime.now(KST).date()
+    # 날짜 초기값 설정
+    def_start = datetime.now(KST).date()
+    def_end = datetime.now(KST).date()
     
     if not m_df_5.empty:
         date_col_5 = next((c for c in m_df_5.columns if '날짜' in c), m_df_5.columns[0])
@@ -377,49 +367,30 @@ if st.session_state.get('analyzed'):
         m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
         valid_df_5 = m_df_5.dropna(subset=['날짜_dt'])
         if not valid_df_5.empty:
-            default_start = valid_df_5['날짜_only'].min()
-            default_end = valid_df_5['날짜_only'].max()
+            def_start, def_end = valid_df_5['날짜_only'].min(), valid_df_5['날짜_only'].max()
 
-    # 6단계와 동일한 스타일의 필터 레이아웃
+    # 필터 UI
     c1, c2, c3 = st.columns([1.5, 1.5, 1])
-    with c1: 
-        sel_dates_5 = st.date_input("📅 조회 날짜 범위", [default_start, default_end], key="h_date_v13_final")
-    with c2: 
-        h_name_5 = st.text_input("🔍 상품명 검색", key="h_name_v13_final")
-    with c3: 
-        # 회차 선택박스
-        t_options_5 = ["전체 회차"]
+    with c1: sel_dates_5 = st.date_input("📅 조회 날짜 범위", [def_start, def_end], key="h_date_v14")
+    with c2: h_name_5 = st.text_input("🔍 상품명 검색", key="h_name_v14")
+    with c3:
+        t_opts = ["전체 회차"]
         if not m_df_5.empty and '날짜_dt' in m_df_5.columns:
-            t_options_5 += sorted(m_df_5['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
-        h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_options_5, key="h_time_v13_final")
+            t_opts += sorted(m_df_5['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
+        h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_v14")
 
-    # [3] 필터링 및 데이터 출력
+    # 데이터 출력
     if not m_df_5.empty:
-        df_display_5 = m_df_5.copy()
-        
-        # 날짜 필터링
+        df_dis = m_df_5.copy()
         if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
-            if '날짜_only' in df_display_5.columns:
-                df_display_5 = df_display_5[(df_display_5['날짜_only'] >= sel_dates_5[0]) & (df_display_5['날짜_only'] <= sel_dates_5[1])]
-        
-        # 상품명 필터링
-        name_col = next((c for c in df_display_5.columns if '상품명' in c), None)
-        if h_name_5 and name_col:
-            df_display_5 = df_display_5[df_display_5[name_col].astype(str).str.contains(h_name_5, case=False)]
-            
-        # 회차 필터링
+            df_dis = df_dis[(df_dis['날짜_only'] >= sel_dates_5[0]) & (df_dis['날짜_only'] <= sel_dates_5[1])]
+        if h_name_5:
+            name_c = next((c for c in df_dis.columns if '상품명' in c), '상품명')
+            df_dis = df_dis[df_dis[name_c].astype(str).str.contains(h_name_5, case=False)]
         if h_time_5 != "전체 회차":
-            df_display_5 = df_display_5[df_display_5['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
+            df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
-        # 결과 출력 (최신순)
-        cols_to_drop = [c for c in ['날짜_dt', '날짜_only'] if c in df_display_5.columns]
-        st.dataframe(
-            df_display_5.sort_values('날짜_dt', ascending=False).drop(columns=cols_to_drop), 
-            use_container_width=True, 
-            hide_index=True
-        )
-    else:
-        st.info("💡 히스토리 시트에서 데이터를 불러왔으나 표시할 내역이 없습니다.")
+        st.dataframe(df_dis.sort_values('날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore'), use_container_width=True, hide_index=True)
 
 # ------------------------------------------------------------------
 # 6️⃣단계: 실시간 리오더 현황판 (명칭 통일 버전)
