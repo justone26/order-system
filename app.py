@@ -98,32 +98,43 @@ def load_reorder_data():
 # --- [메인 로직 시작] ---
 
 # ------------------------------------------------------------------
-# 1️⃣단계: 파일 업로드 및 데이터 로드
+# 1️⃣단계: 파일 업로드 및 데이터 로드 (파일까지 한 번에 초기화)
 # ------------------------------------------------------------------
 st.header("1️⃣ 파일 업로드 및 데이터 로드")
-up_file = st.file_uploader("엑셀 파일을 업로드하세요.", type=['xlsx', 'xls'])
 
-# ✅ 초기화 버튼: 모든 기록을 지우고 초기 상태로 만듦
+# 1. 파일 업로더용 리셋 키 설정 (최상단에 위치)
+if 'uploader_key' not in st.session_state:
+    st.session_state.uploader_key = 0
+
+# 2. ✅ 업로더에 key를 부여해서 제어 가능하게 만듦
+# 사장님, 여기서 key 뒤에 숫자가 바뀌면 파일이 싹 날아갑니다.
+up_file = st.file_uploader(
+    "엑셀 파일을 업로드하세요.", 
+    type=['xlsx', 'xls'],
+    key=f"file_uploader_{st.session_state.uploader_key}"
+)
+
+# 3. ✅ 초기화 버튼: 이제 파일 'X' 안 눌러도 됩니다!
 if st.button("🔄 현재 화면 데이터 초기화", use_container_width=True):
+    # 리셋 키를 제외한 모든 세션 상태 삭제
     for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.info("✅ 초기화되었습니다. 업로드된 파일을 X 눌렀다 다시 올리거나, 새 파일을 선택해주세요.")
+        if key != 'uploader_key':
+            del st.session_state[key]
+    
+    # 🚨 리셋 키 값을 올려서 파일 업로더를 강제로 비움
+    st.session_state.uploader_key += 1
+    
+    st.success("✅ 파일과 모든 데이터가 초기화되었습니다.")
+    time.sleep(0.5)
     st.rerun()
 
-# 💡 수정된 로드 로직: 
-# 1. 파일이 업로드되었고 
-# 2. 아직 세션에 df_raw가 없을 때만 로드를 시도합니다.
+# 4. 파일 로드 로직 (기존 사장님 로직 유지)
 if up_file is not None:
     if 'df_raw' not in st.session_state:
         try:
-            # 엑셀 읽기 실행
             temp_df = pd.read_excel(up_file)
-            
-            # 읽기 성공 시 세션에 저장
             st.session_state.df_raw = temp_df
             st.session_state.analyzed = False
-            
-            # 파일이 로드되면 화면을 새로고침하여 즉시 2단계를 노출
             st.rerun()
         except Exception as e:
             st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
