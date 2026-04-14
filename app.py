@@ -263,108 +263,103 @@ if st.session_state.get('analyzed') and 'master_log' in st.session_state:
     st.dataframe(df_5[target_cols].sort_values('날짜', ascending=False), use_container_width=True, hide_index=True)
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (대시보드 형태)
+# 6️⃣단계: 실시간 리오더 현황판 (실시간 업데이트 버튼 포함)
 # ------------------------------------------------------------------
-if st.session_state.get('analyzed') and 'master_log' in st.session_state:
+if st.session_state.get('analyzed'):
     st.divider()
     st.header("📊 6단계: 실시간 리오더 현황판")
-    
-    # 데이터 복사 및 전처리
-    m_df = st.session_state.master_log.copy()
-    
-    # 날짜 데이터 처리 (에러 방지용)
-    if '날짜' in m_df.columns:
-        m_df['날짜_only'] = pd.to_datetime(m_df['날짜'], errors='coerce').dt.date
-    else:
-        # 날짜 컬럼이 없을 경우 첫 번째 컬럼을 날짜로 가정
-        m_df['날짜_only'] = pd.to_datetime(m_df.iloc[:, 0], errors='coerce').dt.date
 
-    # --- [상단 검색 필터 영역] ---
-    f1, f2, f3 = st.columns(3)
-    with f1:
-        # 기준 날짜 범위 설정
-        min_d = m_df['날짜_only'].min() if not m_df['날짜_only'].isnull().all() else datetime.now().date()
-        max_d = m_df['날짜_only'].max() if not m_df['날짜_only'].isnull().all() else datetime.now().date()
-        r_date = st.date_input("📅 기준 날짜 범위", [min_d, max_d], key="r_date_range")
+    # [실시간 업데이트 버튼] - 클릭 시 시트에서 데이터를 다시 읽어옴
+    if st.button("🔄 실시간 장부 데이터 동기화", use_container_width=True, type="secondary"):
+        with st.spinner("📡 최신 장부 데이터를 가져오는 중..."):
+            try:
+                sh = get_sheet()
+                ws_log = sh.worksheet("발주기록")
+                df_refresh = pd.DataFrame(ws_log.get_all_records())
+                df_refresh.columns = [c.strip() for c in df_refresh.columns]
+                st.session_state.master_log = df_refresh
+                st.success("✅ 최신 데이터로 업데이트되었습니다!")
+            except Exception as e:
+                st.error(f"데이터 로드 실패: {e}")
+
+    if 'master_log' in st.session_state and not st.session_state.master_log.empty:
+        m_df = st.session_state.master_log.copy()
         
-    with f2:
-        r_name = st.text_input("🔍 상품명 검색", key="r_name_search_6")
+        # 날짜 및 숫자 전처리
+        m_df['날짜_dt'] = pd.to_datetime(m_df['날짜'], errors='coerce')
+        m_df['날짜_only'] = m_df['날짜_dt'].dt.date
         
-    with f3:
-        # 업체 리스트 추출 (업체명 컬럼이 없을 경우 대비)
-        v_col = '업체명' if '업체명' in m_df.columns else ('공급처' if '공급처' in m_df.columns else None)
-        if v_col:
-            v_list = ["전체 업체"] + sorted([str(v) for v in m_df[v_col].unique() if v])
-            r_vendor = st.selectbox("🏭 업체별 보기", v_list, key="r_vendor_select")
-        else:
-            st.warning("⚠️ '업체명' 컬럼을 찾을 수 없습니다.")
-            r_vendor = "전체 업체"
+        # 컬럼명 유연하게 대응 (발주/입고)
+        qty_col = next((c for c in ['추가발주수량', '추가발주', '발주'] if c in m_df.columns), None)
+        in_col = next((c for c in ['입고수량', '입고차감', '입고'] if c in m_df.columns), None)
 
-    # --- [데이터 필터링 적용] ---
-    df_6 = m_df.copy()
-    if isinstance(r_date, (list, tuple)) and len(r_date) == 2:
-        df_6 = df_6[(df_6['날짜_only'] >= r_date[0]) & (df_6['날짜_only'] <= r_date[1])]
-    if r_name:
-        df_6 = df_6[df_6['상품명'].astype(str).str.contains(r_name, case=False)]
-    if r_vendor != "전체 업체" and v_col:
-        df_6 = df_6[df_6[v_col] == r_vendor]
+        # --- [상단 필터 영역] ---
+        f1, f2, f3 = st.columns([1.5, 1.5, 1])
+        with f1:
+            # 날짜 범위 선택
+            min_d = m_df['날짜_only'].min() if not m_df['날짜_only'].isnull().all() else datetime.now().date()
+            max_d = m_df['날짜_only'].max() if not m_df['날짜_only'].isnull().all() else datetime.now().date()
+            r_date = st.date_input("📅 조회 기간", [min_d, max_d], key="r_date_range_final")
+        with f2:
+            r_name = st.text_input("🔍 상품명 검색", key="r_name_final")
+        with f3:
+            v_list = ["전체 업체"] + sorted([str(v) for v in m_df['업체명'].unique() if v])
+            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="r_vendor_final")
 
-    # --- [잔량 계산 로직 - KeyError 방어] ---
-    # 사장님 시트의 다양한 컬럼명 후보군을 모두 체크합니다.
-    out_candidates = ['추가발주수량', '추가발주', '발주수량', '발주']
-    in_candidates = ['입고수량', '입고차감', '입고']
-    
-    actual_out_col = next((c for c in out_candidates if c in df_6.columns), None)
-    actual_in_col = next((c for c in in_candidates if c in df_6.columns), None)
+        # --- [데이터 계산 로직] ---
+        df_6 = m_df.copy()
+        # 1. 필터 적용
+        if isinstance(r_date, (list, tuple)) and len(r_date) == 2:
+            df_6 = df_6[(df_6['날짜_only'] >= r_date[0]) & (df_6['날짜_only'] <= r_date[1])]
+        if r_name:
+            df_6 = df_6[df_6['상품명'].astype(str).str.contains(r_name, case=False)]
+        if r_vendor != "전체 업체":
+            df_6 = df_6[df_6['업체명'] == r_vendor]
 
-    # 계산 시작
-    if actual_out_col:
-        df_6['발주분'] = pd.to_numeric(df_6[actual_out_col], errors='coerce').fillna(0)
-    else:
-        df_6['발주분'] = 0
+        # 2. 품목별 잔량 집계 (요청하신 항목들 유지)
+        # 마지막 처리(메모)와 날짜를 가져오기 위해 정렬 후 그룹화
+        df_6 = df_6.sort_values('날짜_dt')
         
-    if actual_in_col:
-        df_6['입고분'] = pd.to_numeric(df_6[actual_in_col], errors='coerce').fillna(0)
-    else:
-        df_6['입고분'] = 0
+        summary = df_6.groupby(['업체명', '상품명', '옵션', '공급처상품명']).agg({
+            qty_col: 'sum' if qty_col else 'count',
+            in_col: 'sum' if in_col else 'count',
+            '날짜': 'last',  # 마지막 기록 날짜
+            '메모': 'last'   # 마지막 처리 내역
+        }).reset_index()
 
-    # 최종 잔량 = 발주 합계 - 입고 합계 (보통 입고를 마이너스로 적으시면 그냥 sum을 해도 되지만, 여기선 절대값 차이로 계산)
-    # 사장님 장부 규칙에 따라 입고가 양수(+)면 뺄셈, 음수(-)면 덧셈이 되도록 처리 필요
-    # 여기서는 입고차감/입고수량이 양수로 입력된다고 가정하고 계산합니다.
-    
-    # 품목별 집계 (업체명, 상품명, 옵션 기준)
-    summary = df_6.groupby([v_col if v_col else '상품명', '상품명', '옵션']).agg({
-        '발주분': 'sum',
-        '입고분': 'sum',
-        '메모': 'last'
-    }).reset_index()
+        # 3. 잔량 계산 및 항목명 변경
+        out_val = pd.to_numeric(summary[qty_col], errors='coerce').fillna(0)
+        in_val = pd.to_numeric(summary[in_col], errors='coerce').fillna(0)
+        summary['리오더 잔량'] = out_val - in_val
+        
+        # 잔량이 있는 데이터만 남기기
+        summary = summary[summary['리오더 잔량'] > 0].sort_values('리오더 잔량', ascending=False)
 
-    # 잔량 계산 (발주 - 입고)
-    summary['현재잔량'] = summary['발주분'] - summary['입고분']
-    
-    # 잔량이 0보다 큰 것만 필터링
-    summary = summary[summary['현재잔량'] > 0].sort_values('현재잔량', ascending=False)
-
-    # --- [화면 표시: 업체별 요약 상황판] ---
-    st.subheader("🏭 업체별 미입고 요약")
-    if not summary.empty and v_col:
-        v_summary = summary.groupby(v_col)['현재잔량'].sum().reset_index()
-        # 최대 4열로 메트릭 표시
+        # --- [화면 표시] ---
+        # 업체별 요약 상황판 (Metric)
+        st.subheader("🏭 업체별 미입고 요약")
+        v_sum = summary.groupby('업체명')['리오더 잔량'].sum().reset_index()
         v_cols = st.columns(4)
-        for i, row in v_summary.iterrows():
+        for i, row in v_sum.iterrows():
             with v_cols[i % 4]:
-                st.metric(label=row[v_col], value=f"{int(row['현재잔량'])} 개")
-    else:
-        st.info("현재 미입고된 잔량이 없습니다.")
+                st.metric(row['업체명'], f"{int(row['리오더 잔량'])}개")
 
-    # --- [화면 표시: 상세 리스트] ---
-    st.subheader("📦 품목별 상세 잔량 현황")
-    st.dataframe(
-        summary[[v_col, '상품명', '옵션', '현재잔량', '최근메모' if '최근메모' in summary.columns else '메모']],
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "현재잔량": st.column_config.NumberColumn("잔량 (개)", format="%d 📦"),
-            "메모": st.column_config.TextColumn("📝 마지막 처리내역")
-        }
-    )
+        # 상세 현황 테이블 (요청하신 순서: 날짜 => 업체명 => 상품명 => 옵션 => 공급처상품명 => 리오더 잔량 => 마지막 처리)
+        st.subheader("📦 품목별 상세 잔량")
+        
+        # 표시용 컬럼 정리 및 이름 변경
+        show_df = summary.rename(columns={'날짜': '마지막 기록일', '메모': '마지막 처리'})
+        final_cols = ['마지막 기록일', '업체명', '상품명', '옵션', '공급처상품명', '리오더 잔량', '마지막 처리']
+        
+        st.dataframe(
+            show_df[final_cols],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "리오더 잔량": st.column_config.NumberColumn("잔량", format="%d 📦"),
+                "마지막 기록일": st.column_config.TextColumn("최근 날짜"),
+                "마지막 처리": st.column_config.TextColumn("📝 처리 내역")
+            }
+        )
+    else:
+        st.info("💡 위 업데이트 버튼을 눌러 최신 장부 데이터를 불러오세요.")
