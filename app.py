@@ -226,7 +226,7 @@ if 'df_raw' in st.session_state:
                 
                 
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (5단계 연동 강화 버전)
+# 4️⃣단계: 입고 관리 및 최종 저장 (시트 컬럼 밀림 완벽 수정본)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -282,7 +282,6 @@ if st.session_state.get('analyzed'):
         btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
-        # 데이터가 입력된 행만 필터링
         change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
         
         if not change_list.empty:
@@ -302,35 +301,46 @@ if st.session_state.get('analyzed'):
                         i_val = int(r['입고차감'])
                         user_memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] and str(r['비고(처리내역)']) != "None" else ""
                         
+                        # 자동 메모 생성
                         parts = []
                         if q_val > 0: parts.append(f"{q_val}발주")
                         if i_val > 0: parts.append(f"-{i_val}입고")
                         auto_memo = f"[{time_short} " + " ".join(parts) + "]"
                         final_memo = f"{auto_memo} {user_memo}".strip()
                         
-                        # 1. 발주기록 시트용 데이터
+                        # 1. 발주기록 시트용 데이터 (기존 순서 유지)
                         rows_qty.append([
                             now_s, r[p['it']], r[p['op']], r[p['vi']], r[p['av']], 
                             r['기존리오더'], q_val, r['권장발주수량'], final_memo, r[p['vn']], i_val
                         ])
                         
-                        # 2. 히스토리 시트용 데이터
+                        # ✅ 2. 히스토리 시트용 데이터 (사장님 구글 시트 순서에 100% 맞춤)
+                        # 순서: A(시간), B(상품명), C(옵션), D(공급처상품명), E(가용재고), F(기존리오더), G(추가발주), H(발주권장), I(메모), J(업체명), K(입고수량)
                         rows_hist.append([
-                            now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
-                            r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo
+                            now_s,          # A: 발주시간
+                            r[p['it']],     # B: 상품명 (아거스어패럴 대신 상품명이 들어감)
+                            r[p['op']],     # C: 옵션
+                            r[p['vi']],     # D: 공급처상품명
+                            r[p['av']],     # E: 가용재고
+                            r['기존리오더'], # F: 기존리오더
+                            q_val,          # G: 추가발주
+                            r['권장발주수량'], # H: 발주권장
+                            final_memo,     # I: 메모(비고)
+                            r[p['vn']],     # J: 업체명 (아거스어패럴이 이제 여기 들어갑니다)
+                            i_val           # K: 입고수량
                         ])
                     
                     # 시트 전송
                     if rows_qty: ws_qty.append_rows(rows_qty)
                     if rows_hist: ws_hist.append_rows(rows_hist)
                     
-                    # 🔥 [수정 핵심] 저장 성공 후 5단계 데이터 강제 초기화
+                    # 5단계 데이터 강제 초기화 (최신 데이터 로드용)
                     if 'db_history' in st.session_state:
                         del st.session_state.db_history
                     
                     st.success(f"✅ 저장 완료! (발주기록 {len(rows_qty)}건 / 히스토리 {len(rows_hist)}건)")
                     time.sleep(1)
-                    st.rerun() # 화면을 새로고침하여 5단계가 최신 데이터를 읽어오게 함
+                    st.rerun() 
                     
                 except Exception as e:
                     st.error(f"저장 실패: {e}")
