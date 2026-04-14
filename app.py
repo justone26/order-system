@@ -103,36 +103,33 @@ def load_reorder_data():
 st.header("1️⃣ 파일 업로드 및 데이터 로드")
 up_file = st.file_uploader("엑셀 파일을 업로드하세요.", type=['xlsx', 'xls'])
 
-# ✅ 초기화 버튼 로직 수정
+# ✅ 초기화 버튼: 모든 기록을 지우고 초기 상태로 만듦
 if st.button("🔄 현재 화면 데이터 초기화", use_container_width=True):
-    # 1. 세션의 모든 데이터를 삭제
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    # 2. 강제 초기화 도장 (파일이 있어도 무시하도록 설정)
-    st.session_state.force_reset = True
-    st.success("✅ 초기화되었습니다. 파일을 다시 올리거나 X를 눌렀다 올려주세요.")
+    st.info("✅ 초기화되었습니다. 업로드된 파일을 X 눌렀다 다시 올리거나, 새 파일을 선택해주세요.")
     st.rerun()
 
-# 💡 파일 로드 로직 (강제 초기화 상태가 아닐 때만 작동)
-if up_file:
-    # 파일을 새로 교체하면 강제 초기화 상태 해제
-    if 'last_file' in st.session_state and st.session_state.last_file != up_file.name:
-        if 'force_reset' in st.session_state:
-            del st.session_state.force_reset
-
-    # 초기화 도장이 없을 때만 데이터 로드
-    if 'df_raw' not in st.session_state and not st.session_state.get('force_reset'):
+# 💡 수정된 로드 로직: 
+# 1. 파일이 업로드되었고 
+# 2. 아직 세션에 df_raw가 없을 때만 로드를 시도합니다.
+if up_file is not None:
+    if 'df_raw' not in st.session_state:
         try:
-            st.session_state.df_raw = pd.read_excel(up_file)
-            st.session_state.last_file = up_file.name # 파일명 기억
+            # 엑셀 읽기 실행
+            temp_df = pd.read_excel(up_file)
+            
+            # 읽기 성공 시 세션에 저장
+            st.session_state.df_raw = temp_df
             st.session_state.analyzed = False
-            st.success("✅ 파일 로드 완료!")
-            st.rerun() 
+            
+            # 파일이 로드되면 화면을 새로고침하여 즉시 2단계를 노출
+            st.rerun()
         except Exception as e:
             st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
 
 # ------------------------------------------------------------------
-# 2️⃣단계 & 3️⃣단계: 데이터가 로드된 상태에서만 노출
+# 2️⃣단계 & 3️⃣단계: 데이터가 로드된 상태(df_raw가 세션에 있을 때)에서만 노출
 # ------------------------------------------------------------------
 if 'df_raw' in st.session_state:
     st.divider()
@@ -170,6 +167,7 @@ if 'df_raw' in st.session_state:
 
         with st.spinner("📊 발주기록 시트 분석 및 잔량 계산 중..."):
             try:
+                # 분석 실행 시 5단계 히스토리 세션 초기화 (최신 데이터 갱신을 위해)
                 if 'db_history' in st.session_state:
                     del st.session_state.db_history
 
@@ -177,6 +175,7 @@ if 'df_raw' in st.session_state:
                 today = datetime.now(KST).date()
                 sh = get_sheet()
                 
+                # 시트 데이터 정리 함수
                 def get_clean_df(name):
                     ws = sh.worksheet(name)
                     data = ws.get_all_values()
@@ -185,6 +184,7 @@ if 'df_raw' in st.session_state:
                         return res.loc[:, ~res.columns.duplicated()]
                     return pd.DataFrame()
 
+                # 발주기록 로드 및 잔량 계산
                 df_master = get_clean_df("발주기록")
                 st.session_state.master_log = df_master 
 
@@ -199,6 +199,7 @@ if 'df_raw' in st.session_state:
                         final_res = qty_sum.sub(in_sum, fill_value=0).clip(lower=0)
                         r_map = final_res.to_dict()
 
+                # 분석 계산 로직
                 df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
                 df[t1w] = pd.to_numeric(df[t1w], errors='coerce').fillna(0).astype(int)
                 
