@@ -425,17 +425,16 @@ if st.session_state.get('analyzed'):
 
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (지정된 9개 컬럼 전용)
+# 6️⃣단계: 실시간 리오더 현황판 (UI 순서 및 메모 로직 정밀 수정)
 # ------------------------------------------------------------------
 def render_step6():
     st.markdown("### 📈 6단계: 실시간 리오더 현황판")
     
-    # 1. 시트 데이터 로드 (4단계에서 저장 후 캐시 삭제 시 새로 읽어옴)
+    # 1. 시트 데이터 로드
     if 'master_log' not in st.session_state:
         try:
             sh = get_sheet()
             ws_qty = sh.worksheet("발주기록")
-            # 시트의 헤더와 데이터를 그대로 읽어와서 데이터프레임 생성
             raw_data = ws_qty.get_all_records()
             st.session_state.master_log = pd.DataFrame(raw_data)
         except Exception as e:
@@ -445,65 +444,78 @@ def render_step6():
     df_log = st.session_state.master_log.copy()
 
     if not df_log.empty:
-        # 2. [UI] 상단 필터 (공급처별, 상품명별 검색)
-        c1, c2, c3 = st.columns([1.5, 2, 1])
+        # 2. [UI 수정] 날짜 검색 추가 및 버튼 위치 조정
+        # 순서: 날짜검색 | 상품명검색 | 공급처필터 | 새로고침버튼
+        c1, c2, c3, c4 = st.columns([1.2, 1.5, 1.2, 0.8])
+        
         with c1:
-            v_list = ["전체"] + sorted(df_log['공급처'].unique().tolist())
-            sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_v_strict")
+            # 날짜 검색 (시트의 '날짜' 컬럼 기준)
+            sel_date = st.text_input("📅 날짜 검색(예: 04-14)", key="s6_date")
         with c2:
+            # 상품명 검색
             sel_s = st.text_input("🔍 상품명 검색", key="s6_s_strict")
         with c3:
-            st.write(" ")
+            # 공급처 필터 (상품명 뒤로 이동)
+            v_list = ["전체"] + sorted(df_log['공급처'].unique().tolist())
+            sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_v_strict")
+        with c4:
+            st.write(" ") # 레이아웃 맞춤용
             if st.button("🔄 현황판 새로고침", use_container_width=True):
-                # 캐시 삭제 후 다시 읽기
                 if 'master_log' in st.session_state: del st.session_state.master_log
                 st.rerun()
 
         # 데이터 필터링 적용
         df_dash = df_log.copy()
+        if sel_date: 
+            df_dash = df_dash[df_dash['날짜'].str.contains(sel_date)]
         if sel_v != "전체": 
             df_dash = df_dash[df_dash['공급처'] == sel_v]
         if sel_s: 
             df_dash = df_dash[df_dash['상품명'].str.contains(sel_s, case=False)]
 
-        # 3. [상단 요약] 시트 컬럼 기준 합계 (계산 로직 단순화)
+        # 3. [상단 요약] 수치 계산
         m1, m2, m3 = st.columns(3)
-        # 총발주 = 기존리오더 + 추가발주
         t_order = pd.to_numeric(df_dash['기존리오더'], errors='coerce').sum() + \
                   pd.to_numeric(df_dash['추가발주'], errors='coerce').sum()
-        # 총입고 = 입고수량
         t_in = pd.to_numeric(df_dash['입고수량'], errors='coerce').sum()
         
         m1.metric("📋 누적 총 발주", f"{int(t_order)}개")
         m2.metric("📥 누적 총 입고", f"{int(t_in)}개")
         m3.metric("⏳ 미입고 잔량", f"{int(t_order - t_in)}개")
 
-        # 4. [표시 영역] 사장님이 말씀하신 딱 9개 순서 그대로 (가공 금지)
-        # 순서: 날짜 | 공급처 | 상품명 | 옵션 | 공급처상품명 | 기존리오더 | 추가발주 | 입고수량 | 메모
+        # 4. [표시 영역] 시트 순서 및 메모 로직 반영
         target_cols = [
             '날짜', '공급처', '상품명', '옵션', '공급처상품명', 
             '기존리오더', '추가발주', '입고수량', '메모'
         ]
         
-        # 실제 시트에 존재하는 컬럼만 필터링 (에러 방지용)
-        existing_cols = [c for c in target_cols if c in df_dash.columns]
-        
         st.markdown("### 📝 상세 현황 리스트 (시트 원본 데이터)")
         st.dataframe(
-            df_dash[existing_cols].sort_values(by='날짜', ascending=False), # 최신순 정렬
+            df_dash[target_cols].sort_values(by='날짜', ascending=False), 
             use_container_width=True, 
             hide_index=True,
             column_config={
                 "날짜": st.column_config.TextColumn("날짜", width="medium"),
                 "기존리오더": st.column_config.NumberColumn("기존", format="%d"),
                 "추가발주": st.column_config.NumberColumn("추가", format="%d"),
-                "입고수량": st.column_config.NumberColumn("입고", format="%d"),
-                "메모": st.column_config.TextColumn("메모", width="large")
+                "입고수량": st.column_config.NumberColumn("입고", format="%d")
             }
         )
     else:
-        st.info("데이터가 없습니다. 4단계에서 먼저 저장해 주세요.")
+        st.info("데이터가 없습니다.")
 
-# 🚨 실행부 (분석이 완료되었을 때만 화면에 표시)
-if st.session_state.get('analyzed'):
-    render_step6()
+# 🚨 [중요] 4단계 메모 생성 로직 수정 (액션이 있을 때만 메모 생성)
+# 사장님, 아래 코드는 4단계의 저장(btn_save) 로직 중 메모 생성 부분에 적용되어야 합니다.
+# ------------------------------------------------------------------
+# q_val(추가발주) > 0 이면 "[날짜 수량발주]" 추가
+# i_val(입고차감) > 0 이면 "[날짜 -수량입고]" 추가
+# 둘 다 0이면 메모 안 함
+# ------------------------------------------------------------------
+# if q_val > 0 or i_val > 0:
+#     m_parts = []
+#     if q_val > 0: m_parts.append(f"{time_short} {q_val}발주")
+#     if i_val > 0: m_parts.append(f"-{i_val}입고")
+#     auto_memo = f"[{' '.join(m_parts)}]"
+#     final_memo = f"{auto_memo} {user_memo}".strip()
+# else:
+#     final_memo = user_memo
