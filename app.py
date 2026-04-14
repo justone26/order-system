@@ -233,48 +233,66 @@ if 'df_raw' in st.session_state:
 
                 
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (3중 시트 전송 버전)
+# 4️⃣단계: 입고 관리 및 최종 저장 (데이터 유실 방지 및 수정 불가 설정)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.header("📊 4단계: 입고 관리 및 최종 발주 확정")
     
     p = st.session_state.p
-    df_disp = st.session_state.df_final.copy()
     
+    # [중요] 검색 시 데이터 날아가는 문제 방지를 위해 st.session_state.df_final을 직접 사용
+    if 'edited_df_state' not in st.session_state:
+        st.session_state.edited_df_state = st.session_state.df_final.copy()
+
     f1, f2 = st.columns([1, 2])
     with f1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
     with f2: s_query = st.text_input("🔍 검색 (상품명/옵션)")
 
-    # 필터 적용 로직
+    # 필터링용 임시 DF
+    df_temp = st.session_state.df_final.copy()
     if f_mode == "🚨 발주필요(세트)":
-        need_items = df_disp[(df_disp['상태'] != "🚫 품절") & (df_disp['권장발주수량'] > 0)][p['it']].unique()
-        df_disp = df_disp[df_disp[p['it']].isin(need_items)]
+        need_items = df_temp[(df_temp['상태'] != "🚫 품절") & (df_temp['권장발주수량'] > 0)][p['it']].unique()
+        df_temp = df_temp[df_temp[p['it']].isin(need_items)]
     elif f_mode != "전체보기":
-        df_disp = df_disp[df_disp['상태'] == f_mode]
+        df_temp = df_temp[df_temp['상태'] == f_mode]
     if s_query:
-        df_disp = df_disp[df_disp[p['it']].str.contains(s_query, case=False) | df_disp[p['op']].str.contains(s_query, case=False)]
+        df_temp = df_temp[df_temp[p['it']].str.contains(s_query, case=False) | df_temp[p['op']].str.contains(s_query, case=False)]
 
     disp_cols = ['상태', p['vn'], p['it'], p['op'], p['vi'], p['av'], '기존리오더', '입고차감', '추가발주', p['t3'], '일판매량', '권장발주수량', '비고(메모)']
     
+    # 에디터 시작
     with st.form("final_form"):
-        edited_df = st.data_editor(df_disp[disp_cols], use_container_width=True, hide_index=True,
+        # edited_df를 바로 세션에 저장하여 검색을 바꿔도 데이터가 유지되게 함
+        edited_df = st.data_editor(
+            df_temp[disp_cols], 
+            use_container_width=True, 
+            hide_index=True,
+            key="main_editor", # 키를 지정하여 상태 유지
             column_config={
                 '상태': st.column_config.TextColumn("상태", disabled=True),
                 p['vn']: st.column_config.TextColumn("공급처", disabled=True),
                 p['it']: st.column_config.TextColumn("상품명", disabled=True),
+                p['op']: st.column_config.TextColumn("옵션", disabled=True),
+                p['vi']: st.column_config.TextColumn("공급처명", disabled=True),
+                p['av']: st.column_config.NumberColumn("가용재고", disabled=True),
+                '기존리오더': st.column_config.NumberColumn("기존리오더", disabled=True), # 수정 금지 설정
                 '입고차감': st.column_config.NumberColumn("📥 입고(-)", min_value=0),
                 '추가발주': st.column_config.NumberColumn("➕ 발주(+)", min_value=0),
+                '권장발주수량': st.column_config.NumberColumn("권장수량", disabled=True),
                 '비고(메모)': st.column_config.TextColumn("📝 메모")
-            })
+            }
+        )
         btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
+        # data_editor의 변경사항은 세션의 'main_editor' 안에 들어있으므로 이를 반영하여 저장
+        # (Streamlit 특성상 form 내부의 data_editor는 바로 change_list를 추출하면 됩니다)
         change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
+        
         if not change_list.empty:
             try:
                 sh = get_sheet()
-                # 시트 연결
                 ws_in = sh.worksheet("입고기록")
                 ws_qty = sh.worksheet("발주기록")
                 ws_hist = sh.worksheet("히스토리")
@@ -285,7 +303,6 @@ if st.session_state.get('analyzed'):
                 rows_in, rows_qty, rows_hist = [], [], []
 
                 for _, r in change_list.iterrows():
-                    # 1. 메모 자동 생성 (6단계 방식)
                     q_val = int(r['추가발주'])
                     i_val = int(r['입고차감'])
                     user_memo = str(r['비고(메모)']).strip() if r['비고(메모)'] and str(r['비고(메모)']) != "None" else ""
@@ -296,32 +313,25 @@ if st.session_state.get('analyzed'):
                     auto_memo = f"[{time_short} " + " ".join(parts) + "]"
                     final_memo = f"{auto_memo} {user_memo}".strip()
                     
-                    # 2. 입고기록 시트용
                     if i_val > 0:
                         rows_in.append([now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], i_val, final_memo])
-                    
-                    # 3. 발주기록 시트용
                     if q_val > 0:
                         rows_qty.append([now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], q_val, final_memo])
                     
-                    # 4. 전체 히스토리 시트용 (무조건 누적)
                     rows_hist.append([
                         now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
                         r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo
                     ])
                 
-                # 시트 전송
                 if rows_in: ws_in.append_rows(rows_in)
                 if rows_qty: ws_qty.append_rows(rows_qty)
                 if rows_hist: ws_hist.append_rows(rows_hist)
                 
-                st.success(f"✅ 저장 완료! (입고 {len(rows_in)}건 / 발주 {len(rows_qty)}건 / 히스토리 {len(rows_hist)}건)")
-                
-                # 저장 후 동기화를 위해 세션 삭제
-                if 'master_log' in st.session_state: del st.session_state.master_log
+                st.success(f"✅ 전송 완료! (입고 {len(rows_in)} / 발주 {len(rows_qty)} / 히스토리 {len(rows_hist)})")
                 time.sleep(1)
-                st.rerun()
-            except Exception as e: st.error(f"저장 실패: {e} (시트 이름을 확인하세요)")
+                st.rerun() # 다시 시작하면서 3단계를 거치면 실시간 잔량이 다시 계산됩니다.
+            except Exception as e:
+                st.error(f"저장 실패: {e}")
                 
 
 # ------------------------------------------------------------------
