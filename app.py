@@ -376,9 +376,9 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (조회 버튼 위치 및 정렬 수정)
+# 5️⃣단계: 전체 히스토리 기록 (조회 버튼 제거 & 실시간 필터링)
 # ------------------------------------------------------------------
-if st.session_state.get('analyzed'):
+if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
     st.divider()
     st.header("📜 5단계: 전체 히스토리 기록")
 
@@ -390,7 +390,6 @@ if st.session_state.get('analyzed'):
             if len(raw_data) > 1:
                 cols_5 = [c.strip() for c in raw_data[0]]
                 h_df = pd.DataFrame(raw_data[1:], columns=cols_5)
-                # 중복 컬럼 제거 및 명칭 통일
                 h_df = h_df.loc[:, ~h_df.columns.duplicated()]
                 h_df.rename(columns={'메모': '비고(처리내역)', '비고': '비고(처리내역)', '비고(메모)': '비고(처리내역)'}, errors='ignore', inplace=True)
                 st.session_state.db_history = h_df
@@ -402,35 +401,44 @@ if st.session_state.get('analyzed'):
     m_df_5 = st.session_state.get('db_history', pd.DataFrame()).copy()
     
     if not m_df_5.empty:
-        # 날짜 컬럼 파싱 (정렬을 위해 필수)
+        # 날짜 컬럼 파싱
         d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
         m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce')
         m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
         
-        # 🛠️ 버튼 위치 조정: 날짜 범위 바로 옆으로 배치
-        c1, c2, c3, c4 = st.columns([1.2, 0.4, 1.2, 1.2]) # c2에 버튼 배치
+        # 🛠️ UI 레이아웃: 조회 버튼을 삭제하고 3컬럼으로 넓게 배치
+        c1, c2, c3 = st.columns([1.5, 1.5, 1.2]) 
+        
         with c1: 
-            sel_dates_5 = st.date_input("📅 조회 날짜 범위", [m_df_5['날짜_only'].min(), m_df_5['날짜_only'].max()], key="h_date_v15")
+            # 달력 날짜만 바꿔도 즉시 반영됩니다.
+            sel_dates_5 = st.date_input(
+                "📅 조회 날짜 범위", 
+                [m_df_5['날짜_only'].min(), m_df_5['날짜_only'].max()], 
+                key="h_date_v15"
+            )
         with c2: 
-            st.write("") # 라벨 높이 맞춤용
-            btn_h_run = st.button("🔍 조회", key="btn_h_run", use_container_width=True)
-        with c3: 
             h_name_5 = st.text_input("🔍 상품명 검색", key="h_name_v15")
-        with c4:
+        with c3:
             t_opts = ["전체 회차"] + sorted(m_df_5['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
             h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_v15")
 
-        # 필터링 및 정렬 로직
+        # 필터링 로직 (버튼 클릭 여부 상관없이 항상 실행)
         df_dis = m_df_5.copy()
         
-        if len(sel_dates_5) == 2:
+        # 1. 기간 필터
+        if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
             df_dis = df_dis[(df_dis['날짜_only'] >= sel_dates_5[0]) & (df_dis['날짜_only'] <= sel_dates_5[1])]
+        
+        # 2. 상품명 검색
         if h_name_5:
+            # 특정 컬럼이 아니라 전체 행에서 검색 (사장님 기존 로직 유지)
             df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
+            
+        # 3. 회차 선택
         if h_time_5 != "전체 회차":
             df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
-        # ✨ 정렬 강화: 최신 발주시간이 무조건 위로 오도록 정렬
+        # ✨ 정렬: 최신 발주시간이 무조건 위로 오도록 정렬
         df_dis = df_dis.sort_values(by='날짜_dt', ascending=False)
 
         st.dataframe(
@@ -440,7 +448,6 @@ if st.session_state.get('analyzed'):
         )
     else:
         st.info("💡 히스토리 내역이 없습니다. 4단계에서 데이터를 먼저 저장해주세요.")
-
 
 
 # ------------------------------------------------------------------
