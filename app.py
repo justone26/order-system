@@ -290,11 +290,11 @@ if st.session_state.get('analyzed'):
         btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
-        # 변경 사항이 있는 데이터만 추출 (입고차감이나 추가발주가 0보다 큰 경우)
+        # 변경 사항 추출 (입고차감이나 추가발주가 있는 행)
         changed_rows = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)].copy()
         
         if not changed_rows.empty:
-            with st.spinner("🚀 사장님 지정 열 순서대로 시트 전송 중..."):
+            with st.spinner("🚀 시트 전송 및 히스토리 업데이트 중..."):
                 try:
                     sh = get_sheet()
                     ws_qty = sh.worksheet("발주기록")
@@ -310,57 +310,41 @@ if st.session_state.get('analyzed'):
                         i_val = int(r['입고차감'])
                         user_memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] and str(r['비고(처리내역)']) != "None" else ""
                         
-                        # 메모 생성 (발주와 입고 내역 포함)
-                        parts = []
-                        if q_val > 0: parts.append(f"{q_val}발주")
-                        if i_val > 0: parts.append(f"-{i_val}입고")
-                        auto_memo = f"[{time_short} " + " ".join(parts) + "]"
+                        auto_memo = f"[{time_short} {q_val}발주 -{i_val}입고]"
                         final_memo = f"{auto_memo} {user_memo}".strip()
                         
-                        # 🔥 [발주기록 시트] 사장님 지정 A~I열 순서 엄수
-                        # A:날짜, B:공급처, C:상품명, D:옵션, E:공급처상품명, F:기존리오더, G:추가발주, H:입고수량, I:메모
+                        # [발주기록] A~I열 순서 엄수
                         rows_qty.append([
-                            now_s,              # A: 날짜
-                            r[p['vn']],         # B: 공급처
-                            r[p['it']],         # C: 상품명
-                            r[p['op']],         # D: 옵션
-                            r[p['vi']],         # E: 공급처상품명
-                            int(r['기존리오더']), # F: 기존리오더
-                            q_val,              # G: 추가발주
-                            i_val,              # H: 입고수량
-                            final_memo          # I: 메모
+                            now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
+                            int(r['기존리오더']), q_val, i_val, final_memo
                         ])
                         
-                        # [히스토리 시트] 저장
+                        # [히스토리] 저장 (5단계가 이 데이터를 읽어갑니다)
                         rows_hist.append([
                             now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
                             r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo
                         ])
 
-                        # [화면 실시간 반영 및 입력값 리셋]
+                        # 화면 실시간 반영
                         mask = (st.session_state.df_final[p['it']] == r[p['it']]) & (st.session_state.df_final[p['op']] == r[p['op']])
-                        new_reorder = int(r['기존리오더']) + q_val - i_val
-                        
-                        st.session_state.df_final.loc[mask, '기존리오더'] = max(0, new_reorder)
-                        st.session_state.df_final.loc[mask, '추가발주'] = 0
-                        st.session_state.df_final.loc[mask, '입고차감'] = 0
-                        st.session_state.df_final.loc[mask, '비고(처리내역)'] = ""
+                        st.session_state.df_final.loc[mask, '기존리오더'] = max(0, int(r['기존리오더']) + q_val - i_val)
 
-                    # 실제 시트 전송
+                    # 시트 전송 실행
                     if rows_qty: ws_qty.append_rows(rows_qty, value_input_option='USER_ENTERED')
                     if rows_hist: ws_hist.append_rows(rows_hist, value_input_option='USER_ENTERED')
                     
-                    # 6단계에서 시트를 새로 읽어오도록 캐시 삭제
+                    # 🚨 [핵심 수정] 5단계와 6단계 캐시를 삭제해서 새로 읽게 만듦
+                    if 'db_history' in st.session_state: del st.session_state.db_history
                     if 'master_log' in st.session_state: del st.session_state.master_log
                     
-                    st.success(f"✅ 시트 저장 및 수치 업데이트 완료! ({len(rows_qty)}건)")
+                    st.success(f"✅ 저장 완료! 히스토리에 {len(rows_hist)}건이 추가되었습니다.")
                     time.sleep(1)
                     st.rerun()
                     
                 except Exception as e:
                     st.error(f"저장 중 오류 발생: {e}")
         else:
-            st.warning("⚠️ 입력된 수정 사항(입고 또는 발주)이 없습니다.")
+            st.warning("⚠️ 저장할 변경 내역이 없습니다.")
             
 
 # ------------------------------------------------------------------
