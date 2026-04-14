@@ -98,44 +98,43 @@ def load_reorder_data():
 
 # --- [메인 로직 시작] ---
 
+# --- [메인 로직 시작] ---
+
 # ------------------------------------------------------------------
 # 1️⃣단계: 파일 업로드 및 데이터 로드
 # ------------------------------------------------------------------
 st.header("1️⃣ 파일 업로드 및 데이터 로드")
 up_file = st.file_uploader("엑셀 파일을 업로드하세요.", type=['xlsx', 'xls'])
 
-# ✅ 초기화 버튼: 세션을 비우고 '초기화 상태'임을 명시합니다.
+# ✅ 초기화 버튼 로직
 if st.button("🔄 현재 화면 데이터 초기화", use_container_width=True):
+    # 세션의 모든 데이터를 삭제합니다.
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    st.session_state.just_reset = True  # 초기화 직후임을 알리는 플래그
-    st.success("✅ 모든 데이터가 초기화되었습니다.")
+    # '리셋됨' 상태를 저장하여 파일이 있어도 무시하게 합니다.
+    st.session_state.reset_done = True 
     st.rerun()
 
-# 파일 로드 로직
+# 💡 파일이 올라와 있어도 리셋 버튼을 눌렀다면 아무것도 하지 않습니다.
 if up_file:
-    # 초기화 버튼을 누른 직후가 아닐 때만 로드 실행
-    if 'df_raw' not in st.session_state and not st.session_state.get('just_reset'):
+    # 파일을 새로 올렸거나, 아직 리셋을 누르지 않은 경우에만 로드
+    if 'df_raw' not in st.session_state and not st.session_state.get('reset_done'):
         st.session_state.df_raw = pd.read_excel(up_file)
         st.session_state.analyzed = False
         st.success("✅ 파일 로드 완료!")
         st.rerun()
-    
-    # 만약 파일을 새로 올리면 초기화 플래그 해제
-    if st.session_state.get('just_reset'):
-        if st.button("🔼 새로 로드하기 (파일이 이미 업로드됨)", use_container_width=True):
-            del st.session_state.just_reset
-            st.rerun()
 
 # ------------------------------------------------------------------
-# 2️⃣단계 & 3️⃣단계: 데이터가 세션에 존재할 때만 나타남
+# 2️⃣단계 & 3️⃣단계: 데이터가 로드된 상태에서만 노출
 # ------------------------------------------------------------------
-if 'df_raw' in st.session_state and not st.session_state.get('just_reset'):
+# 세션에 데이터가 있을 때만 (리셋된 상태가 아닐 때만) 하위 단계를 보여줍니다.
+if 'df_raw' in st.session_state:
     st.divider()
     df_work = st.session_state.df_raw
     cols = df_work.columns.tolist()
     
     st.subheader("⚙️ 2️⃣단계: 매핑 설정")
+    # ... [이후 매핑 및 분석 코드는 기존과 동일하게 유지] ...
     c1, c2 = st.columns(2)
     with c1:
         sold_out = st.selectbox("1. 품절 여부", cols, index=find_idx(cols, ['품절']))
