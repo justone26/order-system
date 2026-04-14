@@ -262,83 +262,92 @@ if st.session_state.get('analyzed'):
                 st.error(f"저장 실패: {e}")
 
 # ------------------------------------------------------------------
-# [5~6단계: 기록 및 리오더 현황 - 메모 자동 연동 버전]
+# [5단계 & 6단계 분리 작업 - 기록 vs 현황]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
-    st.header("🕒 5~6단계: 기록 및 리오더 현황")
-
-    def load_master_data():
+    
+    # 💡 데이터를 가져오는 버튼 (API 호출 최소화를 위해 통합 버튼 사용)
+    if st.button("🔄 최신 장부 데이터 동기화 (구글 시트)", use_container_width=True, type="primary"):
         try:
             sh = get_sheet()
             if sh:
                 ws = sh.worksheet("발주기록")
-                # 데이터를 가져온 후 컬럼명 공백 제거
                 df_temp = pd.DataFrame(ws.get_all_records())
                 df_temp.columns = [c.strip() for c in df_temp.columns]
                 st.session_state.master_log = df_temp
-                st.success("✅ 구글 시트 데이터 로드 완료!")
+                st.success("✅ 시트에서 최신 데이터를 성공적으로 가져왔습니다!")
         except Exception as e: 
             st.error(f"📡 시트 로드 실패: {e}")
 
-    if st.button("🔄 기록 및 리오더 데이터 불러오기", use_container_width=True, type="primary"):
-        load_master_data()
-
+    # 데이터가 로드된 경우에만 5, 6단계 표시
     if 'master_log' in st.session_state and not st.session_state.master_log.empty:
         m_df = st.session_state.master_log.copy()
         
-        # 날짜 컬럼 처리 (시트 헤더에 따라 유연하게 대응)
+        # 공통 날짜 처리
         date_col = '날짜' if '날짜' in m_df.columns else m_df.columns[0]
         m_df['일시_dt'] = pd.to_datetime(m_df[date_col], errors='coerce').dt.date
 
-        # --- [5단계: 히스토리 모드] ---
-        with st.expander("📜 5단계: 최근 히스토리 조회 (자동 메모 포함)", expanded=True):
-            h_search = st.text_input("🔍 상품명/옵션 검색", key="final_search_v2")
-            df_h = m_df.copy()
-            if h_search:
-                df_h = df_h[df_h['상품명'].astype(str).str.contains(h_search, case=False) |
-                            df_h['옵션'].astype(str).str.contains(h_search, case=False)]
+        # --- [5단계: 전체 발주/입고 히스토리 (기록 창고)] ---
+        st.header("📜 5단계: 전체 발주/입고 히스토리")
+        with st.expander("📝 시간대별 모든 작업 기록 확인", expanded=True):
+            h_search = st.text_input("🔍 상품명 또는 옵션으로 기록 찾기", key="search_step_5")
             
-            # 최신순 정렬하여 메모와 함께 표시
+            df_5 = m_df.copy()
+            if h_search:
+                df_5 = df_5[df_5['상품명'].astype(str).str.contains(h_search, case=False) |
+                            df_5['옵션'].astype(str).str.contains(h_search, case=False)]
+            
+            # 최신 기록이 위로 오게 정렬
             st.dataframe(
-                df_h.sort_values(by=date_col, ascending=False).drop(columns=['일시_dt'], errors='ignore'), 
+                df_5.sort_values(by=date_col, ascending=False).drop(columns=['일시_dt'], errors='ignore'), 
                 use_container_width=True, 
                 hide_index=True,
-                column_config={"메모": st.column_config.TextColumn("📝 처리 내역", width="large")}
+                column_config={
+                    "메모": st.column_config.TextColumn("📝 처리 내역", width="large"),
+                    "추가발주": st.column_config.NumberColumn("수량 변화", format="%d")
+                }
             )
 
-        # --- [6단계: 실시간 리오더 잔량] ---
-        with st.expander("📊 6단계: 실시간 리오더 현황 (최근 메모 연동)", expanded=True):
-            target_qty_col = '추가발주' # 사장님 시트의 수량 컬럼명
+        st.divider()
+
+
+        
+        # --- [6단계: 실시간 미입고 리오더 현황 (잔량 대시보드)] ---
+        st.header("📊 6단계: 실시간 리오더 현황")
+        with st.expander("📦 현재 입고 대기 중인 잔량 합계", expanded=True):
+            target_qty_col = '추가발주' # 시트에서 수량이 저장되는 컬럼명
             
             if target_qty_col in m_df.columns:
-                # 숫자 변환
+                # 숫자 타입 변환
                 m_df[target_qty_col] = pd.to_numeric(m_df[target_qty_col], errors='coerce').fillna(0)
                 
-                # 💡 [최근 메모 추출 로직] 각 상품/옵션별로 가장 마지막(최신) 메모를 가져옵니다.
-                # 날짜순 정렬 후 마지막 메모 픽업
+                # 1. 품목별로 수량 합산 (발주는 +, 입고는 -이므로 합산하면 잔량이 나옴)
+                df_r = m_df.groupby(['상품명', '옵션'])[target_qty_col].sum().reset_index()
+                df_r.columns = ['상품명', '옵션', '현재잔량']
+                
+                # 2. 각 품목별로 가장 최근 메모 하나만 가져오기
                 last_memos = m_df.sort_values(by=date_col).groupby(['상품명', '옵션'])['메모'].last().reset_index()
                 
-                # 잔량 집계
-                df_r = m_df.groupby(['상품명', '옵션'])[target_qty_col].sum().reset_index()
-                df_r.columns = ['상품명', '옵션', '미입고잔량']
+                # 3. 잔량과 메모 결합
+                df_6 = pd.merge(df_r, last_memos, on=['상품명', '옵션'], how='left')
                 
-                # 잔량 데이터에 최근 메모 합치기
-                df_final_r = pd.merge(df_r, last_memos, on=['상품명', '옵션'], how='left')
+                # 4. 잔량이 0보다 큰 것(주문 상태)만 필터링하여 표시
+                df_6 = df_6[df_6['현재잔량'] > 0].sort_values('현재잔량', ascending=False)
                 
-                # 잔량이 있는 것만 표시
-                df_final_r = df_final_r[df_final_r['미입고잔량'] > 0].sort_values('미입고잔량', ascending=False)
-                
-                st.dataframe(
-                    df_final_r, 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={
-                        "미입고잔량": st.column_config.NumberColumn("잔량", format="%d 📦"),
-                        "메모": st.column_config.TextColumn("📝 최근 처리 내용")
-                    }
-                )
+                if not df_6.empty:
+                    st.dataframe(
+                        df_6, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={
+                            "현재잔량": st.column_config.NumberColumn("미입고 잔량", format="%d 📦"),
+                            "메모": st.column_config.TextColumn("📝 마지막 처리 내용", width="medium")
+                        }
+                    )
+                else:
+                    st.info("✅ 모든 리오더가 입고 완료되어 잔량이 없습니다.")
             else:
-                st.warning(f"⚠️ 시트에서 '{target_qty_col}' 컬럼을 찾을 수 없습니다.")
+                st.warning(f"⚠️ 시트에서 '{target_qty_col}' 컬럼을 찾을 수 없어 현황을 계산할 수 없습니다.")
     else:
-        st.info("💡 위 버튼을 클릭하면 구글 시트의 최신 기록을 가져옵니다.")
+        st.info("💡 위 [동기화] 버튼을 클릭하면 구글 시트에서 전체 히스토리와 현재 잔량을 계산하여 보여줍니다.")
