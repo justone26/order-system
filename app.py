@@ -95,9 +95,6 @@ def load_reorder_data():
         
     return r_map
     
-
-# --- [메인 로직 시작] ---
-
 # --- [메인 로직 시작] ---
 
 # ------------------------------------------------------------------
@@ -111,30 +108,29 @@ if st.button("🔄 현재 화면 데이터 초기화", use_container_width=True)
     # 세션의 모든 데이터를 삭제합니다.
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    # '리셋됨' 상태를 저장하여 파일이 있어도 무시하게 합니다.
-    st.session_state.reset_done = True 
+    st.success("✅ 초기화되었습니다. 파일을 다시 업로드하거나, 이미 있다면 X를 눌렀다 다시 올려주세요.")
     st.rerun()
 
-# 💡 파일이 올라와 있어도 리셋 버튼을 눌렀다면 아무것도 하지 않습니다.
+# 💡 수정된 로직: 파일이 있고 세션에 데이터가 없을 때만 딱 한 번 로드합니다.
 if up_file:
-    # 파일을 새로 올렸거나, 아직 리셋을 누르지 않은 경우에만 로드
-    if 'df_raw' not in st.session_state and not st.session_state.get('reset_done'):
-        st.session_state.df_raw = pd.read_excel(up_file)
-        st.session_state.analyzed = False
-        st.success("✅ 파일 로드 완료!")
-        st.rerun()
+    if 'df_raw' not in st.session_state:
+        try:
+            st.session_state.df_raw = pd.read_excel(up_file)
+            st.session_state.analyzed = False
+            st.success("✅ 파일 로드 완료!")
+            st.rerun() # 로드 직후 화면을 새로고침해서 2단계를 띄웁니다.
+        except Exception as e:
+            st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
 
 # ------------------------------------------------------------------
 # 2️⃣단계 & 3️⃣단계: 데이터가 로드된 상태에서만 노출
 # ------------------------------------------------------------------
-# 세션에 데이터가 있을 때만 (리셋된 상태가 아닐 때만) 하위 단계를 보여줍니다.
 if 'df_raw' in st.session_state:
     st.divider()
     df_work = st.session_state.df_raw
     cols = df_work.columns.tolist()
     
     st.subheader("⚙️ 2️⃣단계: 매핑 설정")
-    # ... [이후 매핑 및 분석 코드는 기존과 동일하게 유지] ...
     c1, c2 = st.columns(2)
     with c1:
         sold_out = st.selectbox("1. 품절 여부", cols, index=find_idx(cols, ['품절']))
@@ -163,9 +159,9 @@ if 'df_raw' in st.session_state:
             'av': avail, 't3': t3d, 't7': t1w, 'lt': lt, 'ss': ss, 'rd': reg_date
         }
 
-        with st.spinner("📊 분석 진행 중..."):
+        with st.spinner("📊 발주기록 시트 분석 및 잔량 계산 중..."):
             try:
-                # 분석 시작 시 5단계 데이터 초기화
+                # 분석 실행 시 5단계 히스토리 세션 초기화
                 if 'db_history' in st.session_state:
                     del st.session_state.db_history
 
@@ -173,7 +169,6 @@ if 'df_raw' in st.session_state:
                 today = datetime.now(KST).date()
                 sh = get_sheet()
                 
-                # 데이터 로드 함수
                 def get_clean_df(name):
                     ws = sh.worksheet(name)
                     data = ws.get_all_values()
@@ -196,7 +191,7 @@ if 'df_raw' in st.session_state:
                         final_res = qty_sum.sub(in_sum, fill_value=0).clip(lower=0)
                         r_map = final_res.to_dict()
 
-                # 분석 계산
+                # 분석 계산 로직
                 df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
                 df[t1w] = pd.to_numeric(df[t1w], errors='coerce').fillna(0).astype(int)
                 
@@ -227,7 +222,7 @@ if 'df_raw' in st.session_state:
                 st.rerun()
                 
             except Exception as e:
-                st.error(f"⚠️ 오류: {e}")
+                st.error(f"⚠️ 분석 오류: {e}")
                 
                 
 # ------------------------------------------------------------------
