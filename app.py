@@ -431,50 +431,89 @@ if st.session_state.get('analyzed'):
 
 
 
-if st.session_state.get('analyzed'):
+# ------------------------------------------------------------------
+# 6️⃣단계: 실시간 리오더 현황판 (검색/필터 + 수치 집계)
+# ------------------------------------------------------------------
+def render_step6():
     st.divider()
-    st.header("📊 6단계: 실시간 리오더 현황판")
+    st.header("📈 6단계: 실시간 리오더 현황판")
+    
+    # 1. 데이터 로드 (구글 시트 '발주기록'에서 실시간으로 가져옴)
+    if 'master_log' not in st.session_state:
+        with st.spinner("최신 데이터를 불러오는 중..."):
+            try:
+                sh = get_sheet()
+                ws_qty = sh.worksheet("발주기록")
+                raw_data = ws_qty.get_all_records()
+                st.session_state.master_log = pd.DataFrame(raw_data)
+            except Exception as e:
+                st.error(f"데이터 로드 실패: {e}")
+                st.session_state.master_log = pd.DataFrame()
 
-    # 1. 시트 로드 (A~J열만 강제 인식)
-    def load_clean_data():
-        try:
-            sh = get_sheet()
-            ws_log = sh.worksheet("발주기록")
-            raw = ws_log.get_all_values()
-            if len(raw) > 1:
-                # 헤더와 데이터를 분리한 후, A~J열(0~9번 인덱스)만 잘라냅니다.
-                df = pd.DataFrame(raw[1:], columns=[c.strip() for c in raw[0]])
-                return df.iloc[:, :10] # 🚨 K열 이후는 쳐다보지도 않음
-            return pd.DataFrame()
-        except: return pd.DataFrame()
+    df_log = st.session_state.master_log.copy()
 
-    if 'master_log' not in st.session_state or st.session_state.master_log is None:
-        st.session_state.master_log = load_clean_data()
-
-    m_df = st.session_state.master_log.copy()
-
-    if not m_df.empty:
-        # 업체별 요약판 (이전과 동일 로직)
-        # ... (중략: 컨트롤러 및 요약판 코드) ...
-
-        # 🚨 수치 계산 로직 (사장님 시트 컬럼명 기준)
-        m_df['기존리오더'] = pd.to_numeric(m_df['기존리오더'], errors='coerce').fillna(0)
-        m_df['추가발주'] = pd.to_numeric(m_df['추가발주'], errors='coerce').fillna(0)
-        m_df['입고수량'] = pd.to_numeric(m_df['입고수량'], errors='coerce').fillna(0)
-        m_df['총발주'] = m_df['기존리오더'] + m_df['추가발주']
+    if not df_log.empty:
+        # 2. 상단 검색 및 필터 UI
+        c1, c2, c3 = st.columns([1, 1, 2])
+        with c1:
+            v_list = ["전체"] + sorted(df_log['공급처'].unique().tolist())
+            sel_v = st.selectbox("🏭 공급처 필터", v_list, key="dash_v_box")
+        with c2:
+            sel_s = st.text_input("🔍 상품명 검색", key="dash_s_input")
         
-        # 상세 데이터 표 (사장님 요청 순서)
-        summary = m_df.groupby(['공급처', '상품명', '옵션', '공급처상품명']).agg({
-            '총발주': 'sum',
+        # 데이터 필터링 적용
+        df_dash = df_log.copy()
+        if sel_v != "전체":
+            df_dash = df_dash[df_dash['공급처'] == sel_v]
+        if sel_s:
+            df_dash = df_dash[df_dash['상품명'].str.contains(sel_s, case=False)]
+
+        # 3. 실시간 수치 집계 로직
+        # 동일 상품/옵션별로 그룹화하여 계산
+        summary = df_dash.groupby(['공급처', '상품명', '옵션']).agg({
+            '추가발주': 'sum',
             '입고수량': 'sum',
-            '날짜': 'max',
-            '메모': lambda x: " / ".join(filter(None, dict.fromkeys(map(str, x))))
+            '기존리오더': 'first'  # 각 항목의 최초 리오더값
         }).reset_index()
+        
+        # 수식 적용
+        summary['총발주'] = summary['기존리오더'] + summary['추가발주']
+        summary['리오더잔량'] = summary['총발주'] - summary['입고수량']
+        
+        # 🚨 [중요] 마이너스 방지 로직: 0보다 작으면 0으로 처리
+        summary['리오더잔량'] = summary['리오더잔량'].apply(lambda x: max(0, x))
 
-        summary['리오더 잔량'] = summary['총발주'] - summary['입고수량']
+        # 4. 상단 요약 메트릭 표시
+        m1, m2, m3 = st.columns(3)
+        total_order = int(summary['총발주'].sum())
+        total_in = int(summary['입고수량'].sum())
+        total_remain = int(summary['리오더잔량'].sum())
         
-        # 순서 고정
-        summary.rename(columns={'날짜': '최근기록일', '입고수량': '총입고', '메모': '비고(처리내역)'}, inplace=True)
-        f_order = ['최근기록일', '공급처', '상품명', '옵션', '공급처상품명', '총발주', '총입고', '리오더 잔량', '비고(처리내역)']
+        m1.metric("📦 누적 총 발주", f"{total_order}개")
+        m2.metric("📥 누적 총 입고", f"{total_in}개")
+        m3.metric("⏳ 현재 미입고 잔량", f"{total_remain}개", delta_color="inverse")
         
-        st.dataframe(summary[f_order], use_container_width=True, hide_index=True)
+        # 5. 상세 현황판 테이블
+        st.subheader("📝 상세 현황 리스트")
+        st.dataframe(
+            summary[['공급처', '상품명', '옵션', '총발주', '입고수량', '리오더잔량']], 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "총발주": st.column_config.NumberColumn("총발주(기존+추가)"),
+                "입고수량": st.column_config.NumberColumn("총입고 완료"),
+                "리오더잔량": st.column_config.NumberColumn("남은 잔량", help="0 이하는 0으로 표시됩니다.")
+            }
+        )
+        
+        # 새로고침 버튼
+        if st.button("🔄 현황판 데이터 새로고침"):
+            if 'master_log' in st.session_state:
+                del st.session_state.master_log
+            st.rerun()
+            
+    else:
+        st.info("시트에 기록된 발주 내역이 없습니다. 4단계에서 저장을 먼저 진행해 주세요.")
+
+# 함수 호출 (메인 코드에서 원하는 위치에 배치)
+render_step6()
