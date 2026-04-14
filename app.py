@@ -263,13 +263,12 @@ if st.session_state.get('analyzed') and 'master_log' in st.session_state:
     st.dataframe(df_5[target_cols].sort_values('날짜', ascending=False), use_container_width=True, hide_index=True)
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (KeyError 방어형)
+# 6️⃣단계: 실시간 리오더 현황판 (수량 자동 메모 생성 버전)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.header("📊 6단계: 실시간 리오더 현황판")
 
-    # [실시간 업데이트 버튼]
     if st.button("🔄 실시간 장부 데이터 동기화", use_container_width=True, type="secondary"):
         with st.spinner("📡 최신 장부 데이터를 가져오는 중..."):
             try:
@@ -286,86 +285,86 @@ if st.session_state.get('analyzed'):
     if 'master_log' in st.session_state and not st.session_state.master_log.empty:
         m_df = st.session_state.master_log.copy()
         
-        # 1. 컬럼 존재 여부 사전 체크 (사장님 시트명에 맞춰 자동 매칭)
-        # 발주/입고 컬럼
+        # 컬럼 매칭
         qty_col = next((c for c in ['추가발주수량', '추가발주', '발주수량'] if c in m_df.columns), None)
         in_col = next((c for c in ['입고수량', '입고차감', '입고'] if c in m_df.columns), None)
-        
-        # 날짜/메모/업체명/공급처상품명 컬럼
-        date_col = next((c for c in ['날짜', '등록일', '일자'] if c in m_df.columns), None)
-        memo_col = next((c for c in ['메모', '비고', '비고(메모)'] if c in m_df.columns), None)
-        v_col = next((c for c in ['업체명', '공급처', '제조사'] if c in m_df.columns), '업체명')
-        vi_col = next((c for c in ['공급처상품명', '공급처명', '매입상품명'] if c in m_df.columns), '공급처상품명')
+        date_col = next((c for c in ['날짜', '등록일'] if c in m_df.columns), '날짜')
+        memo_col = next((c for c in ['메모', '비고'] if c in m_df.columns), '메모')
+        v_col = next((c for c in ['업체명', '공급처'] if c in m_df.columns), '업체명')
+        vi_col = next((c for c in ['공급처상품명', '매입상품명'] if c in m_df.columns), '공급처상품명')
 
-        # 날짜 데이터 처리
-        if date_col:
-            m_df['날짜_dt'] = pd.to_datetime(m_df[date_col], errors='coerce')
-            m_df['날짜_only'] = m_df['날짜_dt'].dt.date
-        else:
-            m_df['날짜_only'] = datetime.now().date()
+        m_df['날짜_dt'] = pd.to_datetime(m_df[date_col], errors='coerce')
+        m_df['날짜_only'] = m_df['날짜_dt'].dt.date
 
-        # --- [상단 필터 영역] ---
+        # --- [⭐ 핵심: 수량 기반 자동 메모 생성] ---
+        def generate_auto_memo(row):
+            parts = []
+            d_str = row['날짜_dt'].strftime('%m/%d') if pd.notnull(row['날짜_dt']) else ""
+            
+            # 입고나 발주 수량이 있으면 메모가 없어도 수량을 텍스트로 만듦
+            q_val = pd.to_numeric(row[qty_col], errors='coerce') if qty_col else 0
+            i_val = pd.to_numeric(row[in_col], errors='coerce') if in_col else 0
+            u_memo = str(row[memo_col]).strip() if memo_col in row and str(row[memo_col]).lower() != 'nan' else ""
+            
+            if i_val > 0: parts.append(f"-{int(i_val)}입고")
+            if q_val > 0: parts.append(f"{int(q_val)}발주")
+            
+            auto_msg = f"[{d_str} " + " ".join(parts) + "]" if parts else ""
+            
+            # 기존 메모가 있으면 뒤에 붙여줌
+            return f"{auto_msg} {u_memo}".strip()
+
+        m_df['작성내역'] = m_df.apply(generate_auto_memo, axis=1)
+
+        # --- [필터링 및 집계] ---
         f1, f2, f3 = st.columns([1.5, 1.5, 1])
         with f1:
-            r_date = st.date_input("📅 조회 기간", [m_df['날짜_only'].min(), m_df['날짜_only'].max()], key="r_date_final")
+            r_date = st.date_input("📅 내역 확인 기간", [m_df['날짜_only'].min(), m_df['날짜_only'].max()], key="r_date_v4")
         with f2:
-            r_name = st.text_input("🔍 상품명 검색", key="r_name_final")
+            r_name = st.text_input("🔍 상품명 검색", key="r_name_v4")
         with f3:
-            v_list = ["전체 업체"] + sorted([str(v) for v in m_df[v_col].unique() if v]) if v_col in m_df.columns else ["전체 업체"]
-            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="r_vendor_final")
+            v_list = ["전체 업체"] + sorted([str(v) for v in m_df[v_col].unique() if v])
+            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="r_vendor_v4")
 
-        # --- [데이터 계산 및 집계] ---
         df_6 = m_df.copy()
         if isinstance(r_date, (list, tuple)) and len(r_date) == 2:
             df_6 = df_6[(df_6['날짜_only'] >= r_date[0]) & (df_6['날짜_only'] <= r_date[1])]
         if r_name:
             df_6 = df_6[df_6['상품명'].astype(str).str.contains(r_name, case=False)]
-        if r_vendor != "전체 업체" and v_col in df_6.columns:
+        if r_vendor != "전체 업체":
             df_6 = df_6[df_6[v_col] == r_vendor]
 
-        # 집계 함수(agg)에 넣을 딕셔너리를 유동적으로 생성 (KeyError 방지 핵심)
-        agg_dict = {}
-        if qty_col: agg_dict[qty_col] = 'sum'
-        if in_col: agg_dict[in_col] = 'sum'
-        if date_col: agg_dict[date_col] = 'last'
-        if memo_col: agg_dict[memo_col] = 'last'
+        # 기간 내의 모든 '작성내역'을 합침
+        def combine_history(series):
+            hist = [str(h) for h in series if h and str(h).strip()]
+            return " / ".join(dict.fromkeys(hist))
 
-        # 그룹화 기준 (있는 컬럼만 사용)
-        group_cols = [c for c in [v_col, '상품명', '옵션', vi_col] if c in df_6.columns]
-        
-        if agg_dict and group_cols:
-            summary = df_6.groupby(group_cols).agg(agg_dict).reset_index()
+        group_keys = [c for c in [v_col, '상품명', '옵션', vi_col] if c in df_6.columns]
+        summary = df_6.groupby(group_keys).agg({
+            qty_col: 'sum' if qty_col else 'count',
+            in_col: 'sum' if in_col else 'count',
+            '작성내역': combine_history,
+            date_col: 'max'
+        }).reset_index()
 
-            # 잔량 계산
-            out_val = pd.to_numeric(summary[qty_col], errors='coerce').fillna(0) if qty_col else 0
-            in_val = pd.to_numeric(summary[in_col], errors='coerce').fillna(0) if in_col else 0
-            summary['리오더 잔량'] = out_val - in_val
-            
-            summary = summary[summary['리오더 잔량'] > 0].sort_values('리오더 잔량', ascending=False)
+        summary['리오더 잔량'] = pd.to_numeric(summary[qty_col]).fillna(0) - pd.to_numeric(summary[in_col]).fillna(0)
+        summary = summary[summary['리오더 잔량'] > 0].sort_values('리오더 잔량', ascending=False)
 
-            # --- [화면 표시] ---
-            st.subheader("🏭 업체별 미입고 요약")
-            if v_col in summary.columns:
-                v_sum = summary.groupby(v_col)['리오더 잔량'].sum().reset_index()
-                v_cols = st.columns(4)
-                for i, row in v_sum.iterrows():
-                    with v_cols[i % 4]:
-                        st.metric(row[v_col], f"{int(row['리오더 잔량'])}개")
+        # --- [출력] ---
+        st.subheader("🏭 업체별 미입고 요약")
+        v_sum = summary.groupby(v_col)['리오더 잔량'].sum().reset_index()
+        v_cols = st.columns(4)
+        for i, row in v_sum.iterrows():
+            with v_cols[i % 4]: st.metric(row[v_col], f"{int(row['리오더 잔량'])}개")
 
-            st.subheader("📦 품목별 상세 잔량")
-            # 사장님이 요청하신 항목 순서로 재배치 (있는 컬럼만)
-            final_order = [date_col, v_col, '상품명', '옵션', vi_col, '리오더 잔량', memo_col]
-            display_cols = [c for c in final_order if c in summary.columns]
-            
-            st.dataframe(
-                summary[display_cols],
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "리오더 잔량": st.column_config.NumberColumn("잔량", format="%d 📦")
-                }
-            )
-        else:
-            st.warning("⚠️ 집계할 수 있는 데이터 컬럼이 부족합니다. 시트의 헤더를 확인해주세요.")
+        st.subheader("📦 품목별 상세 잔량 및 처리 히스토리")
+        show_cols = [date_col, v_col, '상품명', '옵션', vi_col, '리오더 잔량', '작성내역']
+        display_df = summary[[c for c in show_cols if c in summary.columns]].copy()
+        display_df.rename(columns={'작성내역': '비고(처리내역)', date_col: '최근기록일'}, inplace=True)
+
+        st.dataframe(
+            display_df, use_container_width=True, hide_index=True,
+            column_config={"리오더 잔량": st.column_config.NumberColumn("잔량", format="%d 📦")}
+        )
     else:
         st.info("💡 위 업데이트 버튼을 눌러 최신 장부 데이터를 불러오세요.")
