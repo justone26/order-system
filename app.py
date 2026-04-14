@@ -134,7 +134,7 @@ if 'df_raw' in st.session_state:
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
 # ------------------------------------------------------------------
-    # 3️⃣단계: 분석 설정 및 실행 (발주기록 시트 통합 반영 버전)
+    # 3️⃣단계: 분석 설정 및 실행 (발주기록 시트 통합 및 명칭 통일 버전)
     # ------------------------------------------------------------------
     st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정 및 실행")
@@ -164,29 +164,26 @@ if 'df_raw' in st.session_state:
                         return res.loc[:, ~res.columns.duplicated()]
                     return pd.DataFrame()
 
-                # ✅ [수정] 이제 '입고기록' 시트는 읽지 않고 '발주기록'만 읽습니다.
+                # 시트 로드 (발주기록 통합 분석)
                 df_master = get_clean_df("발주기록")
-                st.session_state.master_log = df_master # 5, 6단계용 저장
+                st.session_state.master_log = df_master 
 
                 r_map = {}
-                # ✅ [수정] 통합 발주기록 시트 내에서 '추가발주'와 '입고수량'을 대조하여 잔량 계산
                 if not df_master.empty:
                     it_c, op_c, q_c, in_c = '상품명', '옵션', '추가발주', '입고수량'
                     
                     if it_c in df_master.columns and op_c in df_master.columns:
-                        # 숫자 형변환
                         df_master[q_c] = pd.to_numeric(df_master[q_c], errors='coerce').fillna(0)
                         df_master[in_c] = pd.to_numeric(df_master[in_c], errors='coerce').fillna(0)
                         
-                        # 동일 상품/옵션별로 각각 합계 계산
                         qty_sum = df_master.groupby([it_c, op_c])[q_c].sum()
                         in_sum = df_master.groupby([it_c, op_c])[in_c].sum()
                         
-                        # 잔량 = 총 발주량 - 총 입고량
+                        # 잔량 계산
                         final_res = qty_sum.sub(in_sum, fill_value=0).clip(lower=0)
                         r_map = final_res.to_dict()
 
-                # 2. 분석 계산 로직 적용 (기존과 동일)
+                # 분석 계산 로직
                 df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
                 df[t1w] = pd.to_numeric(df[t1w], errors='coerce').fillna(0).astype(int)
                 
@@ -208,14 +205,14 @@ if 'df_raw' in st.session_state:
                 
                 df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[sold_out]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
                 
-                # ✅ [수정] 4단계와 시트 컬럼명을 맞춤 ('입고차감' -> '입고수량', '비고(메모)' -> '메모')
-                df['입고수량'] = 0 
+                # ✅ [핵심 수정] 4~6단계 공통 명칭으로 통일하여 초기화
+                df['입고차감'] = 0  
                 df['추가발주'] = 0
-                df['메모'] = ""
+                df['비고(처리내역)'] = "" # 🚨 이 이름으로 통일해야 4단계에서 KeyError가 안 납니다.
                 
                 st.session_state.df_final = df
                 st.session_state.analyzed = True
-                st.success("✅ 분석 완료! '발주기록' 시트의 통합 데이터를 분석하여 잔량이 반영되었습니다.")
+                st.success("✅ 분석 완료! '비고(처리내역)' 컬럼으로 통합 준비되었습니다.")
                 st.rerun()
                 
             except Exception as e:
@@ -224,7 +221,7 @@ if 'df_raw' in st.session_state:
 
                 
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (발주기록 통합 및 히스토리 명칭 변경)
+# 4️⃣단계: 입고 관리 및 최종 저장 (명칭 통일: 비고(처리내역))
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -232,7 +229,7 @@ if st.session_state.get('analyzed'):
     
     p = st.session_state.p
     
-    # [중요] 검색 시 데이터 날아가는 문제 방지를 위해 st.session_state.df_final을 직접 사용
+    # 세션 상태 유지를 위해 데이터 복사
     if 'edited_df_state' not in st.session_state:
         st.session_state.edited_df_state = st.session_state.df_final.copy()
 
@@ -240,7 +237,7 @@ if st.session_state.get('analyzed'):
     with f1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
     with f2: s_query = st.text_input("🔍 검색 (상품명/옵션)")
 
-    # 필터링용 임시 DF
+    # 필터링용 데이터프레임 구성
     df_temp = st.session_state.df_final.copy()
     if f_mode == "🚨 발주필요(세트)":
         need_items = df_temp[(df_temp['상태'] != "🚫 품절") & (df_temp['권장발주수량'] > 0)][p['it']].unique()
@@ -250,8 +247,12 @@ if st.session_state.get('analyzed'):
     if s_query:
         df_temp = df_temp[df_temp[p['it']].str.contains(s_query, case=False) | df_temp[p['op']].str.contains(s_query, case=False)]
 
-    # ✅ [수정] 3단계 분석에서 세팅한 컬럼명 '입고수량'과 '메모'를 반영
-    disp_cols = ['상태', p['vn'], p['it'], p['op'], p['vi'], p['av'], '기존리오더', '입고수량', '추가발주', p['t3'], '일판매량', '권장발주수량', '메모']
+    # ✅ [명칭 통일] 3단계에서 생성한 이름과 100% 일치시켜 KeyError 방지
+    disp_cols = [
+        '상태', p['vn'], p['it'], p['op'], p['vi'], p['av'], 
+        '기존리오더', '입고차감', '추가발주', p['t3'], 
+        '일판매량', '권장발주수량', '비고(처리내역)'
+    ]
     
     # 에디터 시작
     with st.form("final_form"):
@@ -268,22 +269,21 @@ if st.session_state.get('analyzed'):
                 p['vi']: st.column_config.TextColumn("공급처명", disabled=True),
                 p['av']: st.column_config.NumberColumn("가용재고", disabled=True),
                 '기존리오더': st.column_config.NumberColumn("기존리오더", disabled=True),
-                '입고수량': st.column_config.NumberColumn("📥 입고(-)", min_value=0), # 컬럼명 일치
+                '입고차감': st.column_config.NumberColumn("📥 입고(-)", min_value=0), 
                 '추가발주': st.column_config.NumberColumn("➕ 발주(+)", min_value=0),
                 '권장발주수량': st.column_config.NumberColumn("권장수량", disabled=True),
-                '메모': st.column_config.TextColumn("📝 메모") # 컬럼명 일치
+                '비고(처리내역)': st.column_config.TextColumn("📝 비고(처리내역)") # 명칭 통일
             }
         )
         btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
-        # ✅ [수정] '입고수량' 혹은 '추가발주'가 있는 데이터만 추출
-        change_list = edited_df[(edited_df['입고수량'] > 0) | (edited_df['추가발주'] > 0)]
+        # 데이터가 입력된 행만 필터링
+        change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
         
         if not change_list.empty:
             try:
                 sh = get_sheet()
-                # ✅ [수정] '입고기록' 시트 삭제에 따라 '발주기록'과 '히스토리'만 정의
                 ws_qty = sh.worksheet("발주기록")
                 ws_hist = sh.worksheet("히스토리")
                 
@@ -294,41 +294,33 @@ if st.session_state.get('analyzed'):
 
                 for _, r in change_list.iterrows():
                     q_val = int(r['추가발주'])
-                    i_val = int(r['입고수량']) # 수정됨
-                    user_memo = str(r['메모']).strip() if r['메모'] and str(r['메모']) != "None" else ""
+                    i_val = int(r['입고차감'])
+                    user_memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] and str(r['비고(처리내역)']) != "None" else ""
                     
+                    # 자동 메모 생성 로직
                     parts = []
                     if q_val > 0: parts.append(f"{q_val}발주")
                     if i_val > 0: parts.append(f"-{i_val}입고")
                     auto_memo = f"[{time_short} " + " ".join(parts) + "]"
                     final_memo = f"{auto_memo} {user_memo}".strip()
                     
-                    # ✅ [수정] 모든 내역(발주/입고)을 '발주기록' 시트 하나에 통합하여 저장
+                    # 1. 발주기록 시트용 데이터 (컬럼 순서 유지)
                     rows_qty.append([
-                        now_s, 
-                        r[p['it']], 
-                        r[p['op']], 
-                        r[p['vi']], 
-                        r[p['av']], 
-                        r['기존리오더'], 
-                        q_val, 
-                        r['권장발주수량'], 
-                        final_memo, 
-                        r[p['vn']],
-                        i_val # 입고수량 컬럼 데이터
+                        now_s, r[p['it']], r[p['op']], r[p['vi']], r[p['av']], 
+                        r['기존리오더'], q_val, r['권장발주수량'], final_memo, r[p['vn']], i_val
                     ])
                     
-                    # ✅ [수정] 히스토리 저장 (시트 양식 유지)
+                    # 2. 히스토리 시트용 데이터
                     rows_hist.append([
                         now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
                         r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo
                     ])
                 
-                # 시트 전송
+                # 시트 전송 실행
                 if rows_qty: ws_qty.append_rows(rows_qty)
                 if rows_hist: ws_hist.append_rows(rows_hist)
                 
-                st.success(f"✅ 전송 완료! (통합 발주기록 {len(rows_qty)}건 / 히스토리 {len(rows_hist)}건)")
+                st.success(f"✅ 저장 완료! (발주기록 {len(rows_qty)}건 / 히스토리 {len(rows_hist)}건)")
                 time.sleep(1)
                 st.rerun() 
             except Exception as e:
@@ -336,7 +328,7 @@ if st.session_state.get('analyzed'):
                 
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (필터 및 UI 유지 버전)
+# 5️⃣단계: 전체 히스토리 기록 (명칭 통일: 비고(처리내역))
 # ------------------------------------------------------------------
 st.divider()
 st.header("📜 5단계: 전체 히스토리 기록")
@@ -345,13 +337,17 @@ st.header("📜 5단계: 전체 히스토리 기록")
 if st.button("🔄 히스토리 시트 불러오기", use_container_width=True, key="h_refresh_final_v13"):
     try:
         sh = get_sheet()
-        # ✅ [수정] 영문 History 대신 한글 "히스토리" 시트를 호출합니다.
+        # ✅ 한글 "히스토리" 시트를 호출합니다.
         ws_hist = sh.worksheet("히스토리")
         raw_data = ws_hist.get_all_values()
         
         if len(raw_data) > 1:
             h_df = pd.DataFrame(raw_data[1:], columns=[c.strip() for c in raw_data[0]])
             h_df = h_df.loc[:, ~h_df.columns.duplicated()]
+            
+            # ✅ [명칭 통일] 시트의 '메모' 또는 '비고' 컬럼을 '비고(처리내역)'으로 통일
+            h_df.rename(columns={'메모': '비고(처리내역)', '비고': '비고(처리내역)'}, errors='ignore', inplace=True)
+            
             st.session_state.db_history = h_df
             st.success("✅ 히스토리 데이터를 가져왔습니다.")
             st.rerun()
@@ -371,7 +367,7 @@ if 'db_history' in st.session_state and not st.session_state.db_history.empty:
     valid_df_5 = m_df_5.dropna(subset=['날짜_dt']).copy()
     
     if not valid_df_5.empty:
-        # 상단 필터 레이아웃 (기존 UI 유지)
+        # 상단 필터 레이아웃
         c1, c2, c3 = st.columns(3)
         with c1: 
             sel_dates_5 = st.date_input("📅 조회 날짜 범위", [valid_df_5['날짜_only'].min(), valid_df_5['날짜_only'].max()], key="h_date_v13")
@@ -385,19 +381,21 @@ if 'db_history' in st.session_state and not st.session_state.db_history.empty:
         df_display_5 = valid_df_5.copy()
         if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
             df_display_5 = df_display_5[(df_display_5['날짜_only'] >= sel_dates_5[0]) & (df_display_5['날짜_only'] <= sel_dates_5[1])]
-        if h_name_5:
-            df_display_5 = df_display_5[df_display_5['상품명'].astype(str).str.contains(h_name_5, case=False)]
+        
+        # 상품명 컬럼 존재 확인 후 필터링
+        name_col = next((c for c in df_display_5.columns if '상품명' in c), None)
+        if h_name_5 and name_col:
+            df_display_5 = df_display_5[df_display_5[name_col].astype(str).str.contains(h_name_5, case=False)]
+            
         if h_time_5 != "전체 회차":
             df_display_5 = df_display_5[df_display_5['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
-        # 데이터프레임 출력 (최신순 정렬)
+        # 데이터프레임 출력 (최신순 정렬 및 불필요 컬럼 제거)
         st.dataframe(
             df_display_5.sort_values('날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only']), 
             use_container_width=True, 
             hide_index=True
         )
-
-
 
 # ------------------------------------------------------------------
 # 6️⃣단계: 실시간 리오더 현황판 (발주기록 시트 통합 및 필터 유지)
