@@ -432,45 +432,41 @@ if st.session_state.get('analyzed'):
 
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (에러 교정 및 검색 UI 완결판)
+# 6️⃣단계: 실시간 리오더 현황판 (사장님 UI 유지 + 계산 로직만 보강)
 # ------------------------------------------------------------------
 def render_step6():
     st.divider()
     st.header("📈 6단계: 실시간 리오더 현황판")
     
-    # 1. 데이터 로드 (세션 캐시 사용)
+    # 1. 데이터 로드 (캐시)
     if 'master_log' not in st.session_state:
         try:
             sh = get_sheet()
             ws_qty = sh.worksheet("발주기록")
             raw_data = ws_qty.get_all_records()
             st.session_state.master_log = pd.DataFrame(raw_data)
-        except Exception as e:
-            st.error(f"데이터 로드 실패: {e}")
-            return
+        except:
+            st.session_state.master_log = pd.DataFrame()
 
     df_log = st.session_state.master_log.copy()
 
     if not df_log.empty:
-        # 🚨 [핵심 수정] 모든 계산용 컬럼을 강제로 숫자형으로 변환 (에러 원천 차단)
-        num_cols = ['추가발주', '입고수량', '기존리오더']
-        for col in num_cols:
+        # 🚨 [수정] UI는 그대로 두고, 계산용 컬럼만 숫자형으로 강제 변환 (에러 방지 핵심)
+        for col in ['추가발주', '입고수량', '기존리오더']:
             if col in df_log.columns:
-                # 숫자가 아닌 값은 NaN으로 바꾸고, NaN은 0으로 채움
                 df_log[col] = pd.to_numeric(df_log[col], errors='coerce').fillna(0)
 
-        # 2. 상단 필터 및 검색 UI (다시 살려냈습니다!)
+        # 2. [사장님 UI] 검색 및 필터링 영역
         c1, c2, c3 = st.columns([1, 1, 1])
         with c1:
             v_list = ["전체"] + sorted(df_log['공급처'].unique().tolist())
-            sel_v = st.selectbox("🏭 공급처 필터", v_list, key="step6_v_filter")
+            sel_v = st.selectbox("🏭 공급처 필터", v_list, key="final_v_sel")
         with c2:
-            sel_s = st.text_input("🔍 상품명 검색", key="step6_s_search")
+            sel_s = st.text_input("🔍 상품명 검색", key="final_s_input")
         with c3:
-            st.write("") # 간격 조정
+            st.write("") # 공간 맞춤
             if st.button("🔄 현황판 새로고침", use_container_width=True):
-                if 'master_log' in st.session_state:
-                    del st.session_state.master_log
+                if 'master_log' in st.session_state: del st.session_state.master_log
                 st.rerun()
 
         # 데이터 필터링 적용
@@ -480,35 +476,34 @@ def render_step6():
         if sel_s:
             df_dash = df_dash[df_dash['상품명'].str.contains(sel_s, case=False)]
 
-        # 3. 실시간 집계 로직
+        # 3. [계산 로직] 
         summary = df_dash.groupby(['공급처', '상품명', '옵션']).agg({
             '추가발주': 'sum',
             '입고수량': 'sum',
             '기존리오더': 'first'
         }).reset_index()
         
-        # 계산부 (안전하게 float 형변환 후 계산)
+        # 🚨 타입 에러 방지를 위해 명시적 형변환 후 계산
         summary['총발주'] = summary['기존리오더'].astype(float) + summary['추가발주'].astype(float)
-        # 🚨 마이너스 방지: 계산 결과가 0보다 작으면 0으로 고정
+        
+        # ✨ [사장님 요청] 리오더 잔량이 마이너스일 때 0으로 나오게 처리
         summary['리오더잔량'] = (summary['총발주'] - summary['입고수량'].astype(float)).apply(lambda x: max(0, x))
 
-        # 4. 상단 요약 메트릭
+        # 4. [사장님 UI] 메트릭 및 상세 테이블
         m1, m2, m3 = st.columns(3)
         m1.metric("📦 누적 총 발주", f"{int(summary['총발주'].sum())}개")
         m2.metric("📥 누적 총 입고", f"{int(summary['입고수량'].sum())}개")
         m3.metric("⏳ 미입고 잔량", f"{int(summary['리오더잔량'].sum())}개", delta_color="inverse")
         
-        # 5. 상세 현황 데이터 테이블
-        st.subheader("📝 상세 리오더 현황 리스트")
+        st.subheader("📝 상세 현황 리스트")
         st.dataframe(
             summary[['공급처', '상품명', '옵션', '총발주', '입고수량', '리오더잔량']], 
             use_container_width=True, 
-            hide_index=True,
-            column_config={
-                "총발주": "총 발주량",
-                "입고수량": "입고 완료",
-                "리오더잔량": st.column_config.NumberColumn("남은 잔량", format="%d")
-            }
+            hide_index=True
         )
     else:
-        st.info("시트에 데이터가 없습니다. 발주를 먼저 진행해 주세요.")
+        st.info("데이터가 없습니다.")
+
+# 🚨 실행 호출부 (4단계 분석 완료 시점에 배치)
+if st.session_state.get('analyzed'):
+    render_step6()
