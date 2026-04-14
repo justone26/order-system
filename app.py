@@ -428,14 +428,14 @@ if st.session_state.get('analyzed'):
         st.info("💡 히스토리 내역이 없습니다. 4단계에서 데이터를 먼저 저장해주세요.")
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (오타 수정 및 요약판 포함 최종본)
+# 6️⃣단계: 실시간 리오더 현황판 (오타 수정 및 요약판 완전 복구)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.header("📊 6단계: 실시간 리오더 현황판")
 
     # 1. 데이터 로드 함수
-    def load_order_log_final_fixed():
+    def load_order_log_final_v22():
         try:
             sh = get_sheet()
             ws_log = sh.worksheet("발주기록")
@@ -446,14 +446,14 @@ if st.session_state.get('analyzed'):
             st.error(f"데이터 로드 실패: {e}")
         return pd.DataFrame()
 
-    # 최초 실행 시 자동 로드
+    # 최초 실행 시 데이터 자동 로드
     if 'master_log' not in st.session_state or st.session_state.master_log is None:
-        st.session_state.master_log = load_order_log_final_fixed()
+        st.session_state.master_log = load_order_log_final_v22()
 
     m_df = st.session_state.master_log.copy()
 
     if not m_df.empty:
-        # 컬럼 정의 (A:날짜, B:공급처, C:상품명, D:옵션, E:공급처상품명, G:기존리오더, H:추가발주, I:입고수량, J:메모)
+        # 사장님 시트 컬럼 강제 지정 (A:날짜, B:공급처, C:상품명, D:옵션, E:공급처상품명, G:기존리오더, H:추가발주, I:입고수량, J:메모)
         COL_DATE = '날짜'
         COL_VND = '공급처'
         COL_NM = '상품명'
@@ -464,26 +464,26 @@ if st.session_state.get('analyzed'):
         COL_IN = '입고수량'
         COL_MEMO = '메모'
 
-        # 날짜 전처리
+        # 날짜 데이터 전처리
         m_df['날짜_dt'] = pd.to_datetime(m_df[COL_DATE], errors='coerce')
         m_df['날짜_only'] = m_df['날짜_dt'].dt.date
         today = pd.Timestamp.now().date()
         min_date = m_df['날짜_only'].min() if not m_df['날짜_only'].dropna().empty else today
 
-        # 🛠️ 상단 컨트롤 (날짜, 업데이트, 검색)
+        # 🛠️ 상단 컨트롤 레이아웃 (날짜 옆에 업데이트)
         f1, f2, f3, f4 = st.columns([1.2, 0.5, 1.2, 1.1])
-        with f1: r_date = st.date_input("📅 확인 기간", [min_date, today], key="fin_v21_date")
+        with f1: r_date = st.date_input("📅 확인 기간", [min_date, today], key="v22_date_range")
         with f2:
-            st.write("")
-            if st.button("🔄 업데이트", key="btn_v21_up", use_container_width=True):
-                st.session_state.master_log = load_order_log_final_fixed()
+            st.write("") # 간격 맞춤
+            if st.button("🔄 업데이트", key="v22_update_btn", use_container_width=True):
+                st.session_state.master_log = load_order_log_final_v22()
                 st.rerun()
-        with f3: r_name = st.text_input("🔍 상품명 검색", key="fin_v21_name")
+        with f3: r_name = st.text_input("🔍 상품명 검색", key="v22_name_search")
         with f4:
             v_list = ["전체 업체"] + sorted([str(v) for v in m_df[COL_VND].unique() if str(v).strip()])
-            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="fin_v21_vend")
+            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="v22_vendor_sel")
 
-        # 수치 변환
+        # 수치 데이터 강제 변환
         for c in [COL_OLD, COL_ADD, COL_IN]:
             m_df[c] = pd.to_numeric(m_df[c], errors='coerce').fillna(0)
         m_df['발주합계'] = m_df[COL_OLD] + m_df[COL_ADD]
@@ -493,10 +493,10 @@ if st.session_state.get('analyzed'):
         if len(r_date) == 2:
             df_base = df_base[(df_base['날짜_only'] >= r_date[0]) & (df_base['날짜_only'] <= r_date[1])]
 
-        # ✨ [복구] 업체별 요약 현황판
+        # ✨ [사장님 요청] 업체별 실시간 현황 요약판 (정상 복구)
         st.subheader("🏭 업체별 요약 현황")
         if not df_base.empty:
-            summ_v = df_base.groupby(COL_VND).agg({'발주합계':'sum', COL_IN':'sum'}).reset_index()
+            summ_v = df_base.groupby(COL_VND).agg({'발주합계':'sum', COL_IN:'sum'}).reset_index()
             summ_v['잔량'] = summ_v['발주합계'] - summ_v[COL_IN]
             
             v_cols = st.columns(4)
@@ -505,7 +505,7 @@ if st.session_state.get('analyzed'):
                     st.metric(label=row[COL_VND], value=f"{int(row['잔량'])}개 잔류", delta=f"총 {int(row['발주합계'])}개")
         st.divider()
 
-        # 상세 필터 적용 (상품명/업체)
+        # 상세 필터 적용 (상품명/업체 선택)
         df_det = df_base.copy()
         if r_name:
             df_det = df_det[df_det[COL_NM].astype(str).str.contains(r_name, case=False)]
@@ -513,6 +513,7 @@ if st.session_state.get('analyzed'):
             df_det = df_det[df_det[COL_VND] == r_vendor]
 
         if not df_det.empty:
+            # 상세 표 집계 로직
             group_keys = [COL_VND, COL_NM, COL_OPT, COL_VNM]
             final = df_det.groupby(group_keys).agg({
                 '발주합계': 'sum',
@@ -521,19 +522,28 @@ if st.session_state.get('analyzed'):
                 COL_MEMO: lambda x: " / ".join(dict.fromkeys([str(i).strip() for i in x if str(i).strip() and str(i).lower() != 'nan']))
             }).reset_index()
 
+            # 리오더 잔량 계산
             final['리오더 잔량'] = final['발주합계'] - final[COL_IN]
             final = final.sort_values(by=['날짜_only', '리오더 잔량'], ascending=[False, False])
 
-            # ✨ [오타 수정 완료] 최근기록일 => 공급처 => 상품명 => 옵션 => 공급처상품명 => 총발주 => 총입고 => 리오더잔량 => 비고(처리내역)
+            # ✨ 사장님 오더 최종 열 순서 명칭 변경
             final.rename(columns={
                 '날짜_only': '최근기록일', 
                 COL_VND: '공급처', 
                 '발주합계': '총발주', 
-                COL_IN': '총입고', 
+                COL_IN: '총입고', 
                 COL_MEMO: '비고(처리내역)'
             }, inplace=True)
             
-            f_order = ['최근기록일', '공급처', '상품명', '옵션', COL_VNM, '총발주', '총입고', '리오더 잔량', '비고(처리내역)']
-            st.dataframe(final[[c for c in f_order if c in final.columns]], use_container_width=True, hide_index=True)
+            # 사장님 요청 순서: 최근기록일 => 공급처 => 상품명 => 옵션 => 공급처상품명 => 총발주 => 총입고 => 리오더잔량 => 비고(처리내역)
+            final_order = ['최근기록일', '공급처', '상품명', '옵션', COL_VNM, '총발주', '총입고', '리오더 잔량', '비고(처리내역)']
+            
+            st.dataframe(
+                final[[c for c in final_order if c in final.columns]], 
+                use_container_width=True, 
+                hide_index=True
+            )
         else:
             st.info("💡 조건에 맞는 상세 데이터가 없습니다.")
+    else:
+        st.warning("📡 '발주기록' 시트에서 데이터를 불러올 수 없습니다. 업데이트 버튼을 눌러주세요.")
