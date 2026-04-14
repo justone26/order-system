@@ -323,7 +323,7 @@ if st.session_state.get('analyzed'):
                     rows_qty, rows_hist = [], []
 
                     for idx, r in changed_rows.iterrows():
-                        q_val = int(r['추_발주']) if '추가발주' in r else int(r.get('추가발주', 0))
+                        q_val = int(r['추가발주']) if '추가발주' in r else int(r.get('추가발주', 0))
                         q_val = int(r['추가발주'])
                         i_val = int(r['입고차감'])
                         user_memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] and str(r['비고(처리내역)']) != "None" else ""
