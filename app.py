@@ -163,7 +163,7 @@ if st.session_state.get('analyzed'):
     p = st.session_state.p
     df_disp = st.session_state.df_final.copy()
     
-    # 필터
+    # 필터 로직
     f1, f2 = st.columns([1, 2])
     with f1: 
         f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
@@ -196,28 +196,73 @@ if st.session_state.get('analyzed'):
                 '기존리오더': st.column_config.NumberColumn("📦 기존잔량", disabled=True),
                 '입고차감': st.column_config.NumberColumn("📥 입고(-)", min_value=0),
                 '추가발주': st.column_config.NumberColumn("➕ 발주(+)", min_value=0),
-                '권장발주수량': st.column_config.NumberColumn("💡 권장", disabled=True)
+                '권장발주수량': st.column_config.NumberColumn("💡 권장", disabled=True),
+                '비고(메모)': st.column_config.TextColumn("📝 메모") # 사장님이 직접 쓰실 칸
             }
         )
         btn_save = st.form_submit_button("💾 데이터 최종 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
+        # 변경사항(입고나 발주 수량이 있는 경우)만 추출
         change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
+        
         if not change_list.empty:
             try:
                 sh = get_sheet()
                 ws_log = sh.worksheet("발주기록")
                 now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
-                rows = [[now_s, r[p['it']], r[p['op']], r[p['vi']], r[p['av']], r['기존리오더'], int(r['추가발주'])-int(r['입고차감']), r['권장발주수량'], r['비고(메모)'], r[p['vn']]] for _, r in change_list.iterrows()]
+                
+                rows = []
+                for _, r in change_list.iterrows():
+                    # ⭐ [자동 메모 생성 로직]
+                    memo_parts = []
+                    if r['입고차감'] > 0:
+                        memo_parts.append(f"-{int(r['입고차감'])} 입고")
+                    if r['추가발주'] > 0:
+                        memo_parts.append(f"{int(r['추가발주'])} 발주")
+                    
+                    # 자동 생성된 문구 (예: "-50 입고 / 100 발주")
+                    auto_memo = " / ".join(memo_parts)
+                    
+                    # 사장님이 직접 쓴 메모 결합
+                    user_memo = str(r['비고(메모)']).strip() if r['비고(메모)'] and str(r['비고(메모)']) != "None" else ""
+                    
+                    if user_memo:
+                        final_memo = f"[{auto_memo}] {user_memo}"
+                    else:
+                        final_memo = auto_memo
+
+                    # 수량 계산 (추가발주 - 입고차감)
+                    net_qty = int(r['추가발주']) - int(r['입고차감'])
+
+                    # 시트 행 데이터 구성
+                    rows.append([
+                        now_s,          # 날짜
+                        r[p['it']],      # 상품명
+                        r[p['op']],      # 옵션
+                        r[p['vi']],      # 공급처상품명
+                        r[p['av']],      # 가용재고
+                        r['기존리오더'],  # 기존잔량
+                        net_qty,        # 추가발주(수량) -> net_qty로 저장
+                        r['권장발주수량'],
+                        final_memo,      # ⭐ 위에서 만든 자동 메모
+                        r[p['vn']]       # 업체명
+                    ])
+                
                 ws_log.append_rows(rows)
-                st.success("✅ 저장 완료!")
+                st.success(f"✅ {len(rows)}건 저장 완료!")
                 st.cache_data.clear()
+                # 5단계를 위해 로드된 데이터 초기화
+                if 'master_log' in st.session_state:
+                    del st.session_state.master_log
                 time.sleep(1)
                 st.rerun()
-            except Exception as e: st.error(f"저장 실패: {e}")
+                
+            except Exception as e: 
+                st.error(f"저장 실패: {e}")
 
 # ------------------------------------------------------------------
-# [5~6단계: 기록 및 리오더 현황 - 시트 헤더 맞춤 버전]
+# [5~6단계: 기록 및 리오더 현황 - 메모 자동 연동 버전]
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -228,8 +273,8 @@ if st.session_state.get('analyzed'):
             sh = get_sheet()
             if sh:
                 ws = sh.worksheet("발주기록")
+                # 데이터를 가져온 후 컬럼명 공백 제거
                 df_temp = pd.DataFrame(ws.get_all_records())
-                # 헤더 공백 제거 및 세션 저장
                 df_temp.columns = [c.strip() for c in df_temp.columns]
                 st.session_state.master_log = df_temp
                 st.success("✅ 구글 시트 데이터 로드 완료!")
@@ -242,40 +287,58 @@ if st.session_state.get('analyzed'):
     if 'master_log' in st.session_state and not st.session_state.master_log.empty:
         m_df = st.session_state.master_log.copy()
         
-        # 날짜 컬럼 처리 (시트의 '날짜' 컬럼 기준)
+        # 날짜 컬럼 처리 (시트 헤더에 따라 유연하게 대응)
         date_col = '날짜' if '날짜' in m_df.columns else m_df.columns[0]
         m_df['일시_dt'] = pd.to_datetime(m_df[date_col], errors='coerce').dt.date
 
         # --- [5단계: 히스토리 모드] ---
-        with st.expander("📜 5단계: 최근 히스토리 조회", expanded=True):
-            h_search = st.text_input("🔍 상품명 검색", key="final_search_input")
+        with st.expander("📜 5단계: 최근 히스토리 조회 (자동 메모 포함)", expanded=True):
+            h_search = st.text_input("🔍 상품명/옵션 검색", key="final_search_v2")
             df_h = m_df.copy()
             if h_search:
-                df_h = df_h[df_h['상품명'].astype(str).str.contains(h_search, case=False)]
+                df_h = df_h[df_h['상품명'].astype(str).str.contains(h_search, case=False) |
+                            df_h['옵션'].astype(str).str.contains(h_search, case=False)]
             
-            # 최신순 정렬하여 표시
-            st.dataframe(df_h.sort_values(by=date_col, ascending=False).drop(columns=['일시_dt'], errors='ignore'), 
-                         use_container_width=True, hide_index=True)
+            # 최신순 정렬하여 메모와 함께 표시
+            st.dataframe(
+                df_h.sort_values(by=date_col, ascending=False).drop(columns=['일시_dt'], errors='ignore'), 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={"메모": st.column_config.TextColumn("📝 처리 내역", width="large")}
+            )
 
         # --- [6단계: 실시간 리오더 잔량] ---
-        with st.expander("📊 6단계: 현재 미입고 리오더 잔량", expanded=True):
-            # ⭐ 사장님 시트 헤더인 '추가발주' 컬럼을 사용합니다.
-            target_qty_col = '추가발주' 
+        with st.expander("📊 6단계: 실시간 리오더 현황 (최근 메모 연동)", expanded=True):
+            target_qty_col = '추가발주' # 사장님 시트의 수량 컬럼명
             
             if target_qty_col in m_df.columns:
                 # 숫자 변환
                 m_df[target_qty_col] = pd.to_numeric(m_df[target_qty_col], errors='coerce').fillna(0)
                 
-                # 집계 (상품명 + 옵션 기준)
+                # 💡 [최근 메모 추출 로직] 각 상품/옵션별로 가장 마지막(최신) 메모를 가져옵니다.
+                # 날짜순 정렬 후 마지막 메모 픽업
+                last_memos = m_df.sort_values(by=date_col).groupby(['상품명', '옵션'])['메모'].last().reset_index()
+                
+                # 잔량 집계
                 df_r = m_df.groupby(['상품명', '옵션'])[target_qty_col].sum().reset_index()
                 df_r.columns = ['상품명', '옵션', '미입고잔량']
                 
-                # 잔량이 있는 것만 표시
-                df_r = df_r[df_r['미입고잔량'] > 0].sort_values('미입고잔량', ascending=False)
+                # 잔량 데이터에 최근 메모 합치기
+                df_final_r = pd.merge(df_r, last_memos, on=['상품명', '옵션'], how='left')
                 
-                st.dataframe(df_r, use_container_width=True, hide_index=True,
-                             column_config={"미입고잔량": st.column_config.NumberColumn("잔량", format="%d 📦")})
+                # 잔량이 있는 것만 표시
+                df_final_r = df_final_r[df_final_r['미입고잔량'] > 0].sort_values('미입고잔량', ascending=False)
+                
+                st.dataframe(
+                    df_final_r, 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "미입고잔량": st.column_config.NumberColumn("잔량", format="%d 📦"),
+                        "메모": st.column_config.TextColumn("📝 최근 처리 내용")
+                    }
+                )
             else:
-                st.warning(f"⚠️ 시트에서 '{target_qty_col}' 컬럼을 찾을 수 없습니다. 헤더 이름을 확인해주세요.")
+                st.warning(f"⚠️ 시트에서 '{target_qty_col}' 컬럼을 찾을 수 없습니다.")
     else:
         st.info("💡 위 버튼을 클릭하면 구글 시트의 최신 기록을 가져옵니다.")
