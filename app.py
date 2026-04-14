@@ -234,7 +234,7 @@ if 'df_raw' in st.session_state:
                 
                 
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (컬럼 순서 1:1 매칭 교정본)
+# 4️⃣단계: 입고 관리 및 최종 저장 (순서교정 + 실시간계산 + 마이너스방지 완결판)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -242,13 +242,16 @@ if st.session_state.get('analyzed'):
     
     p = st.session_state.p
     
-    if 'edited_df_state' not in st.session_state:
-        st.session_state.edited_df_state = st.session_state.df_final.copy()
+    # 데이터 체크
+    if 'df_final' not in st.session_state:
+        st.error("데이터가 없습니다. 1~3단계를 먼저 진행해주세요.")
+        st.stop()
 
     f1, f2 = st.columns([1, 2])
     with f1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
     with f2: s_query = st.text_input("🔍 검색 (상품명/옵션)")
 
+    # 화면 표시용 필터링
     df_temp = st.session_state.df_final.copy()
     if f_mode == "🚨 발주필요(세트)":
         need_items = df_temp[(df_temp['상태'] != "🚫 품절") & (df_temp['권장발주수량'] > 0)][p['it']].unique()
@@ -287,12 +290,13 @@ if st.session_state.get('analyzed'):
         btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
-        change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)].copy()
+        # 변경 사항이 있는 데이터만 추출
+        changed_rows = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)].copy()
         
-        if not change_list.empty:
-            change_list = change_list.sort_values(by=[p['it'], p['op']])
+        if not changed_rows.empty:
+            changed_rows = changed_rows.sort_values(by=[p['it'], p['op']])
 
-            with st.spinner("🚀 시트 구조에 맞춰 정확하게 분류 중..."):
+            with st.spinner("🚀 수치 계산 및 시트 전송 중..."):
                 try:
                     sh = get_sheet()
                     ws_qty = sh.worksheet("발주기록")
@@ -303,47 +307,55 @@ if st.session_state.get('analyzed'):
                     
                     rows_qty, rows_hist = [], []
 
-                    for _, r in change_list.iterrows():
+                    for idx, r in changed_rows.iterrows():
                         q_val = int(r['추가발주'])
                         i_val = int(r['입고차감'])
                         user_memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] and str(r['비고(처리내역)']) != "None" else ""
                         
+                        # 자동 메모 생성
                         parts = []
                         if q_val > 0: parts.append(f"{q_val}발주")
                         if i_val > 0: parts.append(f"-{i_val}입고")
                         auto_memo = f"[{time_short} " + " ".join(parts) + "]"
                         final_memo = f"{auto_memo} {user_memo}".strip()
                         
-                        # 🚨 [발주기록 시트] 사장님 장부 양식 (A~J열) 순서 강제 고정
-                        # A:날짜, B:공급처, C:상품명, D:옵션, E:공급처상품명, F:가용재고, G:기존리오더, H:추가발주, I:입고수량, J:메모
+                        # 1. [발주기록 시트] 저장 순서 교정 (A~J열)
                         rows_qty.append([
-                            now_s,              # A: 날짜
-                            r[p['vn']],         # B: 공급처
-                            r[p['it']],         # C: 상품명
-                            r[p['op']],         # D: 옵션
-                            r[p['vi']],         # E: 공급처상품명
-                            r[p['av']],         # F: 가용재고
-                            r['기존리오더'],     # G: 기존리오더
-                            q_val,              # H: 추가발주 (여기에 5가 들어가야 함)
-                            i_val,              # I: 입고수량 (입고 잡을 때만 숫자 발생)
-                            final_memo          # J: 메모
+                            now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
+                            r[p['av']], r['기존리오더'], q_val, i_val, final_memo
                         ])
                         
-                        # [히스토리 시트] 기존 5단계 분석용 구조 유지
+                        # 2. [히스토리 시트] 저장
                         rows_hist.append([
                             now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
                             r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo
                         ])
-                    
+
+                        # 3. [실시간 계산] 화면 데이터(session_state) 업데이트
+                        mask = (st.session_state.df_final[p['it']] == r[p['it']]) & (st.session_state.df_final[p['op']] == r[p['op']])
+                        
+                        # 리오더 계산: 기존 + 발주 - 입고
+                        new_reorder = r['기존리오더'] + q_val - i_val
+                        
+                        # ✨ 마이너스 방지: 0보다 작으면 0으로 고정
+                        st.session_state.df_final.loc[mask, '기존리오더'] = max(0, new_reorder)
+                        
+                        # ✨ 입력값 리셋 (0으로 초기화)
+                        st.session_state.df_final.loc[mask, '추가발주'] = 0
+                        st.session_state.df_final.loc[mask, '입고차감'] = 0
+                        st.session_state.df_final.loc[mask, '비고(처리내역)'] = ""
+
+                    # 시트 실제 전송
                     if rows_qty: ws_qty.append_rows(rows_qty, value_input_option='USER_ENTERED')
                     if rows_hist: ws_hist.append_rows(rows_hist, value_input_option='USER_ENTERED')
                     
-                    if 'db_history' in st.session_state: del st.session_state.db_history
+                    # 캐시 삭제 (6단계 연동용)
                     if 'master_log' in st.session_state: del st.session_state.master_log
+                    if 'db_history' in st.session_state: del st.session_state.db_history
                     
-                    st.success(f"✅ 교정된 순서로 저장 완료! ({len(rows_hist)}건)")
+                    st.success(f"✅ 저장 완료 및 수치 업데이트 성공! ({len(rows_hist)}건)")
                     time.sleep(1)
-                    st.rerun() 
+                    st.rerun() # 화면 새로고침하여 0으로 리셋된 결과 보여줌
                     
                 except Exception as e:
                     st.error(f"저장 실패: {e}")
