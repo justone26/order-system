@@ -444,75 +444,83 @@ if st.session_state.get('analyzed'):
 
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (날짜 선택형 UI + 검색 버튼 추가)
+# 6️⃣단계: 실시간 리오더 현황판 (날짜 선택 + 검색버튼 + 화면유지)
 # ------------------------------------------------------------------
 def render_step6():
-    if not st.session_state.get('analyzed'):
+    # 🚨 [중요] 4단계 분석이 완료되었거나, 저장 후 유지 신호가 있을 때만 출력
+    if not (st.session_state.get('analyzed') or st.session_state.get('show_step6')):
         return
 
     st.markdown("---")
     st.markdown("### 📈 6단계: 실시간 리오더 현황판")
     
+    # 데이터 로드 (캐시 없으면 새로 읽기)
     if 'master_log' not in st.session_state:
         try:
             sh = get_sheet()
             ws_qty = sh.worksheet("발주기록")
+            # 전체 데이터를 읽어와서 데이터프레임 생성
             st.session_state.master_log = pd.DataFrame(ws_qty.get_all_records())
-        except: return
+        except Exception as e:
+            st.error(f"시트 데이터를 읽지 못했습니다: {e}")
+            return
 
     df_log = st.session_state.master_log.copy()
 
     if not df_log.empty:
-        # [수정] 날짜 목록 추출 (중복 제거 및 최신순 정렬)
-        # 시트의 '날짜' 컬럼에서 "2026-04-14" 형식 중 앞부분만 따오거나 전체를 가져옴
-        date_list = ["전체"] + sorted(df_log['날짜'].str[:10].unique().tolist(), reverse=True)
+        # [기능] 시트의 날짜 컬럼에서 고유값 추출 (YYYY-MM-DD 형식만 추출)
+        df_log['날짜_short'] = df_log['날짜'].str.slice(0, 10)
+        date_options = ["전체"] + sorted(df_log['날짜_short'].unique().tolist(), reverse=True)
 
-        # [UI 배치 수정] 날짜선택 | 검색버튼 | 상품명검색 | 공급처필터 | 새로고침
+        # [UI] 날짜선택 | 검색버튼 | 상품명 | 공급처 | 새로고침
         c1, c2, c3, c4, c5 = st.columns([1.2, 0.6, 1.5, 1.2, 0.8])
         
         with c1:
-            # 이제 직접 입력하지 않고 목록에서 고릅니다.
-            sel_date = st.selectbox("📅 날짜 선택", date_list, key="s6_date_select")
-        
+            sel_date = st.selectbox("📅 날짜 선택", date_options, key="s6_date_sel")
         with c2:
-            st.write(" ") # 라벨 높이 맞춤용
-            # 날짜 검색 버튼을 입력창 바로 옆에 배치
-            do_search = st.button("🔎 검색", use_container_width=True)
-            
+            st.write(" ") # 높이 맞춤용
+            # 날짜 검색 버튼
+            btn_search = st.button("🔎 검색", use_container_width=True, key="s6_search_btn")
         with c3:
-            sel_s = st.text_input("🔍 상품명 검색", key="s6_s")
-        
+            sel_s = st.text_input("🔍 상품명 검색", key="s6_name_search")
         with c4:
             v_list = ["전체"] + sorted(df_log['공급처'].unique().tolist())
-            sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_v")
-            
+            sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_v_filter")
         with c5:
             st.write(" ")
-            if st.button("🔄 새로고침", use_container_width=True):
+            if st.button("🔄 새로고침", use_container_width=True, key="s6_refresh"):
                 if 'master_log' in st.session_state: del st.session_state.master_log
                 st.rerun()
 
-        # [필터링 로직]
+        # [필터링 실행]
         df_dash = df_log.copy()
-        # 검색 버튼을 누르거나 필터가 변경되었을 때 작동
         if sel_date != "전체":
-            df_dash = df_dash[df_dash['날짜'].str.contains(sel_date)]
+            df_dash = df_dash[df_dash['날짜_short'] == sel_date]
         if sel_s:
             df_dash = df_dash[df_dash['상품명'].str.contains(sel_s, case=False)]
         if sel_v != "전체":
             df_dash = df_dash[df_dash['공급처'] == sel_v]
 
-        # 상단 요약 수치
+        # [상단 요약]
         m1, m2, m3 = st.columns(3)
+        # 숫자형 변환 후 합계 계산
         t_order = pd.to_numeric(df_dash['기존리오더'], errors='coerce').sum() + \
                   pd.to_numeric(df_dash['추가발주'], errors='coerce').sum()
         t_in = pd.to_numeric(df_dash['입고수량'], errors='coerce').sum()
+        
         m1.metric("📋 누적 총 발주", f"{int(t_order)}개")
         m2.metric("📥 누적 총 입고", f"{int(t_in)}개")
         m3.metric("⏳ 미입고 잔량", f"{int(t_order - t_in)}개")
 
-        # 표시 영역
+        # [리스트 표시]
         target_cols = ['날짜', '공급처', '상품명', '옵션', '공급처상품명', '기존리오더', '추가발주', '입고수량', '메모']
-        st.dataframe(df_dash[target_cols].sort_values(by='날짜', ascending=False), use_container_width=True, hide_index=True)
+        st.dataframe(
+            df_dash[target_cols].sort_values(by='날짜', ascending=False), 
+            use_container_width=True, 
+            hide_index=True
+        )
     else:
-        st.info("현황판 데이터가 없습니다.")
+        st.info("시트에 기록된 현황 데이터가 없습니다.")
+
+# 🚨 실행부: 메인 코드 하단에 이 구문이 있어야 화면에 나타납니다.
+render_step6()
