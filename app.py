@@ -428,15 +428,13 @@ if st.session_state.get('analyzed'):
         st.info("💡 히스토리 내역이 없습니다. 4단계에서 데이터를 먼저 저장해주세요.")
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (열 순서 고정 및 업데이트 로직)
+# 6️⃣단계: 실시간 리오더 현황판 (수량 매칭 및 열 순서 최종 수정)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
     st.header("📊 6단계: 실시간 리오더 현황판")
 
-    # [중요] 동기화 버튼 삭제 -> 대신 업데이트 버튼 기능을 필터 옆으로 이동
-    
-    # 1. 데이터 로드 로직 (세션에 없으면 자동 로드)
+    # 1. 데이터 로드 (세션 없으면 자동 로드)
     if 'master_log' not in st.session_state:
         try:
             sh = get_sheet()
@@ -450,30 +448,35 @@ if st.session_state.get('analyzed'):
     m_df = st.session_state.get('master_log', pd.DataFrame()).copy()
 
     if not m_df.empty:
-        # 컬럼 매칭 및 전처리
+        # 🚨 [핵심 수정] 컬럼 매칭 시 '권장'이 들어간 컬럼은 무조건 배제
+        # 사장님 시트의 정확한 명칭에 맞춰 우선순위 조정
         v_col = next((c for c in ['업체명', '공급처'] if c in m_df.columns), '업체명')
+        
+        # 발주수량: '권장' 제외하고 '추가발주'나 '발주'만 찾음
         qty_col = next((c for c in ['추가발주', '발주수량', '발주'] if c in m_df.columns), '추가발주')
-        in_col = next((c for c in ['입고수량', '입고차감', '입고'] if c in m_df.columns), '입고수량')
+        
+        # 입고수량: '권장'이 포함된 컬럼은 절대 선택 안 함
+        in_col = next((c for c in m_df.columns if ('입고' in c or '차감' in c) and '권장' not in c), '입고수량')
+        
         date_col = next((c for c in ['날짜', '발주시간'] if c in m_df.columns), m_df.columns[0])
         vi_col = next((c for c in ['공급처상품명', '매입상품명'] if c in m_df.columns), '공급처상품명')
-        memo_col = next((c for c in ['메모', '비고', '비고(처리내역)'] if c in m_df.columns), '메모')
+        memo_col = next((c for c in ['비고(처리내역)', '메모', '비고'] if c in m_df.columns), '메모')
 
         m_df['날짜_dt'] = pd.to_datetime(m_df[date_col], errors='coerce')
         m_df['날짜_only'] = m_df['날짜_dt'].dt.date
 
-        # 🛠️ UI 레이아웃 (날짜 옆에 바로 [업데이트] 버튼 배치)
+        # 🛠️ UI 레이아웃 (날짜 옆에 [업데이트] 버튼)
         f1, f2, f3, f4 = st.columns([1.2, 0.5, 1.2, 1.1]) 
-        with f1: r_date = st.date_input("📅 확인 기간", [m_df['날짜_only'].min(), m_df['날짜_only'].max()], key="r_date_v16")
+        with f1: r_date = st.date_input("📅 확인 기간", [m_df['날짜_only'].min(), m_df['날짜_only'].max()], key="r_date_v16_final")
         with f2:
-            st.write("") # 간격 맞춤
-            if st.button("🔄 업데이트", key="btn_update_6", use_container_width=True):
-                # 업데이트 클릭 시 세션 날리고 새로고침
+            st.write("")
+            if st.button("🔄 업데이트", key="btn_update_6_final", use_container_width=True):
                 if 'master_log' in st.session_state: del st.session_state.master_log
                 st.rerun()
-        with f3: r_name = st.text_input("🔍 상품명 검색", key="r_name_v16")
+        with f3: r_name = st.text_input("🔍 상품명 검색", key="r_name_v16_final")
         with f4:
             v_list = ["전체 업체"] + sorted([str(v) for v in m_df[v_col].unique() if str(v).strip()])
-            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="r_vendor_v16")
+            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="r_vendor_v16_final")
 
         # 필터링 적용
         df_6 = m_df.copy()
@@ -485,12 +488,13 @@ if st.session_state.get('analyzed'):
             df_6 = df_6[df_6[v_col] == r_vendor]
 
         if not df_6.empty:
+            # 숫자 변환
             df_6[qty_col] = pd.to_numeric(df_6[qty_col], errors='coerce').fillna(0)
             df_6[in_col] = pd.to_numeric(df_6[in_col], errors='coerce').fillna(0)
             
             group_keys = [v_col, '상품명', '옵션', vi_col]
             
-            # 일자별 발주/입고 히스토리 생성 (비고란에 업체명 안 들어가게 수정)
+            # 일자별 집계
             daily = df_6.groupby(group_keys + ['날짜_only']).agg({
                 qty_col: 'sum', in_col: 'sum',
                 memo_col: lambda x: " ".join(dict.fromkeys([str(i).strip() for i in x if str(i).strip() and str(i).lower() != 'nan']))
@@ -500,33 +504,22 @@ if st.session_state.get('analyzed'):
                 d = row['날짜_only'].strftime('%m/%d')
                 q, i = int(row[qty_col]), int(row[in_col])
                 m = str(row[memo_col]).strip()
-                # 순수하게 날짜와 수량 정보만 비고란에 기록
                 return f"[{d} {q}발주 / {i}입고] {m}".strip()
 
             daily['이력'] = daily.apply(make_history_text, axis=1)
 
-            # 최종 합산
+            # 최종 합산 및 리오더 잔량
             summary = daily.groupby(group_keys).agg({
                 '이력': lambda x: " | ".join(x),
                 '날짜_only': 'max', qty_col: 'sum', in_col: 'sum'
             }).reset_index()
             
-            # 🚨 리오더 잔량 계산
             summary['리오더 잔량'] = summary[qty_col] - summary[in_col]
-            
-            # 최신 날짜순 정렬
             summary = summary.sort_values(by=['날짜_only', '리오더 잔량'], ascending=[False, False])
 
-            # ✨ 사장님이 말씀하신 [최종 열 순서] 그대로 적용
-            summary.rename(columns={
-                '날짜_only': '최근기록일',
-                v_col: '공급처',
-                qty_col: '총발주',
-                in_col: '총입고',
-                '이력': '비고(처리내역)'
-            }, inplace=True)
-
-            # 🚨 사장님 오더 순서: 최근기록일 => 공급처 => 상품명 => 옵션 => 공급처상품명 => 총발주 => 총입고 => 리오더잔량 => 비고(처리내역)
+            # ✨ 열 순서 사장님 요청대로 고정
+            summary.rename(columns={'날짜_only': '최근기록일', v_col: '공급처', qty_col: '총발주', in_col: '총입고', '이력': '비고(처리내역)'}, inplace=True)
+            
             final_order = ['최근기록일', '공급처', '상품명', '옵션', vi_col, '총발주', '총입고', '리오더 잔량', '비고(처리내역)']
             
             st.dataframe(
