@@ -362,7 +362,7 @@ if st.session_state.get('analyzed'):
             
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (조회 버튼 추가 버전)
+# 5️⃣단계: 전체 히스토리 기록 (조회 버튼 위치 및 정렬 수정)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -376,6 +376,7 @@ if st.session_state.get('analyzed'):
             if len(raw_data) > 1:
                 cols_5 = [c.strip() for c in raw_data[0]]
                 h_df = pd.DataFrame(raw_data[1:], columns=cols_5)
+                # 중복 컬럼 제거 및 명칭 통일
                 h_df = h_df.loc[:, ~h_df.columns.duplicated()]
                 h_df.rename(columns={'메모': '비고(처리내역)', '비고': '비고(처리내역)', '비고(메모)': '비고(처리내역)'}, errors='ignore', inplace=True)
                 st.session_state.db_history = h_df
@@ -387,43 +388,47 @@ if st.session_state.get('analyzed'):
     m_df_5 = st.session_state.get('db_history', pd.DataFrame()).copy()
     
     if not m_df_5.empty:
-        d_col = next((c for c in m_df_5.columns if '날짜' in c), m_df_5.columns[0])
+        # 날짜 컬럼 파싱 (정렬을 위해 필수)
+        d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
         m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce')
         m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
         
-        # ✅ 필터 레이아웃에 버튼 추가 (c4 추가)
-        c1, c2, c3, c4 = st.columns([1.5, 1.2, 1.2, 0.5])
-        with c1: sel_dates_5 = st.date_input("📅 조회 날짜 범위", [m_df_5['날짜_only'].min(), m_df_5['날짜_only'].max()], key="h_date_v15")
-        with c2: h_name_5 = st.text_input("🔍 상품명 검색", key="h_name_v15")
-        with c3:
+        # 🛠️ 버튼 위치 조정: 날짜 범위 바로 옆으로 배치
+        c1, c2, c3, c4 = st.columns([1.2, 0.4, 1.2, 1.2]) # c2에 버튼 배치
+        with c1: 
+            sel_dates_5 = st.date_input("📅 조회 날짜 범위", [m_df_5['날짜_only'].min(), m_df_5['날짜_only'].max()], key="h_date_v15")
+        with c2: 
+            st.write("") # 라벨 높이 맞춤용
+            btn_h_run = st.button("🔍 조회", key="btn_h_run", use_container_width=True)
+        with c3: 
+            h_name_5 = st.text_input("🔍 상품명 검색", key="h_name_v15")
+        with c4:
             t_opts = ["전체 회차"] + sorted(m_df_5['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
             h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_v15")
-        with c4:
-            st.write("") # 간격 맞춤
-            btn_h_run = st.button("🔍 조회", key="btn_h_run") # 버튼 추가
 
-        # 버튼을 눌렀을 때만 필터링 로직이 작동하도록 구성 가능하지만, 
-        # 기존 로직을 유지하기 위해 UI만 버튼으로 제어하고 싶으시면 이 버튼을 조회 시점으로 활용하세요.
+        # 필터링 및 정렬 로직
         df_dis = m_df_5.copy()
         
-        # 날짜 필터링
         if len(sel_dates_5) == 2:
             df_dis = df_dis[(df_dis['날짜_only'] >= sel_dates_5[0]) & (df_dis['날짜_only'] <= sel_dates_5[1])]
-        # 상품명 필터링
         if h_name_5:
             df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
-        # 회차 필터링
         if h_time_5 != "전체 회차":
             df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
-        st.dataframe(df_dis.sort_values('날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore'), 
-                     use_container_width=True, hide_index=True)
+        # ✨ 정렬 강화: 최신 발주시간이 무조건 위로 오도록 정렬
+        df_dis = df_dis.sort_values(by='날짜_dt', ascending=False)
+
+        st.dataframe(
+            df_dis.drop(columns=['날짜_dt', '날짜_only'], errors='ignore'), 
+            use_container_width=True, 
+            hide_index=True
+        )
     else:
         st.info("💡 히스토리 내역이 없습니다. 4단계에서 데이터를 먼저 저장해주세요.")
 
-
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (조회 버튼 추가 버전)
+# 6️⃣단계: 실시간 리오더 현황판 (공급처 위치 수정 및 시트 틀어짐 방지)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -446,28 +451,29 @@ if st.session_state.get('analyzed'):
     if 'master_log' in st.session_state and not st.session_state.master_log.empty:
         m_df = st.session_state.master_log.copy()
         
-        qty_col = next((c for c in ['추가발주', '발주수량'] if c in m_df.columns), '추가발주')
-        in_col = next((c for c in ['입고수량', '입고차감'] if c in m_df.columns), '입고수량')
-        date_col = next((c for c in ['날짜', '등록일'] if c in m_df.columns), '날짜')
-        memo_col = next((c for c in ['비고(처리내역)', '메모', '비고'] if c in m_df.columns), '메모')
+        # 1. 컬럼 매칭 (업체명/공급처 구분 확실히)
         v_col = next((c for c in ['업체명', '공급처'] if c in m_df.columns), '업체명')
+        qty_col = next((c for c in ['추가발주', '발주수량', '발주'] if c in m_df.columns), '추가발주')
+        in_col = next((c for c in ['입고수량', '입고차감', '입고'] if c in m_df.columns), '입고수량')
+        date_col = next((c for c in ['날짜', '발주시간'] if c in m_df.columns), m_df.columns[0])
         vi_col = next((c for c in ['공급처상품명', '매입상품명'] if c in m_df.columns), '공급처상품명')
+        memo_col = next((c for c in ['메모', '비고', '비고(처리내역)'] if c in m_df.columns), '메모')
 
         m_df['날짜_dt'] = pd.to_datetime(m_df[date_col], errors='coerce')
         m_df['날짜_only'] = m_df['날짜_dt'].dt.date
-        m_df = m_df.dropna(subset=['날짜_dt'])
 
-        # ✅ 필터 레이아웃에 분석 버튼 추가 (f4 추가)
-        f1, f2, f3, f4 = st.columns([1.5, 1.2, 1.2, 0.5])
+        # 🛠️ UI 레이아웃 (날짜 옆에 분석 버튼)
+        f1, f2, f3, f4 = st.columns([1.2, 0.4, 1.2, 1.2]) 
         with f1: r_date = st.date_input("📅 확인 기간", [m_df['날짜_only'].min(), m_df['날짜_only'].max()], key="r_date_final")
-        with f2: r_name = st.text_input("🔍 상품명 검색", key="r_name_final")
-        with f3:
+        with f2:
+            st.write("")
+            btn_r_run = st.button("⚡ 분석", key="btn_r_run", use_container_width=True)
+        with f3: r_name = st.text_input("🔍 상품명 검색", key="r_name_final")
+        with f4:
             v_list = ["전체 업체"] + sorted([str(v) for v in m_df[v_col].unique() if str(v).strip()])
             r_vendor = st.selectbox("🏭 업체 필터", v_list, key="r_vendor_final")
-        with f4:
-            st.write("")
-            btn_r_run = st.button("⚡ 분석", key="btn_r_run") # 버튼 추가
 
+        # 필터링
         df_6 = m_df.copy()
         if isinstance(r_date, (list, tuple)) and len(r_date) == 2:
             df_6 = df_6[(df_6['날짜_only'] >= r_date[0]) & (df_6['날짜_only'] <= r_date[1])]
@@ -477,41 +483,52 @@ if st.session_state.get('analyzed'):
             df_6 = df_6[df_6[v_col] == r_vendor]
 
         if not df_6.empty:
-            # (기존 합산 로직 동일...)
             df_6[qty_col] = pd.to_numeric(df_6[qty_col], errors='coerce').fillna(0)
             df_6[in_col] = pd.to_numeric(df_6[in_col], errors='coerce').fillna(0)
-            group_cols = [c for c in [v_col, '상품명', '옵션', vi_col, '날짜_only'] if c in df_6.columns]
             
-            daily_summary = df_6.groupby(group_cols).agg({
+            # ✨ 중요: 그룹화 기준에서 '공급처'를 업체명으로 확실히 활용
+            group_keys = [v_col, '상품명', '옵션', vi_col]
+            
+            daily = df_6.groupby(group_keys + ['날짜_only']).agg({
                 qty_col: 'sum', in_col: 'sum',
                 memo_col: lambda x: " ".join(dict.fromkeys([str(i).strip() for i in x if str(i).strip() and str(i).lower() != 'nan']))
             }).reset_index()
 
-            def format_daily_text(row):
-                d_str = row['날짜_only'].strftime('%m/%d')
-                q_val, i_val = int(row[qty_col]), int(row[in_col])
-                u_memo = str(row[memo_col]).strip()
-                clean_memo = u_memo.split(']')[-1].strip() if ']' in u_memo else u_memo
-                parts = []
-                if q_val > 0: parts.append(f"{q_val}발주")
-                if i_val > 0: parts.append(f"-{i_val}입고")
-                if not parts: return ""
-                res = f"[{d_str} " + " ".join(parts) + "]"
-                if clean_memo: res += f" {clean_memo}"
-                return res
+            # ✨ 비고란에 업체명이 섞이지 않도록 순수 이력만 생성
+            def make_history_memo(row):
+                d = row['날짜_only'].strftime('%m/%d')
+                q, i = int(row[qty_col]), int(row[in_col])
+                m = str(row[memo_col]).strip()
+                # 비고란에 업체명이나 중복된 정보가 들어가지 않게 함
+                txt = f"[{d} {q}발주" + (f" -{i}입고]" if i > 0 else "]")
+                return f"{txt} {m}" if m and ']' not in m else txt
 
-            daily_summary['일자별메모'] = daily_summary.apply(format_daily_text, axis=1)
-            final_group = [k for k in group_cols if k != '날짜_only']
-            summary = daily_summary.groupby(final_group).agg({
-                '일자별메모': lambda x: " / ".join([i for i in x if i]),
+            daily['이력내역'] = daily.apply(make_history_memo, axis=1)
+
+            summary = daily.groupby(group_keys).agg({
+                '이력내역': lambda x: " / ".join(x),
                 '날짜_only': 'max', qty_col: 'sum', in_col: 'sum'
             }).reset_index()
             
             summary['리오더 잔량'] = summary[qty_col] - summary[in_col]
-            summary = summary[summary['리오더 잔량'] > 0].sort_values('리오더 잔량', ascending=False)
-            summary.rename(columns={'날짜_only': '최근기록일', qty_col: '총발주수량', in_col: '총입고수량', '일자별메모': '비고(처리내역)'}, inplace=True)
+            summary = summary.sort_values(by=['날짜_only', '리오더 잔량'], ascending=[False, False])
 
-            display_cols = ['최근기록일', v_col, '상품명', '옵션', vi_col, '총발주수량', '총입고수량', '리오더 잔량', '비고(처리내역)']
-            st.dataframe(summary[[c for c in display_cols if c in summary.columns]], use_container_width=True, hide_index=True)
+            # ✨ 열 순서 최종 교정: 업체명을 가장 앞으로!
+            summary.rename(columns={
+                v_col: '업체명(공급처)',
+                '날짜_only': '최근기록일', 
+                qty_col: '총발주', 
+                in_col: '총입고', 
+                '이력내역': '비고(발주/입고 히스토리)'
+            }, inplace=True)
+
+            # 사장님 요청대로 업체명을 맨 앞으로 배치
+            final_cols = ['업체명(공급처)', '상품명', '옵션', vi_col, '총발주', '총입고', '리오더 잔량', '최근기록일', '비고(발주/입고 히스토리)']
+            
+            st.dataframe(
+                summary[[c for c in final_cols if c in summary.columns]], 
+                use_container_width=True, 
+                hide_index=True
+            )
         else:
-            st.info("💡 리오더 잔량이 있는 내역이 없습니다.")
+            st.info("💡 조회 조건에 맞는 미입고 데이터가 없습니다.")
