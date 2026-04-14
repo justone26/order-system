@@ -170,7 +170,7 @@ if 'df_raw' in st.session_state:
                 st.error(f"분석 오류: {e}")
 
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장
+# 4️⃣단계: 입고 관리 및 최종 저장 (3중 시트 전송 버전)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -183,7 +183,7 @@ if st.session_state.get('analyzed'):
     with f1: f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
     with f2: s_query = st.text_input("🔍 검색 (상품명/옵션)")
 
-    # 필터 적용
+    # 필터 적용 로직
     if f_mode == "🚨 발주필요(세트)":
         need_items = df_disp[(df_disp['상태'] != "🚫 품절") & (df_disp['권장발주수량'] > 0)][p['it']].unique()
         df_disp = df_disp[df_disp[p['it']].isin(need_items)]
@@ -204,63 +204,122 @@ if st.session_state.get('analyzed'):
                 '추가발주': st.column_config.NumberColumn("➕ 발주(+)", min_value=0),
                 '비고(메모)': st.column_config.TextColumn("📝 메모")
             })
-        btn_save = st.form_submit_button("💾 데이터 최종 저장 및 시트 전송", use_container_width=True, type="primary")
+        btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
         change_list = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)]
         if not change_list.empty:
             try:
                 sh = get_sheet()
-                ws_log = sh.worksheet("발주기록")
-                now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
-                rows = []
-                for _, r in change_list.iterrows():
-                    # 메모 및 수량 계산
-                    memo_parts = []
-                    if r['입고차감'] > 0: memo_parts.append(f"-{int(r['입고차감'])} 입고")
-                    if r['추가발주'] > 0: memo_parts.append(f"{int(r['추가발주'])} 발주")
-                    auto_memo = " / ".join(memo_parts)
-                    user_memo = str(r['비고(메모)']).strip() if r['비고(메모)'] and str(r['비고(메모)']) != "None" else ""
-                    final_memo = f"[{auto_memo}] {user_memo}" if user_memo else auto_memo
-                    
-                    # 시트 컬럼 순서 맞춤
-                    rows.append([now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], r[p['av']], r['기존리오더'], int(r['입고차감']), int(r['추가발주']), r['권장발주수량'], final_memo])
+                # 시트 연결
+                ws_in = sh.worksheet("입고기록")
+                ws_qty = sh.worksheet("발주기록")
+                ws_hist = sh.worksheet("히스토리")
                 
-                ws_log.append_rows(rows)
-                st.success("✅ 저장 완료!")
+                now_s = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+                time_short = datetime.now(KST).strftime('%m/%d')
+                
+                rows_in, rows_qty, rows_hist = [], [], []
+
+                for _, r in change_list.iterrows():
+                    # 1. 메모 자동 생성 (6단계 방식)
+                    q_val = int(r['추가발주'])
+                    i_val = int(r['입고차감'])
+                    user_memo = str(r['비고(메모)']).strip() if r['비고(메모)'] and str(r['비고(메모)']) != "None" else ""
+                    
+                    parts = []
+                    if q_val > 0: parts.append(f"{q_val}발주")
+                    if i_val > 0: parts.append(f"-{i_val}입고")
+                    auto_memo = f"[{time_short} " + " ".join(parts) + "]"
+                    final_memo = f"{auto_memo} {user_memo}".strip()
+                    
+                    # 2. 입고기록 시트용
+                    if i_val > 0:
+                        rows_in.append([now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], i_val, final_memo])
+                    
+                    # 3. 발주기록 시트용
+                    if q_val > 0:
+                        rows_qty.append([now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], q_val, final_memo])
+                    
+                    # 4. 전체 히스토리 시트용 (무조건 누적)
+                    rows_hist.append([
+                        now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
+                        r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo
+                    ])
+                
+                # 시트 전송
+                if rows_in: ws_in.append_rows(rows_in)
+                if rows_qty: ws_qty.append_rows(rows_qty)
+                if rows_hist: ws_hist.append_rows(rows_hist)
+                
+                st.success(f"✅ 저장 완료! (입고 {len(rows_in)}건 / 발주 {len(rows_qty)}건 / 히스토리 {len(rows_hist)}건)")
+                
+                # 저장 후 동기화를 위해 세션 삭제
                 if 'master_log' in st.session_state: del st.session_state.master_log
                 time.sleep(1)
                 st.rerun()
-            except Exception as e: st.error(f"저장 실패: {e}")
+            except Exception as e: st.error(f"저장 실패: {e} (시트 이름을 확인하세요)")
+                
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (상단 필터 포함)
+# 5️⃣단계: 전체 히스토리 기록 (시트 실시간 로드 버전)
 # ------------------------------------------------------------------
-if st.session_state.get('analyzed') and 'master_log' in st.session_state:
-    st.divider()
-    st.header("📜 5단계: 전체 히스토리 기록")
-    m_df = st.session_state.master_log.copy()
+st.divider()
+st.header("📜 5단계: 전체 히스토리 기록")
+
+# 5단계는 항상 시트의 최신 데이터를 가져오도록 설계
+if st.button("🔄 히스토리 불러오기/새로고침", use_container_width=True):
+    try:
+        sh = get_sheet()
+        ws_hist = sh.worksheet("히스토리")
+        data = ws_hist.get_all_records()
+        if data:
+            h_df = pd.DataFrame(data)
+            h_df.columns = [c.strip() for c in h_df.columns]
+            st.session_state.db_history = h_df
+            st.success("✅ 시트에서 히스토리를 성공적으로 가져왔습니다.")
+        else:
+            st.warning("기록된 히스토리가 없습니다.")
+    except Exception as e:
+        st.error(f"히스토리 로드 실패: {e}")
+
+if 'db_history' in st.session_state:
+    m_df = st.session_state.db_history.copy()
+    
+    # 날짜 필터 준비
     m_df['날짜'] = pd.to_datetime(m_df['날짜'], errors='coerce')
     m_df['날짜_only'] = m_df['날짜'].dt.date
+    valid_df = m_df.dropna(subset=['날짜'])
     
-    c1, c2, c3 = st.columns(3)
-    with c1: sel_dates = st.date_input("📅 조회 날짜", [m_df['날짜_only'].max() - timedelta(days=7), m_df['날짜_only'].max()], key="h_date")
-    with c2: h_name = st.text_input("🔍 상품명 검색", key="h_name")
-    with c3: 
-        t_options = ["전체 회차"] + [t.strftime('%Y-%m-%d %H:%M:%S') for t in sorted(m_df['날짜'].unique(), reverse=True)]
-        h_time = st.selectbox("⏰ 회차(시간) 선택", t_options, key="h_time")
+    if not valid_df.empty:
+        c1, c2, c3 = st.columns(3)
+        with c1: 
+            sel_dates = st.date_input("📅 조회 날짜", [valid_df['날짜_only'].min(), valid_df['날짜_only'].max()], key="h_date_v10")
+        with c2: 
+            h_name = st.text_input("🔍 상품명 검색", key="h_name_v10")
+        with c3: 
+            t_options = ["전체 회차"] + [t.strftime('%Y-%m-%d %H:%M:%S') for t in sorted(valid_df['날짜'].unique(), reverse=True)]
+            h_time = st.selectbox("⏰ 회차(시간) 선택", t_options, key="h_time_v10")
 
-    df_5 = m_df.copy()
-    if len(sel_dates) == 2: df_5 = df_5[(df_5['날짜_only'] >= sel_dates[0]) & (df_5['날짜_only'] <= sel_dates[1])]
-    if h_name: df_5 = df_5[df_5['상품명'].str.contains(h_name, case=False)]
-    if h_time != "전체 회차": df_5 = df_5[df_5['날짜'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time]
+        # 필터 적용
+        df_5 = valid_df.copy()
+        if isinstance(sel_dates, (list, tuple)) and len(sel_dates) == 2:
+            df_5 = df_5[(df_5['날짜_only'] >= sel_dates[0]) & (df_5['날짜_only'] <= sel_dates[1])]
+        if h_name:
+            df_5 = df_5[df_5['상품명'].astype(str).str.contains(h_name, case=False)]
+        if h_time != "전체 회차":
+            df_5 = df_5[df_5['날짜'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time]
 
-    target_cols = ['날짜', '업체명', '상품명', '옵션', '공급처상품명', '가용재고', '기존리오더', '입고수량', '추가발주수량', '권장발주', '메모']
-    # 시트에 없는 컬럼 대응
-    for col in target_cols:
-        if col not in df_5.columns: df_5[col] = 0
+        # 컬럼 순서 및 보정 (사용자 요청 기반)
+        target_cols = ['날짜', '업체명', '상품명', '옵션', '공급처상품명', '가용재고', '기존리오더', '입고수량', '추가발주수량', '권장발주', '메모']
+        for col in target_cols:
+            if col not in df_5.columns: df_5[col] = 0
 
-    st.dataframe(df_5[target_cols].sort_values('날짜', ascending=False), use_container_width=True, hide_index=True)
+        st.dataframe(df_5[target_cols].sort_values('날짜', ascending=False), use_container_width=True, hide_index=True)
+    else:
+        st.info("조회할 수 있는 유효한 날짜 데이터가 없습니다.")
+else:
+    st.info("💡 위 '히스토리 불러오기' 버튼을 눌러 과거 기록을 확인하세요.")
 
 # ------------------------------------------------------------------
 # 6️⃣단계: 실시간 리오더 현황판 (요청 컬럼 순서 및 상세 수량 버전)
