@@ -290,7 +290,8 @@ if st.session_state.get('analyzed'):
         btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
-        changed_rows = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추적발주'] > 0)].copy()
+        # 변경 사항이 있는 데이터만 추출 (입고차감이나 추가발주가 0보다 큰 경우)
+        changed_rows = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)].copy()
         
         if not changed_rows.empty:
             with st.spinner("🚀 사장님 지정 열 순서대로 시트 전송 중..."):
@@ -309,7 +310,11 @@ if st.session_state.get('analyzed'):
                         i_val = int(r['입고차감'])
                         user_memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] and str(r['비고(처리내역)']) != "None" else ""
                         
-                        auto_memo = f"[{time_short} {q_val}발주 -{i_val}입고]"
+                        # 메모 생성 (발주와 입고 내역 포함)
+                        parts = []
+                        if q_val > 0: parts.append(f"{q_val}발주")
+                        if i_val > 0: parts.append(f"-{i_val}입고")
+                        auto_memo = f"[{time_short} " + " ".join(parts) + "]"
                         final_memo = f"{auto_memo} {user_memo}".strip()
                         
                         # 🔥 [발주기록 시트] 사장님 지정 A~I열 순서 엄수
@@ -326,13 +331,13 @@ if st.session_state.get('analyzed'):
                             final_memo          # I: 메모
                         ])
                         
-                        # [히스토리 시트] 저장 (기존 구조 유지)
+                        # [히스토리 시트] 저장
                         rows_hist.append([
                             now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
                             r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo
                         ])
 
-                        # [실시간 계산 및 리셋]
+                        # [화면 실시간 반영 및 입력값 리셋]
                         mask = (st.session_state.df_final[p['it']] == r[p['it']]) & (st.session_state.df_final[p['op']] == r[p['op']])
                         new_reorder = int(r['기존리오더']) + q_val - i_val
                         
@@ -345,7 +350,7 @@ if st.session_state.get('analyzed'):
                     if rows_qty: ws_qty.append_rows(rows_qty, value_input_option='USER_ENTERED')
                     if rows_hist: ws_hist.append_rows(rows_hist, value_input_option='USER_ENTERED')
                     
-                    # 6단계 현황판 캐시 즉시 삭제
+                    # 6단계에서 시트를 새로 읽어오도록 캐시 삭제
                     if 'master_log' in st.session_state: del st.session_state.master_log
                     
                     st.success(f"✅ 시트 저장 및 수치 업데이트 완료! ({len(rows_qty)}건)")
@@ -355,7 +360,7 @@ if st.session_state.get('analyzed'):
                 except Exception as e:
                     st.error(f"저장 중 오류 발생: {e}")
         else:
-            st.warning("⚠️ 변경된 데이터가 없습니다.")
+            st.warning("⚠️ 입력된 수정 사항(입고 또는 발주)이 없습니다.")
             
 
 # ------------------------------------------------------------------
@@ -432,11 +437,12 @@ if st.session_state.get('analyzed'):
 def render_step6():
     st.markdown("### 📈 6단계: 실시간 리오더 현황판")
     
-    # 1. 시트 데이터 로드
+    # 1. 시트 데이터 로드 (4단계에서 저장 후 캐시 삭제 시 새로 읽어옴)
     if 'master_log' not in st.session_state:
         try:
             sh = get_sheet()
             ws_qty = sh.worksheet("발주기록")
+            # 시트의 헤더와 데이터를 그대로 읽어와서 데이터프레임 생성
             raw_data = ws_qty.get_all_records()
             st.session_state.master_log = pd.DataFrame(raw_data)
         except Exception as e:
@@ -446,7 +452,7 @@ def render_step6():
     df_log = st.session_state.master_log.copy()
 
     if not df_log.empty:
-        # 2. [UI] 상단 필터
+        # 2. [UI] 상단 필터 (공급처별, 상품명별 검색)
         c1, c2, c3 = st.columns([1.5, 2, 1])
         with c1:
             v_list = ["전체"] + sorted(df_log['공급처'].unique().tolist())
@@ -456,47 +462,55 @@ def render_step6():
         with c3:
             st.write(" ")
             if st.button("🔄 현황판 새로고침", use_container_width=True):
+                # 캐시 삭제 후 다시 읽기
                 if 'master_log' in st.session_state: del st.session_state.master_log
                 st.rerun()
 
         # 데이터 필터링 적용
         df_dash = df_log.copy()
-        if sel_v != "전체": df_dash = df_dash[df_dash['공급처'] == sel_v]
-        if sel_s: df_dash = df_dash[df_dash['상품명'].str.contains(sel_s, case=False)]
+        if sel_v != "전체": 
+            df_dash = df_dash[df_dash['공급처'] == sel_v]
+        if sel_s: 
+            df_dash = df_dash[df_dash['상품명'].str.contains(sel_s, case=False)]
 
-        # 3. [상단 요약] 사장님 시트 컬럼 기준 합계
+        # 3. [상단 요약] 시트 컬럼 기준 합계 (계산 로직 단순화)
         m1, m2, m3 = st.columns(3)
-        # 기존리오더와 추가발주를 합친 것이 실제 총 발주량
+        # 총발주 = 기존리오더 + 추가발주
         t_order = pd.to_numeric(df_dash['기존리오더'], errors='coerce').sum() + \
                   pd.to_numeric(df_dash['추가발주'], errors='coerce').sum()
+        # 총입고 = 입고수량
         t_in = pd.to_numeric(df_dash['입고수량'], errors='coerce').sum()
         
         m1.metric("📋 누적 총 발주", f"{int(t_order)}개")
         m2.metric("📥 누적 총 입고", f"{int(t_in)}개")
         m3.metric("⏳ 미입고 잔량", f"{int(t_order - t_in)}개")
 
-        # 4. [표시 영역] 사장님이 말씀하신 딱 9개 순서 그대로
+        # 4. [표시 영역] 사장님이 말씀하신 딱 9개 순서 그대로 (가공 금지)
         # 순서: 날짜 | 공급처 | 상품명 | 옵션 | 공급처상품명 | 기존리오더 | 추가발주 | 입고수량 | 메모
         target_cols = [
             '날짜', '공급처', '상품명', '옵션', '공급처상품명', 
             '기존리오더', '추가발주', '입고수량', '메모'
         ]
         
-        st.markdown("### 📝 상세 현황 리스트")
+        # 실제 시트에 존재하는 컬럼만 필터링 (에러 방지용)
+        existing_cols = [c for c in target_cols if c in df_dash.columns]
+        
+        st.markdown("### 📝 상세 현황 리스트 (시트 원본 데이터)")
         st.dataframe(
-            df_dash[target_cols], 
+            df_dash[existing_cols].sort_values(by='날짜', ascending=False), # 최신순 정렬
             use_container_width=True, 
             hide_index=True,
             column_config={
-                "날짜": st.column_config.TextColumn("날짜"),
-                "기존리오더": st.column_config.NumberColumn("기존리오더", format="%d"),
-                "추가발주": st.column_config.NumberColumn("추가발주", format="%d"),
-                "입고수량": st.column_config.NumberColumn("입고수량", format="%d")
+                "날짜": st.column_config.TextColumn("날짜", width="medium"),
+                "기존리오더": st.column_config.NumberColumn("기존", format="%d"),
+                "추가발주": st.column_config.NumberColumn("추가", format="%d"),
+                "입고수량": st.column_config.NumberColumn("입고", format="%d"),
+                "메모": st.column_config.TextColumn("메모", width="large")
             }
         )
     else:
-        st.info("데이터가 없습니다.")
+        st.info("데이터가 없습니다. 4단계에서 먼저 저장해 주세요.")
 
-# 🚨 실행부
+# 🚨 실행부 (분석이 완료되었을 때만 화면에 표시)
 if st.session_state.get('analyzed'):
     render_step6()
