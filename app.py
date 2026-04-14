@@ -234,7 +234,7 @@ if 'df_raw' in st.session_state:
                 
                 
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (전체 기능 복구 + 실시간 동기화)
+# 4️⃣단계: 입고 관리 및 최종 저장 (기존 기능 100% 유지 + 동기화 보강)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -243,19 +243,20 @@ if st.session_state.get('analyzed'):
     p = st.session_state.p
     
     if 'df_final' not in st.session_state:
-        st.error("데이터가 없습니다. 1~3단계를 먼저 진행해주세요.")
+        st.error("데이터가 없습니다. 이전 단계를 먼저 진행해 주세요.")
         st.stop()
 
-    # 1. 상단 필터 및 검색 UI (사장님이 공들여 만든 로직 그대로)
+    # [기능복구 1] 사장님표 상태 필터 및 검색 UI
     f1, f2 = st.columns([1, 2])
     with f1: 
         f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
     with f2: 
         s_query = st.text_input("🔍 검색 (상품명/옵션)")
 
-    # 화면 표시용 필터링 로직 (누락 없이 전체 복구)
+    # [기능복구 2] 사장님이 설계한 정교한 필터링 로직
     df_temp = st.session_state.df_final.copy()
     if f_mode == "🚨 발주필요(세트)":
+        # 세트 단위로 발주가 필요한 상품들만 걸러내는 로직 유지
         need_items = df_temp[(df_temp['상태'] != "🚫 품절") & (df_temp['권장발주수량'] > 0)][p['it']].unique()
         df_temp = df_temp[df_temp[p['it']].isin(need_items)]
     elif f_mode != "전체보기":
@@ -265,7 +266,7 @@ if st.session_state.get('analyzed'):
         df_temp = df_temp[df_temp[p['it']].str.contains(s_query, case=False) | 
                            df_temp[p['op']].str.contains(s_query, case=False)]
 
-    # 표시할 컬럼 (사장님 지정 순서)
+    # [기능복구 3] 전체 컬럼 구성 (누락 없음)
     disp_cols = [
         '상태', p['vn'], p['it'], p['op'], p['vi'], p['av'], 
         '기존리오더', '입고차감', '추가발주', p['t3'], 
@@ -297,11 +298,11 @@ if st.session_state.get('analyzed'):
         btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
-        # 변경 사항 추출
+        # 변경된 내역 추출
         changed_rows = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)].copy()
         
         if not changed_rows.empty:
-            with st.spinner("🚀 시트 전송 및 전체 화면 업데이트 중..."):
+            with st.spinner("🚀 시트 전송 및 전체 화면 데이터 동기화 중..."):
                 try:
                     sh = get_sheet()
                     ws_qty = sh.worksheet("발주기록")
@@ -320,41 +321,40 @@ if st.session_state.get('analyzed'):
                         auto_memo = f"[{time_short} {q_val}발주 -{i_val}입고]"
                         final_memo = f"{auto_memo} {user_memo}".strip()
                         
-                        # [발주기록 시트] A~I열 순서 엄수
+                        # [발주기록 시트] 사장님 지정 A~I열 순서 엄수
                         rows_qty.append([
                             now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
                             int(r['기존리오더']), q_val, i_val, final_memo
                         ])
                         
-                        # [히스토리 시트] 저장 (5단계용)
+                        # [히스토리 시트] 저장 (5단계에서 읽어갈 데이터)
                         rows_hist.append([
                             now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
                             r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo
                         ])
 
-                        # 화면 데이터 실시간 업데이트 로직
+                        # 화면 데이터 실시간 반영 (기존 리오더 수치 갱신)
                         mask = (st.session_state.df_final[p['it']] == r[p['it']]) & (st.session_state.df_final[p['op']] == r[p['op']])
                         st.session_state.df_final.loc[mask, '기존리오더'] = max(0, int(r['기존리오더']) + q_val - i_val)
                         st.session_state.df_final.loc[mask, '입고차감'] = 0
                         st.session_state.df_final.loc[mask, '추가발주'] = 0
 
-                    # 시트 전송 실행
+                    # 1. 실제 시트 전송
                     if rows_qty: ws_qty.append_rows(rows_qty, value_input_option='USER_ENTERED')
                     if rows_hist: ws_hist.append_rows(rows_hist, value_input_option='USER_ENTERED')
                     
-                    # 🚨 [중요] 5, 6단계가 시트를 새로 읽게 만드는 캐시 삭제
+                    # 2. 🚨 [연동 핵심] 5, 6단계가 시트를 새로 읽게 만드는 '기억(캐시) 삭제'
                     if 'db_history' in st.session_state: del st.session_state.db_history
                     if 'master_log' in st.session_state: del st.session_state.master_log
                     
-                    st.success(f"✅ 저장 성공! {len(rows_qty)}건의 내역이 히스토리와 현황판에 반영되었습니다.")
+                    st.success(f"✅ 저장 성공! {len(rows_qty)}건의 내역이 시트에 기록되었습니다.")
                     time.sleep(1)
-                    st.rerun() # 전체 리프레시
+                    st.rerun() # 전체 리프레시로 5, 6단계가 새 데이터를 읽게 함
                     
                 except Exception as e:
                     st.error(f"저장 중 오류 발생: {e}")
         else:
-            st.warning("⚠️ 저장할 변경 내역이 없습니다. (입고 또는 추가발주 값을 입력해주세요)")
-            
+            st.warning("⚠️ 저장할 변경 내역이 없습니다. 입고 또는 발주 값을 입력해 주세요.")
 
 # ------------------------------------------------------------------
 # 5️⃣단계: 전체 히스토리 기록 (조회 버튼 위치 및 정렬 수정)
