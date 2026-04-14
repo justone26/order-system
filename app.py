@@ -263,7 +263,7 @@ if st.session_state.get('analyzed') and 'master_log' in st.session_state:
     st.dataframe(df_5[target_cols].sort_values('날짜', ascending=False), use_container_width=True, hide_index=True)
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (KeyError 완전 방어형)
+# 6️⃣단계: 실시간 리오더 현황판 (요청 컬럼 순서 및 상세 수량 버전)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -300,12 +300,12 @@ if st.session_state.get('analyzed'):
         # --- [상단 필터] ---
         f1, f2, f3 = st.columns([1.5, 1.5, 1])
         with f1:
-            r_date = st.date_input("📅 내역 확인 기간", [m_df['날짜_only'].min(), m_df['날짜_only'].max()], key="r_date_v8")
+            r_date = st.date_input("📅 내역 확인 기간", [m_df['날짜_only'].min(), m_df['날짜_only'].max()], key="r_date_v9")
         with f2:
-            r_name = st.text_input("🔍 상품명 검색", key="r_name_v8")
+            r_name = st.text_input("🔍 상품명 검색", key="r_name_v9")
         with f3:
             v_list = ["전체 업체"] + sorted([str(v) for v in m_df[v_col].unique() if v]) if v_col else ["전체 업체"]
-            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="r_vendor_v8")
+            r_vendor = st.selectbox("🏭 업체 필터", v_list, key="r_vendor_v9")
 
         # --- [데이터 필터링] ---
         df_6 = m_df.copy()
@@ -317,10 +317,8 @@ if st.session_state.get('analyzed'):
             df_6 = df_6[df_6[v_col] == r_vendor]
 
         # --- [안전한 일자별 합산 집계] ---
-        # 존재하는 컬럼만 그룹화 키로 사용
         group_daily = [c for c in [v_col, '상품명', '옵션', vi_col, '날짜_only'] if c and c in df_6.columns]
         
-        # agg_dict를 동적으로 생성 (KeyError 방지 핵심)
         agg_dict = {}
         if qty_col: agg_dict[qty_col] = 'sum'
         if in_col: agg_dict[in_col] = 'sum'
@@ -329,7 +327,7 @@ if st.session_state.get('analyzed'):
         if not df_6.empty and agg_dict:
             daily_summary = df_6.groupby(group_daily).agg(agg_dict).reset_index()
 
-            # 일자별 텍스트 생성
+            # 일자별 텍스트 생성 (메모란에 들어갈 내용)
             def format_daily_text(row):
                 d_str = row['날짜_only'].strftime('%m/%d')
                 q_val = int(pd.to_numeric(row[qty_col], errors='coerce')) if qty_col and qty_col in row else 0
@@ -353,27 +351,30 @@ if st.session_state.get('analyzed'):
 
             summary = daily_summary.groupby(final_group).agg(final_agg).reset_index()
             
-            # 수량 계산
+            # 수량 계산 (총발주, 총입고, 리오더 잔량)
             out_total = pd.to_numeric(summary[qty_col]).fillna(0) if qty_col else 0
             in_total = pd.to_numeric(summary[in_col]).fillna(0) if in_col else 0
             summary['리오더 잔량'] = out_total - in_total
             
+            # 잔량이 있는 것만 표시
             summary = summary[summary['리오더 잔량'] > 0].sort_values('리오더 잔량', ascending=False)
 
-            # 컬럼명 정리
-            rename_map = {'일자별메모': '비고(처리내역)', '날짜_only': '최근기록일'}
-            if qty_col: rename_map[qty_col] = '총발주량'
-            if in_col: rename_map[in_col] = '총입고량'
-            summary.rename(columns=rename_map, inplace=True)
-
-            # --- [엑셀 다운로드 및 테이블 출력] ---
-            st.subheader("📦 품목별 상세 잔량 및 히스토리")
+            # --- [컬럼명 정리 및 순서 재배치] ---
+            # 사장님 요청 순서: 최근기록일 => 업체명 => 상품명 => 옵션 => 공급처상품명 => 총발주량 => 입고수량 => 발주수량 => 비고
+            summary.rename(columns={
+                '날짜_only': '최근기록일',
+                qty_col: '발주수량', # 기간 내 발주합계
+                in_col: '입고수량',  # 기간 내 입고합계
+                '일자별메모': '비고(처리내역)'
+            }, inplace=True)
             
-            # 사장님이 요청한 순서
-            display_order = ['최근기록일', v_col, '상품명', '옵션', vi_col, '총발주량', '총입고량', '리오더 잔량', '비고(처리내역)']
+            # 총발주량은 여기서 '발주수량'과 동일하게 보거나, 별도 계산이 필요할 경우 추가
+            summary['총발주량'] = summary['발주수량'] 
+
+            display_order = ['최근기록일', v_col, '상품명', '옵션', vi_col, '총발주량', '입고수량', '발주수량', '리오더 잔량', '비고(처리내역)']
             final_df = summary[[c for c in display_order if c in summary.columns]]
 
-            # 엑셀 다운로드 버튼
+            # --- [엑셀 다운로드 버튼] ---
             import io
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -385,9 +386,15 @@ if st.session_state.get('analyzed'):
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+            # --- [테이블 출력] ---
             st.dataframe(
                 final_df, use_container_width=True, hide_index=True,
-                column_config={"리오더 잔량": st.column_config.NumberColumn("잔량", format="%d 📦")}
+                column_config={
+                    "리오더 잔량": st.column_config.NumberColumn("잔량", format="%d 📦"),
+                    "총발주량": st.column_config.NumberColumn("총발주", format="%d"),
+                    "입고수량": st.column_config.NumberColumn("입고", format="%d"),
+                    "발주수량": st.column_config.NumberColumn("발주", format="%d")
+                }
             )
         else:
             st.info("조회된 데이터가 없거나 컬럼이 부족합니다.")
