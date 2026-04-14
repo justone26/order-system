@@ -451,10 +451,10 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
 
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (조회 버튼 제거 - 실시간 자동 반영)
+# 6️⃣단계: 실시간 리오더 현황판 (업체별 요약 + 기간 자동조회)
 # ------------------------------------------------------------------
 def render_step6():
-    # 1. 화면 유지 조건 (분석 완료 시 혹은 저장 후)
+    # 1. 화면 유지 조건 (분석 완료 시 혹은 저장 후 유지 신호가 있을 때)
     if not (st.session_state.get('analyzed') or st.session_state.get('show_step6')):
         return
 
@@ -465,7 +465,7 @@ def render_step6():
     try:
         sh = get_sheet()
         ws_qty = sh.worksheet("발주기록")
-        # get_all_records()로 최신 데이터를 항상 새로 가져옴
+        # 최신 데이터를 항상 새로 가져옵니다.
         df_log = pd.DataFrame(ws_qty.get_all_records())
         
         if df_log.empty:
@@ -478,12 +478,12 @@ def render_step6():
         st.error(f"데이터 로드 중 오류: {e}")
         return
 
-    # 3. [UI 레이아웃] 버튼 삭제 후 4컬럼으로 재배치
+    # 3. [UI 레이아웃] 버튼 없는 실시간 자동 반영 UI
     c1, c2, c3, c4 = st.columns([1.5, 1.5, 1.2, 0.8])
     
     with c1:
         today = datetime.now(KST).date()
-        # 달력 날짜만 바꾸면 즉시 rerun되어 아래 로직이 실행됩니다.
+        # 달력 날짜를 바꾸면 즉시 아래 로직이 실행됩니다 (검색 버튼 필요 없음)
         date_range_6 = st.date_input(
             "📅 조회 기간 선택",
             value=(today, today), 
@@ -491,11 +491,9 @@ def render_step6():
         )
     
     with c2:
-        # 검색 버튼 없이 텍스트 입력만 남김
         sel_s = st.text_input("🔍 상품명 검색", key="s6_name_search_final")
         
     with c3:
-        # 공급처 필터
         v_list = ["전체"] + sorted(df_log['공급처'].unique().tolist())
         sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_v_filter_final")
         
@@ -506,7 +504,7 @@ def render_step6():
             if 'master_log' in st.session_state: del st.session_state.master_log
             st.rerun()
 
-    # 4. [자동 필터링 로직] 버튼 클릭 여부 상관없이 즉시 실행
+    # 4. [자동 필터링 로직] 
     df_dash = df_log.copy()
     
     # (1) 기간 필터링
@@ -514,20 +512,47 @@ def render_step6():
         s_d, e_d = date_range_6
         df_dash = df_dash[(df_dash['날짜_dt'] >= s_d) & (df_dash['날짜_dt'] <= e_d)]
     
-    # (2) 상품명 검색
+    # (2) 상품명 및 공급처 필터링
     if sel_s:
         df_dash = df_dash[df_dash['상품명'].str.contains(sel_s, case=False)]
-        
-    # (3) 공급처 필터
     if sel_v != "전체":
         df_dash = df_dash[df_dash['공급처'] == sel_v]
 
-    # 5. [수치 요약 및 표 표시]
+    # ---------------------------------------------------------
+    # ✨ [신규] 업체별 리오더 요약 현황 계산
+    # ---------------------------------------------------------
+    st.markdown("#### 🏢 업체별 미입고 현황 (조회 기간 내)")
+    
+    # 수량 계산용 컬럼 생성
+    df_dash['총발주'] = pd.to_numeric(df_dash['기존리오더'], errors='coerce').fillna(0) + \
+                       pd.to_numeric(df_dash['추가발주'], errors='coerce').fillna(0)
+    df_dash['총입고'] = pd.to_numeric(df_dash['입고수량'], errors='coerce').fillna(0)
+    df_dash['미입고'] = df_dash['총발주'] - df_dash['총입고']
+
+    # 업체별 그룹화
+    vendor_summary = df_dash.groupby('공급처').agg({
+        '총발주': 'sum',
+        '총입고': 'sum',
+        '미입고': 'sum'
+    }).reset_index()
+
+    if not vendor_summary.empty:
+        # 상위 업체 메트릭 표시
+        v_cols = st.columns(min(len(vendor_summary), 4))
+        for i, (idx, row) in enumerate(vendor_summary.iterrows()):
+            if i < 4:
+                v_cols[i].metric(row['공급처'], f"{int(row['미입고'])}개", f"발주 {int(row['총발주'])}")
+        
+        # 전체 업체 리스트 상세 보기
+        with st.expander("📝 전체 업체별 상세 수치 보기"):
+            st.table(vendor_summary.style.format({'총발주': '{:,.0f}', '총입고': '{:,.0f}', '미입고': '{:,.0f}'}))
+    
+    st.divider()
+
+    # 5. [하단 전체 요약 및 데이터 표시]
     m1, m2, m3 = st.columns(3)
-    # 수량 합계 계산
-    t_order = pd.to_numeric(df_dash['기존리오더'], errors='coerce').sum() + \
-              pd.to_numeric(df_dash['추가발주'], errors='coerce').sum()
-    t_in = pd.to_numeric(df_dash['입고수량'], errors='coerce').sum()
+    t_order = df_dash['총발주'].sum()
+    t_in = df_dash['총입고'].sum()
     
     m1.metric("📋 기간내 총 발주", f"{int(t_order)}개")
     m2.metric("📥 기간내 총 입고", f"{int(t_in)}개")
@@ -541,5 +566,10 @@ def render_step6():
         hide_index=True
     )
 
-# 🚨 실행부 호출
-render_step6()
+# ---------------------------------------------------------
+# 🚨 [실행부] 5단계와 6단계를 화면에 순서대로 호출
+# ---------------------------------------------------------
+if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
+    # 5단계 함수가 정의되어 있다면 여기서 함께 호출하세요.
+    # render_step5() 
+    render_step6()
