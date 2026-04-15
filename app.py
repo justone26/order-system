@@ -366,7 +366,7 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 상품별 통합 현황판 (중복 통합 & 메모 누적 버전)
+# 6️⃣단계: 실시간 리오더 현황판 (업데이트 & 엑셀 다운로드 통합)
 # ------------------------------------------------------------------
 def render_step6():
     if not (st.session_state.get('analyzed') or st.session_state.get('show_step6')):
@@ -381,73 +381,80 @@ def render_step6():
         df_log = pd.DataFrame(ws_qty.get_all_records())
         if df_log.empty: return
         
-        # 숫자 변환
+        # 숫자 변환 및 날짜 파싱
         for col in ['기존리오더', '추가발주', '입고수량']:
             df_log[col] = pd.to_numeric(df_log[col], errors='coerce').fillna(0)
-            
-        # 날짜 파싱 (메모에 넣기 위함)
         df_log['날짜_dt'] = pd.to_datetime(df_log['날짜'], errors='coerce', format='mixed')
     except Exception as e:
         st.error(f"데이터 로드 중 오류: {e}"); return
 
-    # [UI 필터]
-    c1, c2, c3 = st.columns([1.5, 1.5, 1.2])
+    # [UI 레이아웃] 검색, 필터, 버튼들
+    c1, c2, c3 = st.columns([2, 1.5, 1])
     with c1:
-        # 통합 화면이므로 기간은 기본적으로 전체를 보거나 넉넉하게 잡는 것이 좋습니다.
-        date_range_6 = st.date_input("📅 조회 기간 (발주 시점 기준)", value=(datetime.now(KST).date(), datetime.now(KST).date()), key="s6_date_vGroup")
+        sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_vExcel")
     with c2:
-        sel_s = st.text_input("🔍 상품명 검색", key="s6_search_vGroup")
+        v_list = ["전체 공급처"] + sorted(df_log['공급처'].unique().tolist())
+        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_vExcel")
     with c3:
-        v_list = ["전체"] + sorted(df_log['공급처'].unique().tolist())
-        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_vGroup")
+        st.write(" ") # 간격 맞춤
+        if st.button("🔄 최신 자료 업데이트", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
 
-    # 1. 기간 필터 먼저 적용
-    df_filtered = df_log.copy()
-    if isinstance(date_range_6, (list, tuple)) and len(date_range_6) == 2:
-        df_filtered = df_filtered[(df_filtered['날짜_dt'].dt.date >= date_range_6[0]) & (df_filtered['날짜_dt'].dt.date <= date_range_6[1])]
-
-    if df_filtered.empty:
-        st.info("해당 기간에 데이터가 없습니다.")
-        return
-
-    # 2. 🔥 핵심: 상품별 통합 로직 (Group By)
-    # 메모 생성을 위해 날짜와 수량을 결합한 임시 컬럼 생성
-    df_filtered['발주기록_temp'] = df_filtered.apply(
-        lambda x: f"{x['날짜_dt'].strftime('%m/%d')} {int(x['추가발주'])}장발주" if x['추가발주'] > 0 else "", axis=1
+    # 1. 전처리 및 그룹화 (상품별 통합 로직)
+    df_proc = df_log.copy()
+    df_proc['기록_temp'] = df_proc.apply(
+        lambda x: f"{x['날짜_dt'].strftime('%m/%d')} {int(x['추가발주'])}장" if x['추가발주'] > 0 else "", axis=1
     )
 
-    # 그룹화 (공급처, 상품명, 옵션 기준)
-    grouped = df_filtered.groupby(['공급처', '상품명', '옵션']).agg({
+    grouped = df_proc.groupby(['공급처', '상품명', '옵션']).agg({
+        '날짜': 'max',            
         '기존리오더': 'sum',
         '추가발주': 'sum',
         '입고수량': 'sum',
-        '발주기록_temp': lambda x: " / ".join([i for i in x if i != ""]),
+        '기록_temp': lambda x: " / ".join([i for i in x if i != ""]),
         '메모': lambda x: " / ".join(set([str(i) for i in x if str(i).strip() != ""]))
     }).reset_index()
 
-    # 최종 메모 합성 (사장님 요청 스타일: 날짜별 기록 + 기존 메모)
-    grouped['메모'] = grouped.apply(lambda x: f"[{x['발주기록_temp']}] {x['메모']}".strip(), axis=1)
-    
-    # 실시간 잔량 계산
+    # 메모 합성 및 최종 잔량 계산
+    grouped['메모'] = grouped.apply(lambda x: f"[{x['기록_temp']}] {x['메모']}".strip(), axis=1)
     grouped['최종잔량'] = grouped['기존리오더'] + grouped['추가발주'] - grouped['입고수량']
 
-    # 검색 및 업체 필터 적용
+    # 검색 및 필터 적용
     if sel_s: grouped = grouped[grouped['상품명'].str.contains(sel_s, case=False)]
-    if sel_v != "전체": grouped = grouped[grouped['공급처'] == sel_v]
+    if sel_v != "전체 공급처": grouped = grouped[grouped['공급처'] == sel_v]
 
-    # 🏢 업체별 요약
-    st.markdown("#### 🏢 업체별 미입고 현황")
-    vendor_sum = grouped.groupby('공급처')['최종잔량'].sum().reset_index()
-    if not vendor_sum.empty:
-        v_cols = st.columns(min(len(vendor_sum), 4))
-        for i, (idx, row) in enumerate(vendor_sum.iterrows()):
-            if i < 4: v_cols[i].metric(row['공급처'], f"{int(row['최종잔량'])}개 미입고")
+    # 정렬
+    grouped = grouped.sort_values(by=['날짜', '최종잔량'], ascending=[False, False])
+    target_cols = ['날짜', '공급처', '상품명', '옵션', '최종잔량', '추가발주', '입고수량', '메모']
+    final_df = grouped[target_cols]
 
-    st.divider()
+    # 📊 데이터 표 출력
+    st.dataframe(final_df, use_container_width=True, hide_index=True)
 
-    # 📊 데이터 출력 (날짜 컬럼은 여러 날짜가 섞이므로 제외하거나 '최근발주'로 대체)
-    target_cols = ['공급처', '상품명', '옵션', '최종잔량', '추가발주', '입고수량', '메모']
-    st.dataframe(grouped[target_cols].sort_values(by='최종잔량', ascending=False), use_container_width=True, hide_index=True)
+    # 📥 [엑셀 다운로드 섹션]
+    import io
+    # 엑셀 파일 생성 (메모리상에서 처리)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        final_df.to_excel(writer, index=False, sheet_name='실시간리오더현황')
+        # 엑셀 시트 서식 살짝 조정
+        workbook = writer.book
+        worksheet = writer.sheets['실시간리오더현황']
+        header_format = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1})
+        for col_num, value in enumerate(final_df.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+    
+    excel_data = output.getvalue()
+    
+    # 다운로드 버튼 배치
+    st.download_button(
+        label="📥 실시간 현황 엑셀 다운로드 (.xlsx)",
+        data=excel_data,
+        file_name=f"리오더현황_{datetime.now(KST).strftime('%Y%m%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
     
 
 # ------------------------------------------------------------------
