@@ -164,7 +164,7 @@ if 'df_raw' in st.session_state:
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']), key="sel_t7")
 
 # ------------------------------------------------------------------
-# 3️⃣단계: 분석 설정 및 실행 (데이터 매칭 강제 동기화 버전)
+# 3️⃣단계: 분석 설정 및 실행 (시트 실시간 합산 방식)
 # ------------------------------------------------------------------
 if 'df_raw' in st.session_state:
     st.divider()
@@ -176,6 +176,7 @@ if 'df_raw' in st.session_state:
 
     if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary", use_container_width=True):
         try:
+            # 설정값 저장
             p_map = {
                 'so': st.session_state.get('sel_so'), 'it': st.session_state.get('sel_it'),
                 'op': st.session_state.get('sel_op'), 'vn': st.session_state.get('sel_vn'),
@@ -185,61 +186,50 @@ if 'df_raw' in st.session_state:
             }
             st.session_state.p = p_map
 
-            with st.spinner("📊 '발주기록' 시트와 1:1 매칭 검사 중..."):
-                df = st.session_state.df_raw.copy()
-                today = datetime.now(KST).date()
+            with st.spinner("📊 '발주기록' 장부 합산 및 실시간 잔량 계산 중..."):
                 sh = get_sheet()
-                
-                # 시트 가져오기 및 청소
                 ws = sh.worksheet("발주기록")
                 raw_data = ws.get_all_values()
+                
                 if len(raw_data) <= 1:
-                    st.error("🚨 '발주기록' 시트에 데이터가 없거나 제목줄만 있습니다.")
-                    st.stop()
-                
-                # 헤더 정리 및 DF 생성
-                header = [str(h).strip() for h in raw_data[0]]
-                df_master = pd.DataFrame(raw_data[1:], columns=header)
-                
-                # [강력 세척] 모든 공백, 줄바꿈 제거 및 대문자 통일
-                def clean_text(text):
-                    return "".join(str(text).split()).upper()
+                    # 데이터가 없으면 리오더는 모두 0
+                    r_map = {}
+                else:
+                    header = [h.strip() for h in raw_data[0]]
+                    df_master = pd.DataFrame(raw_data[1:], columns=header)
+                    
+                    # 🚨 [매칭 강화] 모든 텍스트의 공백을 제거하고 대문자로 통일 (오차 제로)
+                    def clean_k(t): return "".join(str(t).split()).upper()
+                    
+                    # 장부의 수량 컬럼들 숫자 변환
+                    q_col, in_col = '추가발주', '입고수량'
+                    for col in [q_col, in_col]:
+                        if col in df_master.columns:
+                            df_master[col] = pd.to_numeric(df_master[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    
+                    # 장부 매칭 키 생성 (상품명+옵션)
+                    it_c, op_c = '상품명', '옵션'
+                    df_master['m_key'] = df_master[it_c].apply(clean_k) + df_master[op_c].apply(clean_k)
+                    
+                    # 🚨 [핵심 계산] (추가발주 총합) - (입고수량 총합) = 현재 미입고 잔량
+                    group_res = df_master.groupby('m_key').apply(lambda x: x[q_col].sum() - x[in_col].sum())
+                    r_map = group_res.clip(lower=0).to_dict()
 
-                # 시트 데이터 세척
-                it_c, op_c = '상품명', '옵션'
-                target_col = next((c for c in df_master.columns if '최종잔량' in c.replace(" ", "")), None)
-                
-                if not target_col:
-                    st.error("🚨 시트에서 '최종잔량' 컬럼을 찾을 수 없습니다.")
-                    st.stop()
-
-                # 매칭용 '키' 생성 (상품명+옵션)
-                df_master['match_key'] = df_master[it_c].apply(clean_text) + df_master[op_c].apply(clean_text)
-                df_master[target_col] = pd.to_numeric(df_master[target_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                
-                # 최신 잔량 맵 생성
-                r_map = df_master.groupby('match_key')[target_col].last().to_dict()
-
-                # [분석 데이터 세척 및 매칭]
+                # [4단계 데이터와 매칭]
+                df = st.session_state.df_raw.copy()
                 c_it, c_op = p_map['it'], p_map['op']
-                df['match_key'] = df[c_it].apply(clean_text) + df[c_op].apply(clean_text)
                 
-                # 매칭 실행
-                df['기존리오더'] = df['match_key'].map(r_map).fillna(0).astype(int)
+                # 엑셀 데이터 키 생성
+                df['m_key'] = df[c_it].apply(clean_k) + df[c_op].apply(clean_k)
+                
+                # 리오더 값 주입 (없으면 0)
+                df['기존리오더'] = df['m_key'].map(r_map).fillna(0).astype(int)
 
-                # ------------------------------------------------------
-                # 🔍 진단 모드: 만약 기존리오더가 전부 0이라면 이유 출력
-                # ------------------------------------------------------
-                if df['기존리오더'].sum() == 0:
-                    st.warning("❓ 모든 기존리오더가 0으로 계산되었습니다. 매칭 키를 확인하세요.")
-                    sample_key_excel = df['match_key'].iloc[0] if not df.empty else "N/A"
-                    sample_key_sheet = list(r_map.keys())[0] if r_map else "N/A"
-                    st.info(f"💡 [비교] 엑셀 첫상품 키: `{sample_key_excel}` | 시트 첫상품 키: `{sample_key_sheet}`")
-
-                # 나머지 계산 로직
+                # 일판매량 및 최종 권장수량 계산
                 c_av, c_t7, c_rd, c_so = p_map['av'], p_map['t7'], p_map['rd'], p_map['so']
-                df[c_av] = pd.to_numeric(df[c_av], errors='coerce').fillna(0).astype(int)
+                today = datetime.now(KST).date()
                 
+                df[c_av] = pd.to_numeric(df[c_av], errors='coerce').fillna(0).astype(int)
                 def calc_daily(row):
                     try:
                         days = max(1, min((today - pd.to_datetime(row[c_rd]).date()).days, 7))
@@ -247,14 +237,20 @@ if 'df_raw' in st.session_state:
                     except: return int(round(pd.to_numeric(row[c_t7], errors='coerce') / 7, 0))
 
                 df['일판매량'] = df.apply(calc_daily, axis=1).fillna(0).astype(int)
+                
+                # 🚨 최종 공식: (일판매량 * 확보일수) - (현재고 + 기존리오더)
                 df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[c_av] + df['기존리오더'])).clip(lower=0).astype(int)
+                
+                # 상태 판별
                 df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[c_so]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
                 
-                # 임시 컬럼 삭제 및 저장
-                final_df = df.drop(columns=['match_key'])
-                st.session_state.df_final = final_df
+                # UI용 컬럼 초기화
+                df['입고차감'] = 0 ; df['추가발주'] = 0 ; df['비고(처리내역)'] = "" 
+                
+                if 'm_key' in df.columns: df = df.drop(columns=['m_key'])
+                st.session_state.df_final = df
                 st.session_state.analyzed = True
-                st.success("✅ 분석 완료!")
+                st.success("✅ 분석 완료! 6단계와 동일한 실시간 합산 방식으로 계산되었습니다.")
                 st.rerun()
                 
         except Exception as e:
