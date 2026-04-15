@@ -187,8 +187,8 @@ if 'df_raw' in st.session_state:
     st.subheader("⚙️ 3️⃣단계: 분석 설정 및 실행")
 
     clt, css = st.columns(2)
-    with clt: lt = st.number_input("리드타임 (일)", value=10, key="input_lt")
-    with css: ss = st.number_input("안전재고 (일 수)", value=7, key="input_ss")
+    with clt: lt = st.number_input("리드타임 (일)", value=7, key="input_lt")
+    with css: ss = st.number_input("안전재고 (일 수)", value=3, key="input_ss")
 
     if st.button("🚀 분석 실행", type="primary", use_container_width=True):
         try:
