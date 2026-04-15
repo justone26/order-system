@@ -209,21 +209,28 @@ if 'df_raw' in st.session_state:
                         return res.loc[:, ~res.columns.duplicated()]
                     return pd.DataFrame()
 
-                # [A] 발주기록 시트 분석 (누적 미입고 계산)
+               # [A] 발주기록 시트 분석 (상품명+옵션 기준으로 누적 계산)
                 df_master = get_clean_df("발주기록")
                 st.session_state.master_log = df_master 
 
                 r_map = {}
                 if not df_master.empty:
-                    vn_c, it_c, op_c, q_c, in_c = '공급처', '상품명', '옵션', '추가발주', '입고수량'
+                    # 🚨 시트의 컬럼명 (공급처는 매칭에서 제외하여 누락 방지)
+                    it_c, op_c, q_c, in_c = '상품명', '옵션', '추가발주', '입고수량'
+                    
                     for col in [q_c, in_c]:
                         if col in df_master.columns:
                             df_master[col] = pd.to_numeric(df_master[col], errors='coerce').fillna(0)
                     
-                    if all(c in df_master.columns for c in [vn_c, it_c, op_c]):
-                        qty_sum = df_master.groupby([vn_c, it_c, op_c])[q_c].sum()
-                        in_sum = df_master.groupby([vn_c, it_c, op_c])[in_c].sum()
-                        r_map = qty_sum.sub(in_sum, fill_value=0).clip(lower=0).to_dict()
+                    # 🚨 핵심 수정: 공급처(vn_c)를 빼고 '상품명'과 '옵션'만으로 그룹화합니다.
+                    # 업체명이 공백이거나 달라도 상품만 같으면 다 더해버립니다.
+                    if all(c in df_master.columns for c in [it_c, op_c]):
+                        qty_sum = df_master.groupby([it_c, op_c])[q_c].sum()
+                        in_sum = df_master.groupby([it_c, op_c])[in_c].sum()
+                        
+                        # 최종 잔량 계산
+                        final_res = qty_sum.sub(in_sum, fill_value=0).clip(lower=0)
+                        r_map = final_res.to_dict()
 
                 # [B] 실시간 분석 계산
                 c_av, c_t7, c_vn, c_it, c_op, c_rd, c_so = p_map['av'], p_map['t7'], p_map['vn'], p_map['it'], p_map['op'], p_map['rd'], p_map['so']
@@ -231,9 +238,12 @@ if 'df_raw' in st.session_state:
                 df[c_av] = pd.to_numeric(df[c_av], errors='coerce').fillna(0).astype(int)
                 df[c_t7] = pd.to_numeric(df[c_t7], errors='coerce').fillna(0).astype(int)
                 
-                # 기존 리오더 매칭
-                df['기존리오더'] = df.apply(lambda row: int(r_map.get((str(row[c_vn]).strip(), str(row[c_it]).strip(), str(row[c_op]).strip()), 0)), axis=1)
+                # 🚨 기존 리오더 매칭 시에도 '상품명'과 '옵션'만 대조
+                def get_safe_reorder(row):
+                    k = (str(row[c_it]).strip(), str(row[c_op]).strip())
+                    return int(r_map.get(k, 0))
 
+                df['기존리오더'] = df.apply(get_safe_reorder, axis=1)
                 # 일판매량 및 권장수량 계산
                 def calc_daily(row):
                     try:
