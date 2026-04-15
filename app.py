@@ -245,7 +245,7 @@ if 'df_raw' in st.session_state:
                 
                 
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (기본 로직 100% 유지 + 동기화/메모 보강)
+# 4️⃣단계: 입고 관리 및 최종 저장 (기능 100% 유지 + 동기화 보강)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -264,7 +264,7 @@ if st.session_state.get('analyzed'):
     with f2: 
         s_query = st.text_input("🔍 검색 (상품명/옵션)")
 
-    # [기능유지] 사장님표 정교한 필터링 로직
+    # [기능유지] 필터링 로직
     df_temp = st.session_state.df_final.copy()
     if f_mode == "🚨 발주필요(세트)":
         need_items = df_temp[(df_temp['상태'] != "🚫 품절") & (df_temp['권장발주수량'] > 0)][p['it']].unique()
@@ -276,7 +276,7 @@ if st.session_state.get('analyzed'):
         df_temp = df_temp[df_temp[p['it']].str.contains(s_query, case=False) | 
                            df_temp[p['op']].str.contains(s_query, case=False)]
 
-    # [기능유지] 전체 컬럼 구성 및 에디터 설정
+    # [기능유지] 컬럼 구성
     disp_cols = [
         '상태', p['vn'], p['it'], p['op'], p['vi'], p['av'], 
         '기존리오더', '입고차감', '추가발주', p['t3'], 
@@ -328,8 +328,9 @@ if st.session_state.get('analyzed'):
                         user_memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] and str(r['비고(처리내역)']) != "None" else ""
                         
                         m_parts = []
+                        # ✨ 수정: 입고에도 날짜가 찍히도록 보강
                         if q_val > 0: m_parts.append(f"{time_short} {q_val}발주")
-                        if i_val > 0: m_parts.append(f"-{i_val}입고")
+                        if i_val > 0: m_parts.append(f"{time_short} {i_val}입고")
                         
                         if m_parts:
                             auto_memo = f"[{' '.join(m_parts)}]"
@@ -337,41 +338,27 @@ if st.session_state.get('analyzed'):
                         else:
                             final_memo = user_memo
                         
-                        # [발주기록] A~I열 순서 엄수
-                        rows_qty.append([
-                            now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
-                            int(r['기존리오더']), q_val, i_val, final_memo
-                        ])
-                        
-                        # [히스토리] 저장
-                        rows_hist.append([
-                            now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
-                            r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo
-                        ])
+                        rows_qty.append([now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], int(r['기존리오더']), q_val, i_val, final_memo])
+                        rows_hist.append([now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo])
 
-                        # 화면 데이터 실시간 반영
+                        # 화면 데이터 실시간 반영 (기능 유지)
                         mask = (st.session_state.df_final[p['it']] == r[p['it']]) & (st.session_state.df_final[p['op']] == r[p['op']])
                         st.session_state.df_final.loc[mask, '기존리오더'] = max(0, int(r['기존리오더']) + q_val - i_val)
                         st.session_state.df_final.loc[mask, '입고차감'] = 0
                         st.session_state.df_final.loc[mask, '추가발주'] = 0
 
-                    # 시트 전송
                     if rows_qty: ws_qty.append_rows(rows_qty, value_input_option='USER_ENTERED')
                     if rows_hist: ws_hist.append_rows(rows_hist, value_input_option='USER_ENTERED')
                     
-                    # 🚨 [새로고침 핵심] 5단계와 6단계가 새 데이터를 다시 읽어오도록 메모리를 삭제합니다.
-                    st.session_state.show_step6 = True  # 6단계 유지 신호
-                    if 'db_history' in st.session_state:
-                        del st.session_state.db_history # 5단계용 메모리 삭제
-                    if 'master_log' in st.session_state:
-                        del st.session_state.master_log  # 6단계용 메모리 삭제
-                    
-                    # 캐시까지 비워서 시트 데이터를 즉시 새로고침
+                    # 🚨 [중요] 5, 6단계 강제 새로고침 로직
+                    st.session_state.show_step6 = True
+                    if 'db_history' in st.session_state: del st.session_state.db_history
+                    if 'master_log' in st.session_state: del st.session_state.master_log
                     st.cache_data.clear()
 
                     st.success(f"✅ 저장 성공! 히스토리와 현황판이 업데이트되었습니다.")
                     time.sleep(1)
-                    st.rerun() # 🚀 화면 전체를 다시 그려서 바뀐 데이터를 불러옵니다.
+                    st.rerun() 
                     
                 except Exception as e:
                     st.error(f"저장 중 오류 발생: {e}")
@@ -463,135 +450,73 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
         st.info("💡 히스토리 내역이 없습니다. 4단계에서 데이터를 먼저 저장해주세요.")
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (업체별 요약 + 기간 자동조회)
+# 6️⃣단계: 실시간 리오더 현황판 (업체요약 + 잔량계산 통합본)
 # ------------------------------------------------------------------
 def render_step6():
-    # 1. 화면 유지 조건 (분석 완료 시 혹은 저장 후 유지 신호가 있을 때)
     if not (st.session_state.get('analyzed') or st.session_state.get('show_step6')):
         return
 
     st.markdown("---")
     st.markdown("### 📈 6단계: 실시간 리오더 현황판")
     
-    # 2. 실시간 데이터 로드 (캐시 없이 즉시 반영)
     try:
         sh = get_sheet()
         ws_qty = sh.worksheet("발주기록")
-        # 최신 데이터를 항상 새로 가져옵니다.
         df_log = pd.DataFrame(ws_qty.get_all_records())
-        
-        if df_log.empty:
-            st.info("시트에 기록된 현황 데이터가 없습니다.")
-            return
-            
-        # 날짜 데이터 처리 (필터링용)
-        m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
+        if df_log.empty: return
+        df_log['날짜_dt'] = pd.to_datetime(df_log['날짜'], errors='coerce', format='mixed').dt.date
     except Exception as e:
-        st.error(f"데이터 로드 중 오류: {e}")
-        return
+        st.error(f"데이터 로드 중 오류: {e}"); return
 
-    # 3. [UI 레이아웃] 버튼 없는 실시간 자동 반영 UI
+    # [UI 레이아웃] 자동 반영
     c1, c2, c3, c4 = st.columns([1.5, 1.5, 1.2, 0.8])
-    
     with c1:
-        today = datetime.now(KST).date()
-        # 달력 날짜를 바꾸면 즉시 아래 로직이 실행됩니다 (검색 버튼 필요 없음)
-        date_range_6 = st.date_input(
-            "📅 조회 기간 선택",
-            value=(today, today), 
-            key="s6_date_range_final"
-        )
-    
+        date_range_6 = st.date_input("📅 조회 기간", value=(datetime.now(KST).date(), datetime.now(KST).date()), key="s6_date_v3")
     with c2:
-        sel_s = st.text_input("🔍 상품명 검색", key="s6_name_search_final")
-        
+        sel_s = st.text_input("🔍 상품명 검색", key="s6_search_v3")
     with c3:
         v_list = ["전체"] + sorted(df_log['공급처'].unique().tolist())
-        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_v_filter_final")
-        
+        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_v3")
     with c4:
         st.write(" ")
-        if st.button("🔄 새로고침", use_container_width=True, key="s6_refresh_final"):
-            st.cache_data.clear()
-            if 'master_log' in st.session_state: del st.session_state.master_log
-            st.rerun()
+        if st.button("🔄 새로고침", use_container_width=True):
+            st.cache_data.clear(); st.rerun()
 
-    # 4. [자동 필터링 로직] 
+    # [데이터 처리 및 잔량 계산]
     df_dash = df_log.copy()
-    
-    # 🚨 [보강] '날짜_dt' 컬럼이 유실되었을 경우를 대비해 다시 한 번 체크하고 생성
-    if '날짜_dt' not in df_dash.columns:
-        if '날짜' in df_dash.columns:
-            df_dash['날짜_dt'] = pd.to_datetime(df_dash['날짜'], errors='coerce', format='mixed').dt.date
-        else:
-            # 아예 날짜 컬럼 자체가 없는 최악의 경우 (빈 데이터 등) 대응
-            st.warning("⚠️ 날짜 데이터를 찾을 수 없어 필터링을 건너뜁니다.")
-            return # 더 이상 진행하지 않고 중단
-    
-    # (1) 기간 필터링
+    df_dash['기존리오더'] = pd.to_numeric(df_dash['기존리오더'], errors='coerce').fillna(0)
+    df_dash['추가발주'] = pd.to_numeric(df_dash['추가발주'], errors='coerce').fillna(0)
+    df_dash['입고수량'] = pd.to_numeric(df_dash['입고수량'], errors='coerce').fillna(0)
+    # 🔥 사장님이 강조하신 실시간 잔량 계산
+    df_dash['최종잔량'] = df_dash['기존리오더'] + df_dash['추가발주'] - df_dash['입고수량']
+
+    # 필터 적용
     if isinstance(date_range_6, (list, tuple)) and len(date_range_6) == 2:
-        s_d, e_d = date_range_6
-        # '날짜_dt'가 확실히 있을 때만 실행
-        df_dash = df_dash[(df_dash['날짜_dt'] >= s_d) & (df_dash['날짜_dt'] <= e_d)]
-    
-    # (2) 상품명 및 공급처 필터링
-    if sel_s:
-        df_dash = df_dash[df_dash['상품명'].str.contains(sel_s, case=False)]
-    if sel_v != "전체":
-        df_dash = df_dash[df_dash['공급처'] == sel_v]
+        df_dash = df_dash[(df_dash['날짜_dt'] >= date_range_6[0]) & (df_dash['날짜_dt'] <= date_range_6[1])]
+    if sel_s: df_dash = df_dash[df_dash['상품명'].str.contains(sel_s, case=False)]
+    if sel_v != "전체": df_dash = df_dash[df_dash['공급처'] == sel_v]
 
-    # ---------------------------------------------------------
-    # ✨ [신규] 업체별 리오더 요약 현황 계산
-    # ---------------------------------------------------------
-    st.markdown("#### 🏢 업체별 미입고 현황 (조회 기간 내)")
-    
-    # 수량 계산용 컬럼 생성
-    df_dash['총발주'] = pd.to_numeric(df_dash['기존리오더'], errors='coerce').fillna(0) + \
-                       pd.to_numeric(df_dash['추가발주'], errors='coerce').fillna(0)
-    df_dash['총입고'] = pd.to_numeric(df_dash['입고수량'], errors='coerce').fillna(0)
-    df_dash['미입고'] = df_dash['총발주'] - df_dash['총입고']
+    # 🏢 [업체별 요약] - 어제 기능 유지
+    st.markdown("#### 🏢 업체별 미입고 현황")
+    vendor_sum = df_dash.groupby('공급처').agg({'최종잔량': 'sum', '추가발주': 'sum', '입고수량': 'sum'}).reset_index()
+    if not vendor_sum.empty:
+        v_cols = st.columns(min(len(vendor_sum), 4))
+        for i, (idx, row) in enumerate(vendor_sum.iterrows()):
+            if i < 4: v_cols[i].metric(row['공급처'], f"{int(row['최종잔량'])}개 잔량", f"발주 {int(row['추가발주'])}")
+        with st.expander("📝 전체 업체별 상세 수치"):
+            st.table(vendor_sum.style.format({'최종잔량': '{:,.0f}', '추가발주': '{:,.0f}', '입고수량': '{:,.0f}'}))
 
-    # 업체별 그룹화
-    vendor_summary = df_dash.groupby('공급처').agg({
-        '총발주': 'sum',
-        '총입고': 'sum',
-        '미입고': 'sum'
-    }).reset_index()
-
-    if not vendor_summary.empty:
-        # 상위 업체 메트릭 표시
-        v_cols = st.columns(min(len(vendor_summary), 4))
-        for i, (idx, row) in enumerate(vendor_summary.iterrows()):
-            if i < 4:
-                v_cols[i].metric(row['공급처'], f"{int(row['미입고'])}개", f"발주 {int(row['총발주'])}")
-        
-        # 전체 업체 리스트 상세 보기
-        with st.expander("📝 전체 업체별 상세 수치 보기"):
-            st.table(vendor_summary.style.format({'총발주': '{:,.0f}', '총입고': '{:,.0f}', '미입고': '{:,.0f}'}))
-    
     st.divider()
 
-    # 5. [하단 전체 요약 및 데이터 표시]
+    # 📊 하단 지표 및 테이블
     m1, m2, m3 = st.columns(3)
-    t_order = df_dash['총발주'].sum()
-    t_in = df_dash['총입고'].sum()
-    
-    m1.metric("📋 기간내 총 발주", f"{int(t_order)}개")
-    m2.metric("📥 기간내 총 입고", f"{int(t_in)}개")
-    m3.metric("⏳ 미입고 잔량", f"{int(t_order - t_in)}개")
+    m1.metric("📋 총 발주", f"{int(df_dash['추가발주'].sum())}개")
+    m2.metric("📥 총 입고", f"{int(df_dash['입고수량'].sum())}개")
+    m3.metric("⏳ 현재 잔량 합계", f"{int(df_dash['최종잔량'].sum())}개")
 
-    # 리스트 출력 (최신순)
-    target_cols = ['날짜', '공급처', '상품명', '옵션', '공급처상품명', '기존리오더', '추가발주', '입고수량', '메모']
-    st.dataframe(
-        df_dash[target_cols].sort_values(by='날짜', ascending=False), 
-        use_container_width=True, 
-        hide_index=True
-    )
+    target_cols = ['날짜', '공급처', '상품명', '옵션', '최종잔량', '추가발주', '입고수량', '메모']
+    st.dataframe(df_dash[target_cols].sort_values(by='날짜', ascending=False), use_container_width=True, hide_index=True)
 
-# ---------------------------------------------------------
-# 🚨 [실행부] 5단계와 6단계를 화면에 순서대로 호출
-# ---------------------------------------------------------
+# 실행부
 if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
-    # 5단계 함수가 정의되어 있다면 여기서 함께 호출하세요.
-    # render_step5() 
     render_step6()
