@@ -127,7 +127,7 @@ if up_file is not None:
             st.session_state.df_raw = temp_df
             st.session_state.analyzed = False
             
-            # 🚨 [계산 로직 수정] 6단계와 100% 일치하도록 '마지막 행 잔액' 방식 적용
+            # 🚨 [수정 핵심] 장부를 날짜순으로 정렬한 뒤 '진짜 마지막' 행을 가져옵니다.
             with st.spinner("🔄 구글 시트에서 최신 기존리오더(장부 잔액) 동기화 중..."):
                 sh = get_sheet()
                 ws = sh.worksheet("발주기록")
@@ -139,12 +139,15 @@ if up_file is not None:
                     
                     df_rec['key'] = df_rec['상품명'].apply(c_func) + df_rec['옵션'].apply(c_func)
                     
-                    # 🚨 [사장님 지시사항 반영] 
-                    # 통장 방식: 추가발주/입고수량 합산이 아니라, 장부의 가장 마지막 '기존리오더' 값이 현재 잔액입니다.
-                    # 날짜순으로 정렬 후 마지막 행만 남겨서 맵을 만듭니다.
-                    df_rec['기존리오더'] = pd.to_numeric(df_rec['기존리오더'].str.replace(',', ''), errors='coerce').fillna(0)
+                    # 1. 숫자 변환 (콤마 제거)
+                    df_rec['기존리오더'] = pd.to_numeric(df_rec['기존리오더'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                     
-                    # 마지막 행(최신 잔액) 추출
+                    # 2. 🚨 날짜/시간 정렬 (이게 없으면 예전 100장 기록을 가져올 수 있습니다)
+                    # '날짜' 컬럼을 기준으로 오름차순 정렬하여 최신 기록이 아래로 가게 만듭니다.
+                    df_rec['날짜_dt'] = pd.to_datetime(df_rec['날짜'], errors='coerce', format='mixed')
+                    df_rec = df_rec.sort_values('날짜_dt', ascending=True)
+                    
+                    # 3. 마지막 행(최신 잔액 50장 시점) 추출
                     last_balance_map = df_rec.drop_duplicates('key', keep='last').set_index('key')['기존리오더'].to_dict()
                     st.session_state.reorder_ans = last_balance_map
                 else:
