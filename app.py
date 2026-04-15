@@ -165,19 +165,12 @@ if 'df_raw' in st.session_state:
 
 # ------------------------------------------------------------------
 # 3️⃣단계: 분석 설정 및 실행 
-# (조건: 파일이 로드된 상태라면 항상 표시 / 초기화 시에만 삭제됨)
 # ------------------------------------------------------------------
 if 'df_raw' in st.session_state:
     st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정 및 실행")
 
-    # [중요] 초기화 버튼: 이 버튼을 누르면 모든 분석 결과가 날아가며 3단계가 초기 상태로 돌아갑니다.
-    if st.button("🔄 전체 초기화 (처음부터 다시)", use_container_width=True):
-        for key in ['df_final', 'analyzed', 'db_history', 'master_log', 'p']:
-            if key in st.session_state: del st.session_state[key]
-        st.rerun()
-
-    # 1. 분석 파라미터 입력 (입력한 값은 분석 후에도 유지됨)
+    # 1. 분석 파라미터 입력 (이제 불필요한 초기화 버튼은 사라졌습니다)
     clt, css = st.columns(2)
     with clt: lt = st.number_input("리드타임 (일)", value=10, key="input_lt")
     with css: ss = st.number_input("안전재고 (일 수)", value=7, key="input_ss")
