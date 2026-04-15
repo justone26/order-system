@@ -323,12 +323,10 @@ if st.session_state.get('analyzed'):
                     rows_qty, rows_hist = [], []
 
                     for idx, r in changed_rows.iterrows():
-                        q_val = int(r['추가발주']) if '추가발주' in r else int(r.get('추가발주', 0))
                         q_val = int(r['추가발주'])
                         i_val = int(r['입고차감'])
                         user_memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] and str(r['비고(처리내역)']) != "None" else ""
                         
-                        # [메모수정] 액션(발주/입고)이 있을 때만 메모 생성
                         m_parts = []
                         if q_val > 0: m_parts.append(f"{time_short} {q_val}발주")
                         if i_val > 0: m_parts.append(f"-{i_val}입고")
@@ -361,14 +359,19 @@ if st.session_state.get('analyzed'):
                     if rows_qty: ws_qty.append_rows(rows_qty, value_input_option='USER_ENTERED')
                     if rows_hist: ws_hist.append_rows(rows_hist, value_input_option='USER_ENTERED')
                     
-                    # 🚨 [연동 및 유지 핵심]
-                    st.session_state.show_step6 = True  # 저장 후 6단계 유지 신호
-                    if 'db_history' in st.session_state: del st.session_state.db_history
-                    if 'master_log' in st.session_state: del st.session_state.master_log
+                    # 🚨 [새로고침 핵심] 5단계와 6단계가 새 데이터를 다시 읽어오도록 메모리를 삭제합니다.
+                    st.session_state.show_step6 = True  # 6단계 유지 신호
+                    if 'db_history' in st.session_state:
+                        del st.session_state.db_history # 5단계용 메모리 삭제
+                    if 'master_log' in st.session_state:
+                        del st.session_state.master_log  # 6단계용 메모리 삭제
                     
+                    # 캐시까지 비워서 시트 데이터를 즉시 새로고침
+                    st.cache_data.clear()
+
                     st.success(f"✅ 저장 성공! 히스토리와 현황판이 업데이트되었습니다.")
                     time.sleep(1)
-                    st.rerun() 
+                    st.rerun() # 🚀 화면 전체를 다시 그려서 바뀐 데이터를 불러옵니다.
                     
                 except Exception as e:
                     st.error(f"저장 중 오류 발생: {e}")
