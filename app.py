@@ -164,70 +164,61 @@ if 'df_raw' in st.session_state:
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']), key="sel_t7")
 
 # ------------------------------------------------------------------
-# 3️⃣단계: 분석 설정 및 실행 (초정밀 매칭 - 120개 동기화 버전)
+# 3️⃣단계: 분석 실행 (변수 완벽 반영 및 리오더 동기화)
 # ------------------------------------------------------------------
 if 'df_raw' in st.session_state:
     st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정 및 실행")
 
+    # 사용자가 입력하는 변수 (LT, SS)
     clt, css = st.columns(2)
     with clt: lt = st.number_input("리드타임 (일)", value=10, key="input_lt")
     with css: ss = st.number_input("안전재고 (일 수)", value=7, key="input_ss")
 
     if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary", use_container_width=True):
         try:
+            # 1. 사용자가 입력한 LT, SS 변수를 세션에 저장 (나중에 4단계에서도 쓰임)
             p_map = {
                 'so': st.session_state.get('sel_so'), 'it': st.session_state.get('sel_it'),
                 'op': st.session_state.get('sel_op'), 'vn': st.session_state.get('sel_vn'),
                 'vi': st.session_state.get('sel_vi'), 'av': st.session_state.get('sel_av'),
                 't3': st.session_state.get('sel_t3'), 't7': st.session_state.get('sel_t7'),
-                'rd': st.session_state.get('sel_rd'), 'lt': lt, 'ss': ss
+                'rd': st.session_state.get('sel_rd'), 
+                'lt': lt,  # 👈 입력받은 리드타임 변수
+                'ss': ss   # 👈 입력받은 안전재고 변수
             }
             st.session_state.p = p_map
 
-            with st.spinner("📊 장부 데이터를 6단계와 1:1 동기화 중..."):
+            with st.spinner("📊 6단계 수치 동기화 및 권장수량 재계산 중..."):
+                # --- [A. 리오더 수치 120을 위한 장부 전수조사] ---
                 sh = get_sheet()
                 ws = sh.worksheet("발주기록")
-                raw_data = ws.get_all_values()
-                
+                raw_records = ws.get_all_values()
                 r_map = {}
-                # 🚨 [매칭 강화 함수] 눈에 안 보이는 모든 찌꺼기 제거
-                def super_clean(t):
-                    import re
-                    # 공백, 줄바꿈, 특수문자를 모두 제거하고 대문자로 변환
-                    return re.sub(r'[^a-zA-Z0-9가-힣]', '', str(t)).upper()
+                
+                if len(raw_records) > 1:
+                    df_rec = pd.DataFrame(raw_records[1:], columns=[h.strip() for h in raw_records[0]])
+                    def c_func(t): return "".join(str(t).split()).upper()
+                    
+                    df_rec['추가발주'] = pd.to_numeric(df_rec['추가발주'].str.replace(',', ''), errors='coerce').fillna(0)
+                    df_rec['입고수량'] = pd.to_numeric(df_rec['입고수량'].str.replace(',', ''), errors='coerce').fillna(0)
+                    df_rec['key'] = df_rec['상품명'].apply(c_func) + df_rec['옵션'].apply(c_func)
+                    
+                    # 6단계와 동일한 누적 잔량 계산
+                    r_map = df_rec.groupby('key').apply(lambda x: x['추가발주'].sum() - x['입고수량'].sum()).to_dict()
 
-                if len(raw_data) > 1:
-                    header = [h.strip() for h in raw_data[0]]
-                    df_master = pd.DataFrame(raw_data[1:], columns=header)
-                    
-                    # 숫자 변환
-                    df_master['추가발주'] = pd.to_numeric(df_master['추가발주'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                    df_master['입고수량'] = pd.to_numeric(df_master['입고수량'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                    
-                    # 장부 매칭 키 생성
-                    it_c, op_c = '상품명', '옵션'
-                    df_master['m_key'] = df_master[it_c].apply(super_clean) + df_master[op_c].apply(super_clean)
-                    
-                    # 상품별 잔량 합산 (6단계와 동일 로직)
-                    summary = df_master.groupby('m_key').apply(lambda x: x['추가발주'].sum() - x['입고수량'].sum())
-                    r_map = summary.to_dict()
-
-                # 분석 대상 데이터(4단계용) 매칭
+                # --- [B. 본체 데이터 분석 및 변수 적용] ---
                 df = st.session_state.df_raw.copy()
-                c_it, c_op = p_map['it'], p_map['op']
-                
-                # 🚨 분석 데이터도 똑같이 초정밀 세척하여 매칭
-                df['m_key'] = df[c_it].apply(super_clean) + df[c_op].apply(super_clean)
-                
-                # 기존리오더 주입
-                df['기존리오더'] = df['m_key'].map(r_map).fillna(0).astype(int)
+                df['key'] = df[p_map['it']].apply(c_func) + df[p_map['op']].apply(c_func)
 
-                # 판매량 및 권장발주 계산 로직
-                c_av, c_t7, c_rd, c_so = p_map['av'], p_map['t7'], p_map['rd'], p_map['so']
-                today = datetime.now(KST).date()
+                # 기존리오더 주입 (120 동기화)
+                df['기존리오더'] = df['key'].map(r_map).fillna(0).astype(int)
+
+                # 판매량 및 가용재고 숫자 변환
+                c_av, c_t7, c_rd = p_map['av'], p_map['t7'], p_map['rd']
                 df[c_av] = pd.to_numeric(df[c_av], errors='coerce').fillna(0).astype(int)
                 
+                today = datetime.now(KST).date()
                 def calc_daily(row):
                     try:
                         diff = (today - pd.to_datetime(row[c_rd]).date()).days
@@ -236,20 +227,29 @@ if 'df_raw' in st.session_state:
                     except: return int(round(pd.to_numeric(row[c_t7], errors='coerce') / 7, 0))
 
                 df['일판매량'] = df.apply(calc_daily, axis=1).fillna(0).astype(int)
+
+                # 🚨 [핵심] 리드타임(lt)과 안전재고(ss) 변수를 공식에 반영
+                # 목표재고 = 일판매량 * (리드타임 + 안전재고)
+                # 권장발주 = 목표재고 - (가용재고 + 기존리오더)
                 df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[c_av] + df['기존리오더'])).clip(lower=0).astype(int)
-                df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[c_so]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
                 
-                # 불필요 컬럼 제거 및 결과 저장
-                if 'm_key' in df.columns: df = df.drop(columns=['m_key'])
+                # 상태 판별
+                df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[p_map['so']]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
+                
+                # UI용 컬럼 초기화
+                df['입고차감'] = 0 ; df['추가발주'] = 0 ; df['비고(처리내역)'] = ""
+
+                # 마무리
+                if 'key' in df.columns: df = df.drop(columns=['key'])
                 st.session_state.df_final = df
                 st.session_state.analyzed = True
                 
                 st.cache_data.clear()
-                st.success("✅ 6단계와 100% 동일한 수치로 매칭되었습니다!")
+                st.success(f"✅ 분석 완료 (리드타임 {lt}일 / 안전재고 {ss}일 기준)")
                 st.rerun()
-                
+
         except Exception as e:
-            st.error(f"⚠️ 분석 오류: {e}")
+            st.error(f"⚠️ 분석 중 오류 발생: {e}")
             
                 
 # ------------------------------------------------------------------
