@@ -366,13 +366,15 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (선택 날짜 내 회차 필터링)
+# 5️⃣단계: 전체 히스토리 기록 (6단계 사라짐 방지 보강)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
+    # 🚨 [핵심] 5단계가 실행될 때 6단계 표시 상태를 다시 한번 확실히 고정합니다.
+    st.session_state.show_step6 = True 
+
     st.divider()
     st.header("📜 5단계: 전체 히스토리 기록")
 
-    # 1. 데이터 로드 (기존 로직 유지)
     if 'db_history' not in st.session_state:
         try:
             sh = get_sheet()
@@ -384,28 +386,22 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
                 h_df = h_df.loc[:, ~h_df.columns.duplicated()]
                 h_df.rename(columns={'메모': '비고(처리내역)', '비고': '비고(처리내역)', '비고(메모)': '비고(처리내역)'}, errors='ignore', inplace=True)
                 st.session_state.db_history = h_df
-            else:
-                st.session_state.db_history = pd.DataFrame()
-        except:
-            st.session_state.db_history = pd.DataFrame()
+            else: st.session_state.db_history = pd.DataFrame()
+        except: st.session_state.db_history = pd.DataFrame()
 
     m_df_5 = st.session_state.get('db_history', pd.DataFrame()).copy()
     
     if not m_df_5.empty:
-        # 날짜 컬럼 파싱
         d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
         m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
         m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
         
-        # UI 레이아웃
         c1, c2, c3 = st.columns([1.5, 1.5, 1.2]) 
-        
         with c1: 
-            # 기본값을 오늘 날짜로 설정
             today_val = datetime.now(KST).date()
-            sel_dates_5 = st.date_input("📅 조회 날짜 범위", [today_val, today_val], key="h_date_final_v2")
+            # 🚨 key값을 변경하여 위젯 충돌을 방지합니다.
+            sel_dates_5 = st.date_input("📅 조회 날짜 범위", [today_val, today_val], key="h_date_v18_fix")
 
-        # 🚨 [보강] 선택한 날짜 범위 내에 있는 데이터만 먼저 걸러서 회차 목록을 만듭니다.
         if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
             mask_date = (m_df_5['날짜_only'] >= sel_dates_5[0]) & (m_df_5['날짜_only'] <= sel_dates_5[1])
             period_df = m_df_5[mask_date]
@@ -413,30 +409,20 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
             period_df = m_df_5[m_df_5['날짜_only'] == sel_dates_5]
 
         with c2: 
-            h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_final_v2")
+            h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_v18_fix")
             
         with c3:
-            # ✨ period_df(선택 기간) 내의 회차만 보여줌으로써 어제 회차가 섞이지 않게 함
             t_opts = ["전체 회차"] + sorted(period_df['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
-            h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_final_v2")
+            h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_v18_fix")
 
-        # 최종 필터링 적용
         df_dis = period_df.copy()
-        
         if h_name_5:
             df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
-            
         if h_time_5 != "전체 회차":
             df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
-        # ✨ 정렬: 무조건 최신에 저장한 순서대로
         df_dis = df_dis.sort_values(by='날짜_dt', ascending=False)
-
-        st.dataframe(
-            df_dis.drop(columns=['날짜_dt', '날짜_only'], errors='ignore'), 
-            use_container_width=True, 
-            hide_index=True
-        )
+        st.dataframe(df_dis.drop(columns=['날짜_dt', '날짜_only'], errors='ignore'), use_container_width=True, hide_index=True)
     else:
         st.info("💡 히스토리 내역이 없습니다.")
         
