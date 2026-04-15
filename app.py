@@ -240,17 +240,53 @@ if 'df_raw' in st.session_state:
             st.error(f"⚠️ 분석 오류: {e}")
             
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (통장 잔액 갱신 방식)
+# 4️⃣단계: 입고 관리 및 최종 저장 (통장 잔액 갱신 방식 + NameError 해결)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
-    # ... (필터링 및 검색 UI 부분은 기존과 동일) ...
+    st.divider()
+    st.header("📊 4단계: 입고 관리 및 최종 발주 확정")
+    
+    p = st.session_state.p # 3단계에서 저장한 컬럼 맵핑 정보
+    
+    if 'df_final' not in st.session_state:
+        st.error("데이터가 없습니다. 3단계 분석을 먼저 진행해 주세요.")
+        st.stop()
 
-    with st.form("final_form"):
+    # [1] 원본 데이터 복사
+    df_all = st.session_state.df_final.copy()
+
+    # [2] 필터링 UI (df_temp를 여기서 정의합니다)
+    f1, f2 = st.columns([1, 2])
+    with f1: 
+        f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=0)
+    with f2: 
+        s_query = st.text_input("🔍 검색 (상품명/옵션)", key="search_input_final")
+
+    # [3] 필터링 실행 (df_temp 생성)
+    df_temp = df_all.copy()
+    if f_mode == "🚨 발주필요(세트)":
+        need_items = df_temp[(df_temp['상태'] != "🚫 품절") & (df_temp['권장발주수량'] > 0)][p['it']].unique()
+        df_temp = df_temp[df_temp[p['it']].isin(need_items)]
+    elif f_mode != "전체보기":
+        df_temp = df_temp[df_temp['상태'] == f_mode]
+        
+    if s_query:
+        df_temp = df_temp[df_temp[p['it']].str.contains(s_query, case=False, na=False) | 
+                           df_temp[p['op']].str.contains(s_query, case=False, na=False)]
+
+    # [4] 화면에 보여줄 컬럼 설정 (KeyError 방지)
+    full_cols = ['상태', p['vn'], p['it'], p['op'], p['vi'], p['av'], 
+                 '기존리오더', '입고차감', '추가발주', p['t3'], 
+                 '일판매량', '권장발주수량', '비고(처리내역)']
+    disp_cols = [c for c in full_cols if c in df_temp.columns]
+
+    # [5] 데이터 편집기 및 저장 폼
+    with st.form("final_save_form"):
         edited_df = st.data_editor(
-            df_temp[disp_cols], 
+            df_temp[disp_cols], # 🚨 이제 df_temp가 확실히 정의되어 에러가 안 납니다!
             use_container_width=True, 
             hide_index=True,
-            key="main_editor", 
+            key="main_editor_v2", 
             column_config={
                 '상태': st.column_config.TextColumn("상태", disabled=True),
                 p['vn']: st.column_config.TextColumn("공급처", disabled=True),
@@ -264,6 +300,7 @@ if st.session_state.get('analyzed'):
         )
         btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 잔액 갱신", use_container_width=True, type="primary")
 
+    # [6] 저장 로직 실행
     if btn_save:
         changed_rows = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)].copy()
         
@@ -280,21 +317,17 @@ if st.session_state.get('analyzed'):
                         i_val = int(r['입고차감'])
                         old_balance = int(r['기존리오더'])
                         
-                        # 🚨 [사장님 로직 핵심] 새로운 잔액 계산
+                        # 사장님 방식: 새로운 잔액 계산
                         new_balance = old_balance + q_val - i_val
-                        
                         user_memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] and str(r['비고(처리내역)']) != "None" else ""
                         
-                        # 장부의 '기존리오더' 컬럼에 계산된 new_balance를 기록함
                         rows_qty.append([
                             now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], 
-                            new_balance, # 👈 새로운 통장 잔액
-                            q_val,        # 추가발주 내역
-                            i_val,        # 입고 내역
-                            user_memo     # 메모
+                            new_balance, # 👈 통장 잔액 방식 (최종 수치 저장)
+                            q_val, i_val, user_memo
                         ])
 
-                        # 세션 동기화 (화면 즉시 반영)
+                        # 세션 실시간 업데이트
                         mask = (st.session_state.df_final[p['it']] == r[p['it']]) & (st.session_state.df_final[p['op']] == r[p['op']])
                         st.session_state.df_final.loc[mask, '기존리오더'] = new_balance
                         st.session_state.df_final.loc[mask, '입고차감'] = 0
@@ -304,11 +337,13 @@ if st.session_state.get('analyzed'):
                         ws_qty.append_rows(rows_qty, value_input_option='USER_ENTERED')
                     
                     st.cache_data.clear()
-                    st.success("✅ 잔액 업데이트 완료! 이제 6단계와 사장님 계산이 일치합니다.")
+                    st.success("✅ 잔액 업데이트가 완료되었습니다!")
                     time.sleep(1)
                     st.rerun()
                 except Exception as e:
-                    st.error(f"저장 중 오류: {e}")
+                    st.error(f"저장 중 오류 발생: {e}")
+        else:
+            st.warning("⚠️ 입력된 추가발주 또는 입고수량이 없습니다.")
 
 # ------------------------------------------------------------------
 # 6️⃣단계: 리오더 현황판 (최신 잔액(통장방식) 반영 버전)
