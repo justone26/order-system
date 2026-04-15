@@ -240,7 +240,7 @@ if 'df_raw' in st.session_state:
             st.error(f"⚠️ 분석 오류: {e}")
             
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (기능 무결성 강화 버전)
+# 4️⃣단계: 입고 관리 및 최종 저장 (품절 완전 차단 + 세트 필터 강화)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -249,61 +249,57 @@ if st.session_state.get('analyzed'):
     p = st.session_state.p
     df_all = st.session_state.df_final.copy()
 
-    # [필수 컬럼 보장]
-    for col in ['기존리오더', '입고차감', '추가발주', '일판매량', '권장발주수량', '비고(처리내역)', '상태']:
-        if col not in df_all.columns:
-            df_all[col] = 0 if any(x in col for x in ['수량', '리오더', '차감', '발주']) else ""
-
-    # [1] 사장님표 상태 필터 및 검색 UI
+    # [1] 필터 UI
     f1, f2 = st.columns([1, 2])
     with f1: 
-        f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
+        # 품절건은 리스트에 나올 필요가 없으므로 필터에서 아예 언급 안 하거나 '정상' 위주로 구성
+        f_mode = st.selectbox("🚦 상태 필터", ["🚨 발주필요(세트)", "✅ 정상(품절제외)", "전체보기(품절제외)"], index=0)
     with f2: 
-        s_query = st.text_input("🔍 검색 (상품명/옵션)")
+        s_query = st.text_input("🔍 상품명/옵션 검색")
 
-    # [2] 필터링 로직 (발주필요 세트 필터 강화)
-    df_temp = df_all.copy()
+    # [2] 강력 필터링 로직
+    # 어떤 경우에도 '상태'에 '품절'이 들어간 행은 먼저 제거합니다.
+    df_temp = df_all[~df_all['상태'].str.contains("품절", na=False)].copy()
+
     if f_mode == "🚨 발주필요(세트)":
-        # 권장발주수량이 0보다 큰 '상품명'들을 먼저 찾음
+        # 권장발주수량이 1개라도 있는 상품명(it)을 찾아서 그 상품의 모든 옵션을 노출
         items_need_order = df_temp[df_temp['권장발주수량'] > 0][p['it']].unique()
-        # 해당 상품명을 가진 모든 옵션을 다 보여줌 (세트 관리용)
         df_temp = df_temp[df_temp[p['it']].isin(items_need_order)]
-    elif f_mode != "전체보기":
-        df_temp = df_temp[df_temp['상태'] == f_mode]
         
-    if s_query:
-        df_temp = df_temp[df_temp[p['it']].str.contains(s_query, case=False, na=False) | 
-                           df_temp[p['op']].str.contains(s_query, case=False, na=False)]
+    elif f_mode == "✅ 정상(품절제외)":
+        # 발주가 필요 없는 정상 수량인 것들만 노출
+        df_temp = df_temp[df_temp['상태'] == "✅ 정상"]
 
-    # 노출 컬럼 설정
+    # 검색어 처리
+    if s_query:
+        df_temp = df_temp[
+            df_temp[p['it']].str.contains(s_query, case=False, na=False) | 
+            df_temp[p['op']].str.contains(s_query, case=False, na=False)
+        ]
+
+    # [3] 데이터 에디터 및 저장
     disp_cols = ['상태', p['vn'], p['it'], p['op'], p['av'], '기존리오더', '입고차감', '추가발주', '일판매량', '권장발주수량', '비고(처리내역)']
-    disp_cols = [c for c in disp_cols if c in df_temp.columns]
     
     with st.form("final_form"):
         edited_df = st.data_editor(
             df_temp[disp_cols], 
             use_container_width=True, 
             hide_index=True,
-            key="main_editor", 
             column_config={
-                '상태': st.column_config.TextColumn("상태", disabled=True),
-                p['vn']: st.column_config.TextColumn("공급처", disabled=True),
-                p['it']: st.column_config.TextColumn("상품명", disabled=True),
-                p['op']: st.column_config.TextColumn("옵션", disabled=True),
-                '기존리오더': st.column_config.NumberColumn("현재잔액", disabled=True, format="%d"),
-                '입고차감': st.column_config.NumberColumn("📥 입고(-)", min_value=0, help="입고된 수량만큼 잔액에서 차감됩니다."), 
-                '추가발주': st.column_config.NumberColumn("➕ 발주(+)", min_value=0, help="새로 발주한 수량만큼 잔액에 더해집니다."),
-                '권장발주수량': st.column_config.NumberColumn("권장수량", disabled=True, format="%d"),
+                '기존리오더': st.column_config.NumberColumn("현재잔액", disabled=True),
+                '입고차감': st.column_config.NumberColumn("📥 입고(-)", min_value=0), 
+                '추가발주': st.column_config.NumberColumn("➕ 발주(+)", min_value=0),
+                '권장발주수량': st.column_config.NumberColumn("권장수량", disabled=True),
             }
         )
         btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 잔액 업데이트", use_container_width=True, type="primary")
 
     if btn_save:
-        # 변경사항이 있는 행만 필터링
+        # 변경된 행(입고나 발주가 입력된 행)만 추출
         changed_rows = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0)].copy()
         
         if not changed_rows.empty:
-            with st.spinner("🚀 시트에 기록 생성 및 잔액 계산 중..."):
+            with st.spinner("🚀 장부에 기록 중..."):
                 try:
                     sh = get_sheet()
                     ws_qty = sh.worksheet("발주기록")
@@ -311,34 +307,23 @@ if st.session_state.get('analyzed'):
                     
                     rows_to_save = []
                     for _, r in changed_rows.iterrows():
-                        add_q = int(r['추가발주'])
-                        in_q = int(r['입고차감'])
-                        old_bal = int(r['기존리오더'])
+                        # 신규 잔액 계산: (기존 + 발주 - 입고)
+                        new_bal = int(r['기존리오더']) + int(r['추가발주']) - int(r['입고차감'])
                         
-                        # 🚨 사장님 방식: 통장 잔액 계산
-                        new_bal = old_bal + add_q - in_q
-                        
-                        memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] else ""
-                        
-                        # 시트 저장 구조: [날짜, 공급처, 상품명, 옵션, 기존리오더(결과), 추가발주(로그), 입고수량(로그), 메모]
-                        # ※ 시트 헤더 순서에 맞춰 조정하세요
+                        # 시트 열 순서: 날짜, 공급처, 상품명, 옵션, 기존리오더(최종잔액), 추가발주, 입고수량, 메모
                         rows_to_save.append([
                             now_s, r[p['vn']], r[p['it']], r[p['op']], 
-                            new_bal, add_q, in_q, memo
+                            new_bal, int(r['추가발주']), int(r['입고차감']), r['비고(처리내역)']
                         ])
-
-                        # 세션 실시간 반영 (화면 동기화)
-                        mask = (st.session_state.df_final[p['it']] == r[p['it']]) & (st.session_state.df_final[p['op']] == r[p['op']])
-                        st.session_state.df_final.loc[mask, '기존리오더'] = new_bal
 
                     if rows_to_save:
                         ws_qty.append_rows(rows_to_save, value_input_option='USER_ENTERED')
-                        st.success(f"✅ {len(rows_to_save)}건 저장 완료! 장부 잔액이 갱신되었습니다.")
+                        st.success(f"✅ {len(rows_to_save)}건 저장 완료! 최신 잔액이 반영되었습니다.")
                         st.cache_data.clear()
                         time.sleep(1)
                         st.rerun()
                 except Exception as e:
-                    st.error(f"⚠️ 저장 실패: {e}")
+                    st.error(f"⚠️ 저장 오류: {e}")
         else:
             st.warning("⚠️ 입력된 수량이 없습니다.")
 
