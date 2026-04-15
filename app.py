@@ -366,7 +366,7 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 리오더 현황판 (TOP 3 상품명 중복 통합 및 선입선출 메모)
+# 6️⃣단계: 리오더 현황판 (스마트 메모 + TOP3 통합 + UI 정렬 최종본)
 # ------------------------------------------------------------------
 def render_step6():
     if not (st.session_state.get('analyzed') or st.session_state.get('show_step6')):
@@ -381,42 +381,47 @@ def render_step6():
         df_log = pd.DataFrame(ws_qty.get_all_records())
         if df_log.empty: return
         
+        # 숫자 및 날짜 데이터 전처리
         for col in ['기존리오더', '추가발주', '입고수량']:
             df_log[col] = pd.to_numeric(df_log[col], errors='coerce').fillna(0)
         df_log['날짜_dt'] = pd.to_datetime(df_log['날짜'], errors='coerce', format='mixed')
     except Exception as e:
         st.error(f"데이터 로드 중 오류: {e}"); return
 
-    # [UI 레이아웃] 버튼 및 필터 (라인 정렬 유지)
+    # [1] UI 레이아웃 - 상단 버튼 및 필터 라인 정렬
     c1, c2, c3 = st.columns([1, 2, 1.5])
     with c1:
-        st.markdown("<p style='margin-bottom: 8px; font-size: 14px;'>🔄 데이터 갱신</p>", unsafe_allow_html=True)
-        if st.button("최신 자료 업데이트", use_container_width=True, key="btn_update_vFinal_Fix"):
+        # 옆 칸 라벨 높이와 맞추기 위한 마진 조정
+        st.markdown("<p style='margin-bottom: 8px; font-size: 14px; font-weight: normal;'>🔄 데이터 갱신</p>", unsafe_allow_html=True)
+        if st.button("최신 자료 업데이트", use_container_width=True, key="btn_update_final_full"):
             st.cache_data.clear()
             st.rerun()
     with c2:
-        sel_s = st.text_input("🔍 통합 상품명 검색", key="s6_search_vFinal_Fix")
+        sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_final_full")
     with c3:
         v_list = ["전체 공급처"] + sorted(df_log['공급처'].unique().tolist())
-        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_vFinal_Fix")
+        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_final_full")
 
-    # [FIFO 미입고 계산 함수]
+    # [2] 스마트 선입선출(FIFO) 메모 계산 함수
     def get_fifo_pending(group):
-        total_in = group['입고수량'].sum()
+        total_in = group['입고수량'].sum()  # 전체 기간 입고 총량
         pending_list = []
+        
+        # 날짜 순서대로(오래된 순) 정렬해서 발주건 확인
         sorted_orders = group[group['추가발주'] > 0].sort_values('날짜_dt', ascending=True)
+        
         remaining_in = total_in
         for _, row in sorted_orders.iterrows():
             order_amt = row['추가발주']
             if remaining_in >= order_amt:
-                remaining_in -= order_amt
+                remaining_in -= order_amt  # 입고 완료되면 메모 제외
             else:
                 actual_pending = order_amt - remaining_in
                 pending_list.append(f"{row['날짜_dt'].strftime('%m/%d')} {int(actual_pending)}장")
                 remaining_in = 0
         return " / ".join(pending_list)
 
-    # [데이터 그룹화] 상품/옵션별 통합
+    # [3] 데이터 그룹화 및 최종 정보 생성
     grouped = df_log.groupby(['공급처', '상품명', '옵션']).apply(lambda x: pd.Series({
         '날짜': x['날짜_dt'].max(),
         '기존리오더': x['기존리오더'].sum(),
@@ -427,14 +432,17 @@ def render_step6():
     })).reset_index()
 
     grouped['최종잔량'] = grouped['기존리오더'] + grouped['추가발주'] - grouped['입고수량']
-    grouped['최종메모'] = grouped.apply(lambda x: f"[{x['미입고히스토리']}] {x['수기메모']}".strip() if x['미입고히스토리'] else x['수기메모'], axis=1)
+    # 미입고 히스토리가 있을 때만 대괄호 표시
+    grouped['최종메모'] = grouped.apply(
+        lambda x: f"[{x['미입고히스토리']}] {x['수기메모']}".strip() if x['미입고히스토리'] else x['수기메모'], axis=1
+    )
 
-    # 필터 적용
+    # 검색 및 필터 적용
     filtered_grouped = grouped.copy()
     if sel_s: filtered_grouped = filtered_grouped[filtered_grouped['상품명'].str.contains(sel_s, case=False)]
     if sel_v != "전체 공급처": filtered_grouped = filtered_grouped[filtered_grouped['공급처'] == sel_v]
 
-    # [1] 🏢 업체별 요약 (TOP 3 중복 제거 버전)
+    # [4] 🏢 업체별 요약 및 TOP 3 상품 (중복 제거 & 이름 전체 노출)
     st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
     v_sum = filtered_grouped.groupby('공급처')['최종잔량'].sum().reset_index()
     v_sum = v_sum[v_sum['최종잔량'] > 0].sort_values('최종잔량', ascending=False)
@@ -447,29 +455,41 @@ def render_step6():
                 with v_cols[i]:
                     st.metric(v_name, f"{int(row['최종잔량'])}개 잔량")
                     
-                    # 🚨 상품명으로 한 번 더 합쳐서 TOP 3 추출 (옵션 상관없이 상품별 합산)
+                    # 옵션 상관없이 상품명으로만 합산하여 진짜 TOP 3 추출
                     v_items = filtered_grouped[filtered_grouped['공급처'] == v_name]
                     v_top_combined = v_items.groupby('상품명')['최종잔량'].sum().sort_values(ascending=False).head(3)
                     
                     st.caption("🔥 TOP 3 상품 (통합)")
                     for rank, (s_name, s_qty) in enumerate(v_top_combined.items()):
-                        # 글자가 너무 길면 잘림 방지
-                        short_name = s_name[:15] + ".." if len(s_name) > 15 else s_name
-                        st.markdown(f"{rank+1}. {short_name} (**{int(s_qty)}**)")
+                        # 상품명 전체 노출을 위해 컷팅 로직 제거
+                        st.markdown(f"{rank+1}. {s_name}  \n(**{int(s_qty)}**장)")
+                    st.write("") 
 
     st.divider()
 
-    # [2] 하단 상세 표 출력
+    # [5] 하단 상세 데이터 표 출력
     display_df = filtered_grouped.sort_values(by=['날짜', '최종잔량'], ascending=[False, False])
     target_cols = ['날짜', '공급처', '상품명', '옵션', '최종잔량', '추가발주', '입고수량', '최종메모']
-    st.dataframe(display_df[target_cols].rename(columns={'최종메모': '미입고 상세기록'}), use_container_width=True, hide_index=True)
+    st.dataframe(
+        display_df[target_cols].rename(columns={'최종메모': '미입고 상세기록'}), 
+        use_container_width=True, 
+        hide_index=True
+    )
 
-    # [3] 엑셀 다운로드
+    # [6] 📥 엑셀 다운로드 기능
     import io
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         display_df[target_cols].to_excel(writer, index=False, sheet_name='리오더현황')
-    st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", use_container_width=True)
+    
+    excel_data = output.getvalue()
+    st.download_button(
+        label="📥 실시간 현황 엑셀 다운로드 (.xlsx)",
+        data=excel_data,
+        file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
 
 
 # ------------------------------------------------------------------
