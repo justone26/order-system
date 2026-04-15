@@ -516,9 +516,19 @@ def render_step6():
     # 4. [자동 필터링 로직] 
     df_dash = df_log.copy()
     
+    # 🚨 [보강] '날짜_dt' 컬럼이 유실되었을 경우를 대비해 다시 한 번 체크하고 생성
+    if '날짜_dt' not in df_dash.columns:
+        if '날짜' in df_dash.columns:
+            df_dash['날짜_dt'] = pd.to_datetime(df_dash['날짜'], errors='coerce', format='mixed').dt.date
+        else:
+            # 아예 날짜 컬럼 자체가 없는 최악의 경우 (빈 데이터 등) 대응
+            st.warning("⚠️ 날짜 데이터를 찾을 수 없어 필터링을 건너뜁니다.")
+            return # 더 이상 진행하지 않고 중단
+    
     # (1) 기간 필터링
     if isinstance(date_range_6, (list, tuple)) and len(date_range_6) == 2:
         s_d, e_d = date_range_6
+        # '날짜_dt'가 확실히 있을 때만 실행
         df_dash = df_dash[(df_dash['날짜_dt'] >= s_d) & (df_dash['날짜_dt'] <= e_d)]
     
     # (2) 상품명 및 공급처 필터링
