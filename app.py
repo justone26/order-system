@@ -163,24 +163,27 @@ if 'df_raw' in st.session_state:
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
 
 # ------------------------------------------------------------------
-# 3️⃣단계: 분석 설정 및 실행 (4/6단계 수량 동기화 강화 버전)
+# 3️⃣단계: 분석 설정 및 실행 (4/6단계 수량 동기화 및 에러 방지 통합본)
 # ------------------------------------------------------------------
 st.divider()
 st.subheader("⚙️ 3️⃣단계: 분석 설정 및 실행")
 
+# 1. 분석 파라미터 입력
 clt, css = st.columns(2)
 with clt: lt = st.number_input("리드타임 (일)", value=10)
 with css: ss = st.number_input("안전재고 (일 수)", value=7)
 
 if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary", use_container_width=True):
-    st.session_state.p = {
-        'so': sold_out, 'it': item, 'op': option, 'vn': vendor, 'vi': v_item_col,
-        'av': avail, 't3': t3d, 't7': t1w, 'lt': lt, 'ss': ss, 'rd': reg_date
-    }
+    # 🚨 [중요] 사장님의 Selectbox 변수명과 일치시키기 위해 세션에서 직접 가져옵니다.
+    # 만약 변수명이 다르면 여기서 에러가 날 수 있으니, 상단 selectbox의 key값들을 확인해야 합니다.
+    try:
+        st.session_state.p = {
+            'so': sold_out, 'it': item, 'op': option, 'vn': vendor, 'vi': v_item_col,
+            'av': avail, 't3': t3d, 't7': t1w, 'lt': lt, 'ss': ss, 'rd': reg_date
+        }
 
-    with st.spinner("📊 발주기록 시트 분석 및 잔량 계산 중..."):
-        try:
-            # 분석 실행 시 세션 데이터 초기화 (최신 데이터 갱신)
+        with st.spinner("📊 발주기록 시트 분석 및 잔량 계산 중..."):
+            # 이전 분석 기록 삭제 (새로고침용)
             if 'db_history' in st.session_state: del st.session_state.db_history
             if 'master_log' in st.session_state: del st.session_state.master_log
 
@@ -197,45 +200,42 @@ if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary
                     return res.loc[:, ~res.columns.duplicated()]
                 return pd.DataFrame()
 
-            # 1. 발주기록 로드 및 "누적 미입고 잔량" 계산
+            # [A] 발주기록 시트 로드 및 "누적 미입고 잔량" 계산
             df_master = get_clean_df("발주기록")
             st.session_state.master_log = df_master 
 
             r_map = {}
             if not df_master.empty:
-                # 🚨 정확한 매칭을 위해 공급처까지 포함
-                vn_c, it_c, op_c, q_c, in_c, b_c = '공급처', '상품명', '옵션', '추가발주', '입고수량', '기존리오더'
+                # 🚨 시트의 컬럼명 (사장님 시트 제목과 일치해야 함)
+                vn_c, it_c, op_c, q_c, in_c = '공급처', '상품명', '옵션', '추가발주', '입고수량'
                 
                 # 숫자 변환
-                for col in [b_c, q_c, in_c]:
+                for col in [q_c, in_c]:
                     if col in df_master.columns:
                         df_master[col] = pd.to_numeric(df_master[col], errors='coerce').fillna(0)
                 
-                # 🚨 핵심: (최초 기존리오더 + 모든 추가발주 합계) - (모든 입고수량 합계)
-                # 이렇게 해야 시트에 적힌 모든 히스토리가 합산되어 6단계와 일치합니다.
-                # 다만 '기존리오더'는 데이터가 쌓일 때마다 중복될 수 있으므로, 
-                # 가장 첫 번째 행의 기존리오더만 쓰거나, 로직상 추가발주-입고만 계산하는 것이 안전합니다.
-                # 여기서는 사장님 시트 구조에 맞춰 '추가발주'와 '입고수량'의 전체 누적 차이만 계산합니다.
-                
-                qty_sum = df_master.groupby([vn_c, it_c, op_c])[q_c].sum()
-                in_sum = df_master.groupby([vn_c, it_c, op_c])[in_c].sum()
-                
-                # 최종 잔량 (0보다 작아지지 않게 처리)
-                final_res = qty_sum.sub(in_sum, fill_value=0).clip(lower=0)
-                r_map = final_res.to_dict()
+                # 🚨 핵심: 공급처+상품명+옵션별로 (총 발주합계 - 총 입고합계) 계산
+                if all(c in df_master.columns for c in [vn_c, it_c, op_c]):
+                    qty_sum = df_master.groupby([vn_c, it_c, op_c])[q_c].sum()
+                    in_sum = df_master.groupby([vn_c, it_c, op_c])[in_c].sum()
+                    
+                    # 최종 잔량 계산 (0보다 작아지지 않게 clip)
+                    final_res = qty_sum.sub(in_sum, fill_value=0).clip(lower=0)
+                    r_map = final_res.to_dict()
 
-            # 2. 분석 계산 로직 적용
+            # [B] 분석 계산 시작
             df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
             df[t1w] = pd.to_numeric(df[t1w], errors='coerce').fillna(0).astype(int)
             
+            # 🚨 6단계와 동일한 수치를 가져오는 매칭 함수
             def get_reorder_val(row):
-                # 🚨 매칭 키에 공급처(vendor)를 추가하여 중복 상품명 오류 방지
                 k = (str(row[vendor]).strip(), str(row[item]).strip(), str(row[option]).strip())
                 return int(r_map.get(k, 0))
             
-            # 🚨 4단계에서 보게 될 '기존리오더' 수치 결정
+            # 4단계 표에 뿌려질 '기존리오더' 수치 (누적값)
             df['기존리오더'] = df.apply(get_reorder_val, axis=1)
 
+            # 일판매량 계산
             def get_daily_avg(row):
                 try:
                     r_dt = pd.to_datetime(row[reg_date]).date()
@@ -245,23 +245,28 @@ if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary
 
             df['일판매량'] = df.apply(get_daily_avg, axis=1)
             
-            # 🚨 4단계 권장발주수량 계산 : (목표재고) - (현재고 + 이미 주문해서 오고 있는 총 수량)
+            # 🚨 정확한 권장수량 공식: (목표재고) - (현재고 + 이미 오고있는 미입고량)
             df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[avail] + df['기존리오더'])).clip(lower=0).astype(int)
             
-            # 상태값 설정
+            # 상태 분류
             df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[sold_out]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
             
+            # UI용 빈 컬럼 생성
             df['입고차감'] = 0  
             df['추가발주'] = 0
             df['비고(처리내역)'] = "" 
             
+            # 결과 저장 및 리런
             st.session_state.df_final = df
             st.session_state.analyzed = True
-            st.success("✅ 분석 완료! 실시간 장부 수량이 반영되었습니다.")
+            st.success("✅ 분석 완료! 실시간 장부 합계가 반영되었습니다.")
             st.rerun()
             
-        except Exception as e:
-            st.error(f"⚠️ 분석 오류: {e}")
+    except NameError as e:
+        # 🚨 여기서 에러가 난다면 상단 Selectbox에서 정의한 변수명과 아래 이름들이 달라서 그렇습니다.
+        st.error(f"⚠️ 변수명 매칭 오류: {e}. 상단 컬럼 선택 상자의 변수명을 확인하세요.")
+    except Exception as e:
+        st.error(f"⚠️ 기타 분석 오류: {e}")
                 
                 
 # ------------------------------------------------------------------
