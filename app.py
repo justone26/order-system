@@ -185,7 +185,7 @@ if 'df_raw' in st.session_state:
 
 
 # ------------------------------------------------------------------
-# 3️⃣단계: 분석 설정 및 실행 (사전 로드된 리오더 수치 적용)
+# 3️⃣단계: 분석 설정 및 실행 (실시간 장부 동기화 적용)
 # ------------------------------------------------------------------
 if 'df_raw' in st.session_state:
     st.divider()
@@ -197,6 +197,28 @@ if 'df_raw' in st.session_state:
 
     if st.button("🚀 분석 실행", type="primary", use_container_width=True):
         try:
+            # 🚨 [추가] 분석 버튼 누를 때마다 구글 시트에서 최신 잔액을 새로 가져옴
+            with st.spinner("🔄 장부에서 최신 잔액(기존리오더) 동기화 중..."):
+                sh = get_sheet()
+                ws = sh.worksheet("발주기록")
+                raw_records = ws.get_all_values()
+                
+                if len(raw_records) > 1:
+                    df_rec = pd.DataFrame(raw_records[1:], columns=[h.strip() for h in raw_records[0]])
+                    def c_func(t): return "".join(str(t).split()).upper()
+                    
+                    # 데이터 정렬 및 최신 잔액 추출 (통장 방식)
+                    df_rec['key'] = df_rec['상품명'].apply(c_func) + df_rec['옵션'].apply(c_func)
+                    df_rec['기존리오더'] = pd.to_numeric(df_rec['기존리오더'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    df_rec['날짜_dt'] = pd.to_datetime(df_rec['날짜'], errors='coerce', format='mixed')
+                    
+                    # 날짜순 정렬 후 마지막 행(최신 잔액) 맵 생성
+                    last_balance_map = df_rec.sort_values('날짜_dt').drop_duplicates('key', keep='last').set_index('key')['기존리오더'].to_dict()
+                    st.session_state.reorder_ans = last_balance_map
+                else:
+                    st.session_state.reorder_ans = {}
+
+            # 기존 분석 로직 시작
             p_map = {
                 'so': st.session_state.get('sel_so'), 'it': st.session_state.get('sel_it'),
                 'op': st.session_state.get('sel_op'), 'vn': st.session_state.get('sel_vn'),
@@ -206,44 +228,42 @@ if 'df_raw' in st.session_state:
             }
             st.session_state.p = p_map
 
-            with st.spinner("📊 사전 동기화된 데이터로 권장수량 계산 중..."):
-                df = st.session_state.df_raw.copy()
-                def c_func(t): return "".join(str(t).split()).upper()
-                df['key'] = df[p_map['it']].apply(c_func) + df[p_map['op']].apply(c_func)
+            df = st.session_state.df_raw.copy()
+            def c_func_final(t): return "".join(str(t).split()).upper()
+            df['key'] = df[p_map['it']].apply(c_func_final) + df[p_map['op']].apply(c_func_final)
 
-                # 🚨 [정교화 핵심] 1단계에서 통장 방식으로 추출한 최신 잔액 맵을 그대로 적용
-                ans_map = st.session_state.get('reorder_ans', {})
-                df['기존리오더'] = df['key'].map(ans_map).fillna(0).astype(int)
+            # 위에서 새로 긁어온 ans_map을 적용 (100장이 아니라 50장으로 업데이트됨)
+            ans_map = st.session_state.get('reorder_ans', {})
+            df['기존리오더'] = df['key'].map(ans_map).fillna(0).astype(int)
 
-                # 판매량 및 가용재고 숫자 변환
-                c_av, c_t7, c_rd = p_map['av'], p_map['t7'], p_map['rd']
-                df[c_av] = pd.to_numeric(df[c_av], errors='coerce').fillna(0).astype(int)
-                
-                today = datetime.now(KST).date()
-                def calc_daily(row):
-                    try:
-                        diff = (today - pd.to_datetime(row[c_rd]).date()).days
-                        days = max(1, min(diff, 7))
-                        return int(round(pd.to_numeric(row[c_t7], errors='coerce') / days, 0))
-                    except: return int(round(pd.to_numeric(row[c_t7], errors='coerce') / 7, 0))
+            # 판매량 및 가용재고 계산
+            c_av, c_t7, c_rd = p_map['av'], p_map['t7'], p_map['rd']
+            df[c_av] = pd.to_numeric(df[c_av], errors='coerce').fillna(0).astype(int)
+            
+            today = datetime.now(KST).date()
+            def calc_daily(row):
+                try:
+                    diff = (today - pd.to_datetime(row[c_rd]).date()).days
+                    days = max(1, min(diff, 7))
+                    return int(round(pd.to_numeric(row[c_t7], errors='coerce') / days, 0))
+                except: return int(round(pd.to_numeric(row[c_t7], errors='coerce') / 7, 0))
 
-                df['일판매량'] = df.apply(calc_daily, axis=1).fillna(0).astype(int)
+            df['일판매량'] = df.apply(calc_daily, axis=1).fillna(0).astype(int)
 
-                # 🚨 수정된 [기존리오더](최신 잔액)가 반영된 권장발주수량 계산
-                df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[c_av] + df['기존리오더'])).clip(lower=0).astype(int)
-                
-                # 상태 판별 및 UI 초기화
-                df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[p_map['so']]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
-                df['입고차감'] = 0 ; df['추가발주'] = 0 ; df['비고(처리내역)'] = ""
+            # 권장발주수량 계산
+            df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[c_av] + df['기존리오더'])).clip(lower=0).astype(int)
+            
+            # 상태 판별 및 UI 초기화
+            df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[p_map['so']]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
+            df['입고차감'] = 0 ; df['추가발주'] = 0 ; df['비고(처리내역)'] = ""
 
-                # key 컬럼은 계산 종료 후 제거
-                if 'key' in df.columns: df = df.drop(columns=['key'])
-                st.session_state.df_final = df
-                st.session_state.analyzed = True
-                
-                st.cache_data.clear()
-                st.success(f"✅ 분석 완료 (LT:{lt}일/SS:{ss}일 기준)")
-                st.rerun()
+            if 'key' in df.columns: df = df.drop(columns=['key'])
+            st.session_state.df_final = df
+            st.session_state.analyzed = True
+            
+            st.cache_data.clear()
+            st.success(f"✅ 분석 완료 (최신 장고 반영 완료 / LT:{lt}일/SS:{ss}일)")
+            st.rerun()
 
         except Exception as e:
             st.error(f"⚠️ 분석 오류: {e}")
