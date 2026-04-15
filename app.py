@@ -366,13 +366,13 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (저장 시점 데이터 그대로 유지 버전)
+# 5️⃣단계: 전체 히스토리 기록 (선택 날짜 내 회차 필터링)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
     st.divider()
     st.header("📜 5단계: 전체 히스토리 기록")
 
-    # 1. 데이터 로드 (메모리에 없으면 시트에서 새로 읽음)
+    # 1. 데이터 로드 (기존 로직 유지)
     if 'db_history' not in st.session_state:
         try:
             sh = get_sheet()
@@ -382,7 +382,6 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
                 cols_5 = [c.strip() for c in raw_data[0]]
                 h_df = pd.DataFrame(raw_data[1:], columns=cols_5)
                 h_df = h_df.loc[:, ~h_df.columns.duplicated()]
-                # 메모 컬럼명 통일 (기존 사장님 로직 유지)
                 h_df.rename(columns={'메모': '비고(처리내역)', '비고': '비고(처리내역)', '비고(메모)': '비고(처리내역)'}, errors='ignore', inplace=True)
                 st.session_state.db_history = h_df
             else:
@@ -393,66 +392,57 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
     m_df_5 = st.session_state.get('db_history', pd.DataFrame()).copy()
     
     if not m_df_5.empty:
-        # 날짜 컬럼 파싱 (mixed 포맷 적용으로 에러 방지)
+        # 날짜 컬럼 파싱
         d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
         m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
         m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
-        
-        # 날짜 범위 계산 안전장치
-        valid_dates = m_df_5['날짜_only'].dropna()
-        if not valid_dates.empty:
-            min_date = valid_dates.min()
-            max_date = valid_dates.max()
-        else:
-            min_date = datetime.now(KST).date()
-            max_date = datetime.now(KST).date()
         
         # UI 레이아웃
         c1, c2, c3 = st.columns([1.5, 1.5, 1.2]) 
         
         with c1: 
-            sel_dates_5 = st.date_input(
-                "📅 조회 날짜 범위", 
-                [min_date, max_date], 
-                key="h_date_v15_final"
-            )
-        with c2: 
-            h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_v15_final")
-        with c3:
-            # 저장된 회차별로 골라볼 수 있도록 리스트 생성
-            t_opts = ["전체 회차"] + sorted(m_df_5['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
-            h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_v15_final")
+            # 기본값을 오늘 날짜로 설정
+            today_val = datetime.now(KST).date()
+            sel_dates_5 = st.date_input("📅 조회 날짜 범위", [today_val, today_val], key="h_date_final_v2")
 
-        # 필터링 로직
-        df_dis = m_df_5.copy()
-        
-        # (1) 기간 필터
+        # 🚨 [보강] 선택한 날짜 범위 내에 있는 데이터만 먼저 걸러서 회차 목록을 만듭니다.
         if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
-            df_dis = df_dis[(df_dis['날짜_only'] >= sel_dates_5[0]) & (df_dis['날짜_only'] <= sel_dates_5[1])]
+            mask_date = (m_df_5['날짜_only'] >= sel_dates_5[0]) & (m_df_5['날짜_only'] <= sel_dates_5[1])
+            period_df = m_df_5[mask_date]
+        else:
+            period_df = m_df_5[m_df_5['날짜_only'] == sel_dates_5]
+
+        with c2: 
+            h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_final_v2")
+            
+        with c3:
+            # ✨ period_df(선택 기간) 내의 회차만 보여줌으로써 어제 회차가 섞이지 않게 함
+            t_opts = ["전체 회차"] + sorted(period_df['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
+            h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_final_v2")
+
+        # 최종 필터링 적용
+        df_dis = period_df.copy()
         
-        # (2) 검색 필터 (상품명, 옵션 등 행 전체에서 검색)
         if h_name_5:
             df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
             
-        # (3) 회차 선택 필터
         if h_time_5 != "전체 회차":
             df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
-        # ✨ 정렬: 무조건 최신에 저장한 순서대로 (날짜순 정렬)
+        # ✨ 정렬: 무조건 최신에 저장한 순서대로
         df_dis = df_dis.sort_values(by='날짜_dt', ascending=False)
 
-        # 보여주기용 데이터프레임 (내부 계산용 컬럼 제거)
         st.dataframe(
             df_dis.drop(columns=['날짜_dt', '날짜_only'], errors='ignore'), 
             use_container_width=True, 
             hide_index=True
         )
     else:
-        st.info("💡 히스토리 내역이 없습니다. 4단계에서 데이터를 먼저 저장해주세요.")
+        st.info("💡 히스토리 내역이 없습니다.")
         
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (업체요약 + 잔량계산 통합본)
+# 6️⃣단계: 실시간 리오더 현황판 (최신순 정렬 강화)
 # ------------------------------------------------------------------
 def render_step6():
     if not (st.session_state.get('analyzed') or st.session_state.get('show_step6')):
@@ -466,30 +456,32 @@ def render_step6():
         ws_qty = sh.worksheet("발주기록")
         df_log = pd.DataFrame(ws_qty.get_all_records())
         if df_log.empty: return
-        df_log['날짜_dt'] = pd.to_datetime(df_log['날짜'], errors='coerce', format='mixed').dt.date
+        
+        # 정렬을 위해 시간 정보까지 포함한 파싱
+        df_log['날짜_dt_full'] = pd.to_datetime(df_log['날짜'], errors='coerce', format='mixed')
+        df_log['날짜_dt'] = df_log['날짜_dt_full'].dt.date
     except Exception as e:
         st.error(f"데이터 로드 중 오류: {e}"); return
 
-    # [UI 레이아웃] 자동 반영
+    # [UI 레이아웃]
     c1, c2, c3, c4 = st.columns([1.5, 1.5, 1.2, 0.8])
     with c1:
-        date_range_6 = st.date_input("📅 조회 기간", value=(datetime.now(KST).date(), datetime.now(KST).date()), key="s6_date_v3")
+        date_range_6 = st.date_input("📅 조회 기간", value=(datetime.now(KST).date(), datetime.now(KST).date()), key="s6_date_v4")
     with c2:
-        sel_s = st.text_input("🔍 상품명 검색", key="s6_search_v3")
+        sel_s = st.text_input("🔍 상품명 검색", key="s6_search_v4")
     with c3:
         v_list = ["전체"] + sorted(df_log['공급처'].unique().tolist())
-        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_v3")
+        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_v4")
     with c4:
         st.write(" ")
         if st.button("🔄 새로고침", use_container_width=True):
             st.cache_data.clear(); st.rerun()
 
-    # [데이터 처리 및 잔량 계산]
+    # 데이터 복사 및 계산
     df_dash = df_log.copy()
     df_dash['기존리오더'] = pd.to_numeric(df_dash['기존리오더'], errors='coerce').fillna(0)
     df_dash['추가발주'] = pd.to_numeric(df_dash['추가발주'], errors='coerce').fillna(0)
     df_dash['입고수량'] = pd.to_numeric(df_dash['입고수량'], errors='coerce').fillna(0)
-    # 🔥 사장님이 강조하신 실시간 잔량 계산
     df_dash['최종잔량'] = df_dash['기존리오더'] + df_dash['추가발주'] - df_dash['입고수량']
 
     # 필터 적용
@@ -498,7 +490,7 @@ def render_step6():
     if sel_s: df_dash = df_dash[df_dash['상품명'].str.contains(sel_s, case=False)]
     if sel_v != "전체": df_dash = df_dash[df_dash['공급처'] == sel_v]
 
-    # 🏢 [업체별 요약] - 어제 기능 유지
+    # 🏢 업체별 요약
     st.markdown("#### 🏢 업체별 미입고 현황")
     vendor_sum = df_dash.groupby('공급처').agg({'최종잔량': 'sum', '추가발주': 'sum', '입고수량': 'sum'}).reset_index()
     if not vendor_sum.empty:
@@ -510,15 +502,14 @@ def render_step6():
 
     st.divider()
 
-    # 📊 하단 지표 및 테이블
+    # 📊 하단 지표
     m1, m2, m3 = st.columns(3)
     m1.metric("📋 총 발주", f"{int(df_dash['추가발주'].sum())}개")
     m2.metric("📥 총 입고", f"{int(df_dash['입고수량'].sum())}개")
     m3.metric("⏳ 현재 잔량 합계", f"{int(df_dash['최종잔량'].sum())}개")
 
-    target_cols = ['날짜', '공급처', '상품명', '옵션', '최종잔량', '추가발주', '입고수량', '메모']
-    st.dataframe(df_dash[target_cols].sort_values(by='날짜', ascending=False), use_container_width=True, hide_index=True)
+    # ✨ [핵심 수정] 무조건 최신 저장 순(시간까지 포함)으로 정렬하여 출력
+    df_display = df_dash.sort_values(by='날짜_dt_full', ascending=False)
 
-# 실행부
-if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
-    render_step6()
+    target_cols = ['날짜', '공급처', '상품명', '옵션', '최종잔량', '추가발주', '입고수량', '메모']
+    st.dataframe(df_display[target_cols], use_container_width=True, hide_index=True)
