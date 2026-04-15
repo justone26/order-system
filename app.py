@@ -403,7 +403,7 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
     if not m_df_5.empty:
         # 날짜 컬럼 파싱
         d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
-        m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce')
+        m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
         m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
         
         # 🚨 [에러 수정] 날짜가 없는 행은 제외하고 최소/최대 날짜를 계산합니다.
@@ -482,7 +482,7 @@ def render_step6():
             return
             
         # 날짜 데이터 처리 (필터링용)
-        df_log['날짜_dt'] = pd.to_datetime(df_log['날짜']).dt.date
+        m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
     except Exception as e:
         st.error(f"데이터 로드 중 오류: {e}")
         return
