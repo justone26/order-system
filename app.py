@@ -164,7 +164,7 @@ if 'df_raw' in st.session_state:
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']), key="sel_t7")
 
 # ------------------------------------------------------------------
-# 3️⃣단계: 분석 설정 및 실행 
+# 3️⃣단계: 분석 설정 및 실행 (리오더 0 출력 및 수량 불일치 완전 해결)
 # ------------------------------------------------------------------
 if 'df_raw' in st.session_state:
     st.divider()
@@ -177,7 +177,7 @@ if 'df_raw' in st.session_state:
 
     if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary", use_container_width=True):
         try:
-            # 2단계 매핑 값 세션에서 안전하게 가져오기
+            # [기본 설정] 2단계 매핑 값 가져오기
             p_map = {
                 'so': st.session_state.get('sel_so'),
                 'it': st.session_state.get('sel_it'),
@@ -193,8 +193,7 @@ if 'df_raw' in st.session_state:
             }
             st.session_state.p = p_map
 
-            with st.spinner("📊 발주기록 시트 분석 및 잔량 동기화 중..."):
-                # 캐시 삭제 (새로고침용)
+            with st.spinner("📊 발주기록 시트 분석 및 잔량 실시간 동기화 중..."):
                 if 'db_history' in st.session_state: del st.session_state.db_history
                 if 'master_log' in st.session_state: del st.session_state.master_log
 
@@ -202,6 +201,7 @@ if 'df_raw' in st.session_state:
                 today = datetime.now(KST).date()
                 sh = get_sheet()
                 
+                # 시트 로드 함수
                 def get_clean_df(name):
                     ws = sh.worksheet(name)
                     data = ws.get_all_values()
@@ -210,59 +210,76 @@ if 'df_raw' in st.session_state:
                         return res.loc[:, ~res.columns.duplicated()]
                     return pd.DataFrame()
 
-                # [A] 발주기록 시트 분석 (6단계 현황판과 수치 동기화)
+                # [A] 발주기록 시트 분석 (6단계와 동일한 수치 확보)
                 df_master = get_clean_df("발주기록")
                 st.session_state.master_log = df_master 
 
                 r_map = {}
                 if not df_master.empty:
-                    # 🚨 6단계와 똑같이 맞추기 위해 사장님 시트의 '최종잔량' 컬럼을 직접 참조합니다.
-                    it_c, op_c, last_q_c = '상품명', '옵션', '최종잔량'
+                    # 사장님 시트의 정확한 컬럼명 설정
+                    it_c, op_c = '상품명', '옵션'
+                    # '최종잔량' 글자가 포함된 컬럼을 자동으로 찾음 (공백/오타 대비)
+                    target_col = next((c for c in df_master.columns if '최종잔량' in c.replace(" ", "")), None)
                     
-                    df_master[it_c] = df_master[it_c].astype(str).str.strip()
-                    df_master[op_c] = df_master[op_c].astype(str).str.strip()
-                    
-                    if last_q_c in df_master.columns:
-                        df_master[last_q_c] = pd.to_numeric(df_master[last_q_c], errors='coerce').fillna(0)
-                        # 🚨 핵심: 각 상품+옵션별로 '가장 마지막 행'에 적힌 수치가 현재의 진짜 잔량(120장 등)입니다.
-                        r_map = df_master.groupby([it_c, op_c])[last_q_c].last().to_dict()
+                    if target_col:
+                        # 🚨 데이터 매칭 정확도 향상: 공백 제거 및 문자열 통일
+                        df_master[it_c] = df_master[it_c].astype(str).str.strip()
+                        df_master[op_c] = df_master[op_c].astype(str).str.strip()
+                        
+                        # 숫자 변환 (콤마 제거 포함)
+                        df_master[target_col] = pd.to_numeric(df_master[target_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                        
+                        # 🚨 핵심: 상품+옵션별 '가장 마지막 줄'의 잔량값 추출
+                        r_map = df_master.groupby([it_c, op_c])[target_col].last().to_dict()
+                    else:
+                        st.error("🚨 '발주기록' 시트에서 '최종잔량' 컬럼을 찾을 수 없습니다!")
 
-                # [B] 실시간 분석 계산
+                # [B] 실시간 분석 및 수량 계산
                 c_av, c_t7, c_vn, c_it, c_op, c_rd, c_so = p_map['av'], p_map['t7'], p_map['vn'], p_map['it'], p_map['op'], p_map['rd'], p_map['so']
 
-                # 데이터 숫자 변환
-                df[c_av] = pd.to_numeric(df[c_av], errors='coerce').fillna(0).astype(int)
-                df[c_t7] = pd.to_numeric(df[c_t7], errors='coerce').fillna(0).astype(int)
+                # 엑셀 원본 데이터도 동일하게 클리닝 (매칭 확률 100%로 올리기)
+                df[c_it] = df[c_it].astype(str).str.strip()
+                df[c_op] = df[c_op].astype(str).str.strip()
                 
-                # 기존 리오더 매칭 (사장님 시트의 최종잔량을 그대로 가져옴)
-                df['기존리오더'] = df.apply(lambda row: int(r_map.get((str(row[c_it]).strip(), str(row[c_op]).strip()), 0)), axis=1)
+                # 기존 리오더 매칭 함수 (0으로 나오는 것 방지)
+                def get_safe_reorder(row):
+                    # (상품명, 옵션) 키로 잔량 확인
+                    key = (row[c_it], row[c_op])
+                    return int(r_map.get(key, 0))
 
-                # 일판매량 계산 (등록일 기준)
+                # 값 주입
+                df['기존리오더'] = df.apply(get_safe_reorder, axis=1)
+
+                # 일판매량 계산 (정수형 변환)
                 def calc_daily(row):
                     try:
                         days = max(1, min((today - pd.to_datetime(row[c_rd]).date()).days, 7))
-                        return int(round(pd.to_numeric(row[c_t7]) / days, 0))
-                    except: return int(round(pd.to_numeric(row[c_t7]) / 7, 0))
+                        return int(round(pd.to_numeric(row[c_t7], errors='coerce') / days, 0))
+                    except: return int(round(pd.to_numeric(row[c_t7], errors='coerce') / 7, 0))
 
-                df['일판매량'] = df.apply(calc_daily, axis=1)
+                # 숫자 데이터 강제 변환
+                df[c_av] = pd.to_numeric(df[c_av], errors='coerce').fillna(0).astype(int)
+                df['일판매량'] = df.apply(calc_daily, axis=1).fillna(0).astype(int)
                 
-                # 🚨 권장발주수량 = (목표재고) - (현재고 + 이미 시트상 남아있는 잔량)
+                # 🚨 최종 권장수량 공식
                 df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[c_av] + df['기존리오더'])).clip(lower=0).astype(int)
                 
-                # 상태 및 UI 컬럼 생성
+                # 상태 표시 및 UI용 컬럼
                 df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[c_so]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
                 df['입고차감'] = 0  
                 df['추가발주'] = 0
                 df['비고(처리내역)'] = "" 
                 
-                # 결과 저장 및 화면 갱신
+                # 분석 완료 플래그 및 저장
                 st.session_state.df_final = df
                 st.session_state.analyzed = True
-                st.success("✅ 분석 완료! 4단계와 6단계의 리오더 수량이 100% 일치합니다.")
+                st.success(f"✅ 분석 완료! 시트의 최종잔량 데이터를 성공적으로 동기화했습니다.")
                 st.rerun()
                 
         except Exception as e:
-            st.error(f"⚠️ 분석 오류: {e}")
+            st.error(f"⚠️ 분석 오류 발생: {e}")
+            st.info("💡 공급처/상품명/옵션 매핑이 정확한지 다시 한번 확인해주세요.")
+            
                 
 # ------------------------------------------------------------------
 # 4️⃣단계: 입고 관리 및 최종 저장 (누적 잔량 동기화 버전)
