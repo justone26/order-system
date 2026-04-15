@@ -238,9 +238,9 @@ if 'df_raw' in st.session_state:
 
         except Exception as e:
             st.error(f"⚠️ 분석 오류: {e}")
-            
+
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (품절 완전 차단 + 세트 필터 강화)
+# 4️⃣단계: 입고 관리 및 최종 저장 (품절 전용 필터 추가 버전)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -249,34 +249,43 @@ if st.session_state.get('analyzed'):
     p = st.session_state.p
     df_all = st.session_state.df_final.copy()
 
-    # [1] 필터 UI
+    # [1] 필터 UI - '품절건만 보기' 추가
     f1, f2 = st.columns([1, 2])
     with f1: 
-        # 품절건은 리스트에 나올 필요가 없으므로 필터에서 아예 언급 안 하거나 '정상' 위주로 구성
-        f_mode = st.selectbox("🚦 상태 필터", ["🚨 발주필요(세트)", "✅ 정상(품절제외)", "전체보기(품절제외)"], index=0)
+        f_mode = st.selectbox(
+            "🚦 상태 필터", 
+            ["🚨 발주필요(세트)", "✅ 정상(품절제외)", "🚫 품절건만 보기", "전체보기"], 
+            index=0
+        )
     with f2: 
         s_query = st.text_input("🔍 상품명/옵션 검색")
 
-    # [2] 강력 필터링 로직
-    # 어떤 경우에도 '상태'에 '품절'이 들어간 행은 먼저 제거합니다.
-    df_temp = df_all[~df_all['상태'].str.contains("품절", na=False)].copy()
+    # [2] 필터링 로직 분기
+    df_temp = df_all.copy()
 
     if f_mode == "🚨 발주필요(세트)":
-        # 권장발주수량이 1개라도 있는 상품명(it)을 찾아서 그 상품의 모든 옵션을 노출
-        items_need_order = df_temp[df_temp['권장발주수량'] > 0][p['it']].unique()
-        df_temp = df_temp[df_temp[p['it']].isin(items_need_order)]
+        # 품절 제외하고 발주 필요한 세트만
+        df_temp = df_temp[~df_temp['상태'].str.contains("품절", na=False)]
+        need_items = df_temp[df_temp['권장발주수량'] > 0][p['it']].unique()
+        df_temp = df_temp[df_temp[p['it']].isin(need_items)]
         
     elif f_mode == "✅ 정상(품절제외)":
-        # 발주가 필요 없는 정상 수량인 것들만 노출
-        df_temp = df_temp[df_temp['상태'] == "✅ 정상"]
+        # 품절 제외하고 정상인 것만
+        df_temp = df_temp[(df_temp['상태'] == "✅ 정상") & (~df_temp['상태'].str.contains("품절", na=False))]
+        
+    elif f_mode == "🚫 품절건만 보기":
+        # 상태에 '품절'이 포함된 것만 쏙 골라내기
+        df_temp = df_temp[df_temp['상태'].str.contains("품절", na=False)]
+        
+    # '전체보기'는 별도 필터링 없이 통과
 
-    # 검색어 처리
+    # 검색어 처리 (검색어 있으면 위 필터 결과 내에서 한 번 더 거름)
     if s_query:
         df_temp = df_temp[
             df_temp[p['it']].str.contains(s_query, case=False, na=False) | 
             df_temp[p['op']].str.contains(s_query, case=False, na=False)
         ]
-
+        
     # [3] 데이터 에디터 및 저장
     disp_cols = ['상태', p['vn'], p['it'], p['op'], p['av'], '기존리오더', '입고차감', '추가발주', '일판매량', '권장발주수량', '비고(처리내역)']
     
