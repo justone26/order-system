@@ -98,43 +98,57 @@ def load_reorder_data():
 # --- [메인 로직 시작] ---
 
 # ------------------------------------------------------------------
-# 1️⃣단계: 파일 업로드 및 데이터 로드 (파일까지 한 번에 초기화)
+# 1️⃣단계: 파일 업로드 및 데이터 로드 (시트 미리 읽기 추가)
 # ------------------------------------------------------------------
 st.header("1️⃣ 파일 업로드 및 데이터 로드")
 
-# 1. 파일 업로더용 리셋 키 설정 (최상단에 위치)
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
-# 2. ✅ 업로더에 key를 부여해서 제어 가능하게 만듦
-# 사장님, 여기서 key 뒤에 숫자가 바뀌면 파일이 싹 날아갑니다.
 up_file = st.file_uploader(
     "엑셀 파일을 업로드하세요.", 
     type=['xlsx', 'xls'],
     key=f"file_uploader_{st.session_state.uploader_key}"
 )
 
-# 3. ✅ 초기화 버튼: 이제 파일 'X' 안 눌러도 됩니다!
 if st.button("🔄 현재 화면 데이터 초기화", use_container_width=True):
-    # 리셋 키를 제외한 모든 세션 상태 삭제
     for key in list(st.session_state.keys()):
         if key != 'uploader_key':
             del st.session_state[key]
-    
-    # 🚨 리셋 키 값을 올려서 파일 업로더를 강제로 비움
     st.session_state.uploader_key += 1
-    
     st.success("✅ 파일과 모든 데이터가 초기화되었습니다.")
     time.sleep(0.5)
     st.rerun()
 
-# 4. 파일 로드 로직 (기존 사장님 로직 유지)
 if up_file is not None:
     if 'df_raw' not in st.session_state:
         try:
             temp_df = pd.read_excel(up_file)
             st.session_state.df_raw = temp_df
             st.session_state.analyzed = False
+            
+            # 🚨 [정교화 핵심] 엑셀 로드 직후 6단계용 리오더 정답지 생성
+            with st.spinner("🔄 구글 시트에서 리오더 잔량(6단계 수치) 동기화 중..."):
+                sh = get_sheet()
+                ws = sh.worksheet("발주기록")
+                raw_records = ws.get_all_values()
+                
+                if len(raw_records) > 1:
+                    df_rec = pd.DataFrame(raw_records[1:], columns=[h.strip() for h in raw_records[0]])
+                    def c_func(t): return "".join(str(t).split()).upper()
+                    
+                    df_rec['추가발주'] = pd.to_numeric(df_rec['추가발주'].str.replace(',', ''), errors='coerce').fillna(0)
+                    df_rec['입고수량'] = pd.to_numeric(df_rec['입고수량'].str.replace(',', ''), errors='coerce').fillna(0)
+                    df_rec['key'] = df_rec['상품명'].apply(c_func) + df_rec['옵션'].apply(c_func)
+                    
+                    # 6단계와 100% 일치하는 리오더 맵을 미리 세션에 저장
+                    st.session_state.reorder_ans = df_rec.groupby('key').apply(
+                        lambda x: x['추가발주'].sum() - x['입고수량'].sum()
+                    ).to_dict()
+                else:
+                    st.session_state.reorder_ans = {}
+                    
+            st.success("✅ 엑셀 및 장부 잔량 동기화 완료!")
             st.rerun()
         except Exception as e:
             st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
@@ -164,55 +178,35 @@ if 'df_raw' in st.session_state:
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']), key="sel_t7")
 
 # ------------------------------------------------------------------
-# 3️⃣단계: 분석 실행 (변수 완벽 반영 및 리오더 동기화)
+# 3️⃣단계: 분석 설정 및 실행 (사전 로드된 리오더 수치 적용)
 # ------------------------------------------------------------------
 if 'df_raw' in st.session_state:
     st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정 및 실행")
 
-    # 사용자가 입력하는 변수 (LT, SS)
     clt, css = st.columns(2)
     with clt: lt = st.number_input("리드타임 (일)", value=10, key="input_lt")
     with css: ss = st.number_input("안전재고 (일 수)", value=7, key="input_ss")
 
-    if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary", use_container_width=True):
+    if st.button("🚀 분석 실행", type="primary", use_container_width=True):
         try:
-            # 1. 사용자가 입력한 LT, SS 변수를 세션에 저장 (나중에 4단계에서도 쓰임)
             p_map = {
                 'so': st.session_state.get('sel_so'), 'it': st.session_state.get('sel_it'),
                 'op': st.session_state.get('sel_op'), 'vn': st.session_state.get('sel_vn'),
                 'vi': st.session_state.get('sel_vi'), 'av': st.session_state.get('sel_av'),
                 't3': st.session_state.get('sel_t3'), 't7': st.session_state.get('sel_t7'),
-                'rd': st.session_state.get('sel_rd'), 
-                'lt': lt,  # 👈 입력받은 리드타임 변수
-                'ss': ss   # 👈 입력받은 안전재고 변수
+                'rd': st.session_state.get('sel_rd'), 'lt': lt, 'ss': ss
             }
             st.session_state.p = p_map
 
-            with st.spinner("📊 6단계 수치 동기화 및 권장수량 재계산 중..."):
-                # --- [A. 리오더 수치 120을 위한 장부 전수조사] ---
-                sh = get_sheet()
-                ws = sh.worksheet("발주기록")
-                raw_records = ws.get_all_values()
-                r_map = {}
-                
-                if len(raw_records) > 1:
-                    df_rec = pd.DataFrame(raw_records[1:], columns=[h.strip() for h in raw_records[0]])
-                    def c_func(t): return "".join(str(t).split()).upper()
-                    
-                    df_rec['추가발주'] = pd.to_numeric(df_rec['추가발주'].str.replace(',', ''), errors='coerce').fillna(0)
-                    df_rec['입고수량'] = pd.to_numeric(df_rec['입고수량'].str.replace(',', ''), errors='coerce').fillna(0)
-                    df_rec['key'] = df_rec['상품명'].apply(c_func) + df_rec['옵션'].apply(c_func)
-                    
-                    # 6단계와 동일한 누적 잔량 계산
-                    r_map = df_rec.groupby('key').apply(lambda x: x['추가발주'].sum() - x['입고수량'].sum()).to_dict()
-
-                # --- [B. 본체 데이터 분석 및 변수 적용] ---
+            with st.spinner("📊 사전 동기화된 데이터로 권장수량 계산 중..."):
                 df = st.session_state.df_raw.copy()
+                def c_func(t): return "".join(str(t).split()).upper()
                 df['key'] = df[p_map['it']].apply(c_func) + df[p_map['op']].apply(c_func)
 
-                # 기존리오더 주입 (120 동기화)
-                df['기존리오더'] = df['key'].map(r_map).fillna(0).astype(int)
+                # 🚨 [정교화 핵심] 1단계에서 미리 만든 정답지에서 값만 '쏙' 가져오기
+                ans_map = st.session_state.get('reorder_ans', {})
+                df['기존리오더'] = df['key'].map(ans_map).fillna(0).astype(int)
 
                 # 판매량 및 가용재고 숫자 변환
                 c_av, c_t7, c_rd = p_map['av'], p_map['t7'], p_map['rd']
@@ -228,30 +222,24 @@ if 'df_raw' in st.session_state:
 
                 df['일판매량'] = df.apply(calc_daily, axis=1).fillna(0).astype(int)
 
-                # 🚨 [핵심] 리드타임(lt)과 안전재고(ss) 변수를 공식에 반영
-                # 목표재고 = 일판매량 * (리드타임 + 안전재고)
-                # 권장발주 = 목표재고 - (가용재고 + 기존리오더)
+                # 🚨 리드타임(lt)과 안전재고(ss) 변수 최종 반영
                 df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[c_av] + df['기존리오더'])).clip(lower=0).astype(int)
                 
-                # 상태 판별
+                # 상태 판별 및 UI 초기화
                 df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[p_map['so']]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
-                
-                # UI용 컬럼 초기화
                 df['입고차감'] = 0 ; df['추가발주'] = 0 ; df['비고(처리내역)'] = ""
 
-                # 마무리
                 if 'key' in df.columns: df = df.drop(columns=['key'])
                 st.session_state.df_final = df
                 st.session_state.analyzed = True
                 
                 st.cache_data.clear()
-                st.success(f"✅ 분석 완료 (리드타임 {lt}일 / 안전재고 {ss}일 기준)")
+                st.success(f"✅ 분석 완료 (LT:{lt}일/SS:{ss}일 기준)")
                 st.rerun()
 
         except Exception as e:
-            st.error(f"⚠️ 분석 중 오류 발생: {e}")
+            st.error(f"⚠️ 분석 오류: {e}")
             
-                
 # ------------------------------------------------------------------
 # 4️⃣단계: 입고 관리 및 최종 저장 (KeyError 해결 버전)
 # ------------------------------------------------------------------
