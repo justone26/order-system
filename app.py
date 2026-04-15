@@ -268,9 +268,8 @@ if 'df_raw' in st.session_state:
         except Exception as e:
             st.error(f"⚠️ 분석 오류: {e}")
             
-
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (통장 잔액 저장 방식 적용)
+# 4️⃣단계: 입고 관리 및 최종 저장 (오버 입고 방지 로직 적용)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
@@ -282,22 +281,18 @@ if st.session_state.get('analyzed'):
         st.error("데이터가 없습니다. 이전 단계를 먼저 진행해 주세요.")
         st.stop()
 
-    # 원본 복사
     df_all = st.session_state.df_final.copy()
 
-    # 🚨 필수 컬럼 보장
     for col in ['기존리오더', '입고차감', '추가발주', '일판매량', '권장발주수량', '비고(처리내역)', '상태']:
         if col not in df_all.columns:
             df_all[col] = 0 if '수량' in col or '리오더' in col or '차감' in col or '발주' in col else ""
 
-    # [기능유지] 사장님표 상태 필터 및 검색 UI
     f1, f2 = st.columns([1, 2])
     with f1: 
         f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1)
     with f2: 
         s_query = st.text_input("🔍 검색 (상품명/옵션)")
 
-    # 필터링 로직 (유지)
     df_temp = df_all.copy()
     if f_mode == "🚨 발주필요(세트)":
         need_items = df_temp[(df_temp['상태'] != "🚫 품절") & (df_temp['권장발주수량'] > 0)][p['it']].unique()
@@ -309,7 +304,6 @@ if st.session_state.get('analyzed'):
         df_temp = df_temp[df_temp[p['it']].str.contains(s_query, case=False, na=False) | 
                            df_temp[p['op']].str.contains(s_query, case=False, na=False)]
 
-    # 노출 컬럼 설정
     full_cols = ['상태', p['vn'], p['it'], p['op'], p['vi'], p['av'], 
                  '기존리오더', '입고차감', '추가발주', p['t3'], 
                  '일판매량', '권장발주수량', '비고(처리내역)']
@@ -335,7 +329,6 @@ if st.session_state.get('analyzed'):
         btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
     if btn_save:
-        # 변경 내역 확인 (수량 변화가 있거나 메모가 있는 경우 포함)
         changed_rows = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0) | (edited_df['비고(처리내역)'].str.strip() != "")].copy()
         
         if not changed_rows.empty:
@@ -353,18 +346,22 @@ if st.session_state.get('analyzed'):
                         i_val = int(r['입고차감'])
                         user_memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] and str(r['비고(처리내역)']) != "None" else ""
                         
-                        # 🚨 [계산 로직 핵심] 통장 잔액 방식 적용
-                        # 최종 잔액 = 현재 기존리오더 + 이번 발주량 - 이번 입고량
-                        final_balance = int(r['기존리오더']) + q_val - i_val
+                        # 🚨 [수정 포인트] 오버 입고 처리 로직
+                        # 기존 잔액에서 입고량을 뺐을 때 0보다 작으면 0으로 고정(max 함수 사용)
+                        bal_after_in = max(0, int(r['기존리오더']) - i_val)
+                        
+                        # 최종 잔액은 0으로 보정된 값에 신규 발주량을 더함
+                        final_balance = bal_after_in + q_val
                         
                         m_parts = []
                         if q_val > 0: m_parts.append(f"{time_short} {q_val}발주")
                         if i_val > 0: m_parts.append(f"{time_short} {i_val}입고")
-                        final_memo = f"[{' '.join(m_parts)}] {user_memo}".strip()
                         
-                        # 발주기록(6단계 원본)에는 계산된 'final_balance'를 [기존리오더] 컬럼에 저장
+                        # 메모에 실제 상황 기록 (오버 입고 시 별도 표기)
+                        over_in_msg = f" (오버입고 {i_val - int(r['기존리오더'])}개 발생)" if i_val > int(r['기존리오더']) else ""
+                        final_memo = f"[{' '.join(m_parts)}]{over_in_msg} {user_memo}".strip()
+                        
                         rows_qty.append([now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], final_balance, q_val, i_val, final_memo])
-                        # 히스토리에는 당시의 상황을 모두 기록
                         rows_hist.append([now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo])
 
                         # 세션 동기화
@@ -377,14 +374,13 @@ if st.session_state.get('analyzed'):
                     if rows_hist: ws_hist.append_rows(rows_hist, value_input_option='USER_ENTERED')
                     
                     st.cache_data.clear()
-                    st.success(f"✅ 저장 완료! 최신 잔액({final_balance}개 등)이 장부에 기록되었습니다.")
+                    st.success(f"✅ 저장 완료! 잔액이 0 미만인 경우 0으로 보정되어 기록되었습니다.")
                     time.sleep(1)
                     st.rerun()
                 except Exception as e:
                     st.error(f"저장 중 오류: {e}")
         else:
             st.warning("⚠️ 변경 내역이 없습니다.")
-
 
 # ------------------------------------------------------------------
 # 6️⃣단계: 리오더 현황판 (TOP 3 상품명 통합 및 중복 제거 버전)
