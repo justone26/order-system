@@ -165,26 +165,26 @@ if 'df_raw' in st.session_state:
 
 # ------------------------------------------------------------------
 # 3️⃣단계: 분석 설정 및 실행 
-# (조건: 파일이 로드되었고, 아직 분석 결과가 나오지 않았을 때만 표시)
+# (조건: 파일이 로드된 상태라면 항상 표시 / 초기화 시에만 삭제됨)
 # ------------------------------------------------------------------
-if 'df_raw' in st.session_state and not st.session_state.get('analyzed', False):
+if 'df_raw' in st.session_state:
     st.divider()
     st.subheader("⚙️ 3️⃣단계: 분석 설정 및 실행")
 
-    # [보너스] 혹시 몰라 넣어둔 개별 초기화 버튼
-    if st.button("🔄 설정 초기화 및 처음으로", use_container_width=True):
-        for key in ['df_final', 'analyzed', 'db_history', 'master_log']:
+    # [중요] 초기화 버튼: 이 버튼을 누르면 모든 분석 결과가 날아가며 3단계가 초기 상태로 돌아갑니다.
+    if st.button("🔄 전체 초기화 (처음부터 다시)", use_container_width=True):
+        for key in ['df_final', 'analyzed', 'db_history', 'master_log', 'p']:
             if key in st.session_state: del st.session_state[key]
         st.rerun()
 
-    # 1. 분석 파라미터 입력
+    # 1. 분석 파라미터 입력 (입력한 값은 분석 후에도 유지됨)
     clt, css = st.columns(2)
-    with clt: lt = st.number_input("리드타임 (일)", value=10)
-    with css: ss = st.number_input("안전재고 (일 수)", value=7)
+    with clt: lt = st.number_input("리드타임 (일)", value=10, key="input_lt")
+    with css: ss = st.number_input("안전재고 (일 수)", value=7, key="input_ss")
 
     if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary", use_container_width=True):
         try:
-            # 2단계 매핑 값 세션에서 안전하게 가져오기
+            # 매핑 값 세션에서 안전하게 가져오기
             p_map = {
                 'so': st.session_state.get('sel_so'),
                 'it': st.session_state.get('sel_it'),
@@ -201,7 +201,6 @@ if 'df_raw' in st.session_state and not st.session_state.get('analyzed', False):
             st.session_state.p = p_map
 
             with st.spinner("📊 발주기록 시트 분석 및 잔량 계산 중..."):
-                # 캐시 및 세션 로그 초기화
                 if 'db_history' in st.session_state: del st.session_state.db_history
                 if 'master_log' in st.session_state: del st.session_state.master_log
 
@@ -217,7 +216,7 @@ if 'df_raw' in st.session_state and not st.session_state.get('analyzed', False):
                         return res.loc[:, ~res.columns.duplicated()]
                     return pd.DataFrame()
 
-                # [A] 발주기록 시트 분석 (공급처/상품명/옵션별 누적 계산)
+                # [A] 발주기록 시트 분석 (누적 미입고 계산)
                 df_master = get_clean_df("발주기록")
                 st.session_state.master_log = df_master 
 
@@ -239,7 +238,7 @@ if 'df_raw' in st.session_state and not st.session_state.get('analyzed', False):
                 df[c_av] = pd.to_numeric(df[c_av], errors='coerce').fillna(0).astype(int)
                 df[c_t7] = pd.to_numeric(df[c_t7], errors='coerce').fillna(0).astype(int)
                 
-                # 기존 리오더(미입고 총량) 매칭
+                # 기존 리오더 매칭
                 df['기존리오더'] = df.apply(lambda row: int(r_map.get((str(row[c_vn]).strip(), str(row[c_it]).strip(), str(row[c_op]).strip()), 0)), axis=1)
 
                 # 일판매량 및 권장수량 계산
@@ -258,8 +257,8 @@ if 'df_raw' in st.session_state and not st.session_state.get('analyzed', False):
                 df['비고(처리내역)'] = "" 
                 
                 st.session_state.df_final = df
-                st.session_state.analyzed = True # 👈 이 값이 True가 되면 3단계 화면은 자동으로 숨겨집니다.
-                st.success("✅ 분석 완료! 4단계와 6단계 수량이 동기화되었습니다.")
+                st.session_state.analyzed = True
+                st.success("✅ 분석 완료! 수치가 업데이트되었습니다.")
                 st.rerun()
                 
         except Exception as e:
