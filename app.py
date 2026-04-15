@@ -366,7 +366,7 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (업데이트 & 엑셀 다운로드 통합)
+# 6️⃣단계: 실시간 리오더 현황판 (항목 복구 + 버튼 왼쪽 이동)
 # ------------------------------------------------------------------
 def render_step6():
     if not (st.session_state.get('analyzed') or st.session_state.get('show_step6')):
@@ -388,25 +388,27 @@ def render_step6():
     except Exception as e:
         st.error(f"데이터 로드 중 오류: {e}"); return
 
-    # [UI 레이아웃] 검색, 필터, 버튼들
-    c1, c2, c3 = st.columns([2, 1.5, 1])
+    # [UI 레이아웃] 버튼을 맨 왼쪽(c1)으로 이동
+    c1, c2, c3 = st.columns([1, 2, 1.5])
     with c1:
-        sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_vExcel")
-    with c2:
-        v_list = ["전체 공급처"] + sorted(df_log['공급처'].unique().tolist())
-        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_vExcel")
-    with c3:
         st.write(" ") # 간격 맞춤
         if st.button("🔄 최신 자료 업데이트", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
+    with c2:
+        sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_vFix")
+    with c3:
+        v_list = ["전체 공급처"] + sorted(df_log['공급처'].unique().tolist())
+        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_vFix")
 
     # 1. 전처리 및 그룹화 (상품별 통합 로직)
     df_proc = df_log.copy()
+    # 날짜별 발주 내역 텍스트 생성
     df_proc['기록_temp'] = df_proc.apply(
         lambda x: f"{x['날짜_dt'].strftime('%m/%d')} {int(x['추가발주'])}장" if x['추가발주'] > 0 else "", axis=1
     )
 
+    # 🚨 [핵심] 공급처와 상품명을 기준으로 그룹화하여 데이터 유지
     grouped = df_proc.groupby(['공급처', '상품명', '옵션']).agg({
         '날짜': 'max',            
         '기존리오더': 'sum',
@@ -420,34 +422,26 @@ def render_step6():
     grouped['메모'] = grouped.apply(lambda x: f"[{x['기록_temp']}] {x['메모']}".strip(), axis=1)
     grouped['최종잔량'] = grouped['기존리오더'] + grouped['추가발주'] - grouped['입고수량']
 
-    # 검색 및 필터 적용
-    if sel_s: grouped = grouped[grouped['상품명'].str.contains(sel_s, case=False)]
-    if sel_v != "전체 공급처": grouped = grouped[grouped['공급처'] == sel_v]
+    # 검색 및 공급처 필터 적용
+    if sel_s: 
+        grouped = grouped[grouped['상품명'].str.contains(sel_s, case=False)]
+    if sel_v != "전체 공급처": 
+        grouped = grouped[grouped['공급처'] == sel_v]
 
-    # 정렬
+    # 정렬 (최신 날짜순 & 잔량 많은 순)
     grouped = grouped.sort_values(by=['날짜', '최종잔량'], ascending=[False, False])
+    
+    # 📊 최종 표 출력 (날짜, 공급처, 상품명 모두 포함)
     target_cols = ['날짜', '공급처', '상품명', '옵션', '최종잔량', '추가발주', '입고수량', '메모']
-    final_df = grouped[target_cols]
+    st.dataframe(grouped[target_cols], use_container_width=True, hide_index=True)
 
-    # 📊 데이터 표 출력
-    st.dataframe(final_df, use_container_width=True, hide_index=True)
-
-    # 📥 [엑셀 다운로드 섹션]
+    # 📥 엑셀 다운로드 (버튼 하단 배치)
     import io
-    # 엑셀 파일 생성 (메모리상에서 처리)
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        final_df.to_excel(writer, index=False, sheet_name='실시간리오더현황')
-        # 엑셀 시트 서식 살짝 조정
-        workbook = writer.book
-        worksheet = writer.sheets['실시간리오더현황']
-        header_format = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1})
-        for col_num, value in enumerate(final_df.columns.values):
-            worksheet.write(0, col_num, value, header_format)
+        grouped[target_cols].to_excel(writer, index=False, sheet_name='실시간리오더현황')
     
     excel_data = output.getvalue()
-    
-    # 다운로드 버튼 배치
     st.download_button(
         label="📥 실시간 현황 엑셀 다운로드 (.xlsx)",
         data=excel_data,
