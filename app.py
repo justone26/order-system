@@ -366,7 +366,7 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (버튼 위 라벨 추가로 줄 맞춤)
+# 6️⃣단계: 실시간 리오더 현황판 (UI 라인 정렬 미세 조정)
 # ------------------------------------------------------------------
 def render_step6():
     if not (st.session_state.get('analyzed') or st.session_state.get('show_step6')):
@@ -381,28 +381,29 @@ def render_step6():
         df_log = pd.DataFrame(ws_qty.get_all_records())
         if df_log.empty: return
         
-        # 숫자 변환 및 날짜 파싱
+        # 숫자 및 날짜 데이터 전처리
         for col in ['기존리오더', '추가발주', '입고수량']:
             df_log[col] = pd.to_numeric(df_log[col], errors='coerce').fillna(0)
         df_log['날짜_dt'] = pd.to_datetime(df_log['날짜'], errors='coerce', format='mixed')
     except Exception as e:
         st.error(f"데이터 로드 중 오류: {e}"); return
 
-    # [UI 레이아웃] 버튼 위에 라벨을 추가하여 높이를 맞춥니다.
+    # [UI 레이아웃] 높이 균형을 위한 미세 조정
     c1, c2, c3 = st.columns([1, 2, 1.5])
     with c1:
-        # 🚨 버튼 위에도 제목을 넣어 다른 입력창들과 높이를 일치시킵니다.
-        st.write("🔄 데이터 갱신") 
-        if st.button("최신 자료 업데이트", use_container_width=True, key="btn_update_vFinal"):
+        # 🚨 HTML 태그를 사용해 옆 칸의 '통합 상품명 검색' 라벨 높이와 맞춥니다.
+        # 아래 <p style='margin-bottom: 8px;'> 수치를 조절하여 라인을 맞췄습니다.
+        st.markdown("<p style='margin-bottom: 8px; font-size: 14px; font-weight: normal;'>🔄 데이터 갱신</p>", unsafe_allow_html=True)
+        if st.button("최신 자료 업데이트", use_container_width=True, key="btn_update_final_aligned"):
             st.cache_data.clear()
             st.rerun()
     with c2:
-        sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_vFinal_UI")
+        sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_aligned")
     with c3:
         v_list = ["전체 공급처"] + sorted(df_log['공급처'].unique().tolist())
-        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_vFinal_UI")
+        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_aligned")
 
-    # --- 데이터 처리 로직 (기존과 동일) ---
+    # --- 데이터 처리 로직 ---
     df_proc = df_log.copy()
     df_proc['기록_temp'] = df_proc.apply(
         lambda x: f"{x['날짜_dt'].strftime('%m/%d')} {int(x['추가발주'])}장" if x['추가발주'] > 0 else "", axis=1
