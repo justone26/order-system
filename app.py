@@ -164,7 +164,7 @@ if 'df_raw' in st.session_state:
         t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']), key="sel_t7")
 
 # ------------------------------------------------------------------
-# 3️⃣단계: 분석 설정 및 실행 (시트 실시간 합산 방식)
+# 3️⃣단계: 분석 설정 및 실행 (6단계 수치 강제 동기화)
 # ------------------------------------------------------------------
 if 'df_raw' in st.session_state:
     st.divider()
@@ -176,7 +176,7 @@ if 'df_raw' in st.session_state:
 
     if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary", use_container_width=True):
         try:
-            # 설정값 저장
+            # 설정값 매핑
             p_map = {
                 'so': st.session_state.get('sel_so'), 'it': st.session_state.get('sel_it'),
                 'op': st.session_state.get('sel_op'), 'vn': st.session_state.get('sel_vn'),
@@ -186,75 +186,75 @@ if 'df_raw' in st.session_state:
             }
             st.session_state.p = p_map
 
-            with st.spinner("📊 '발주기록' 장부 합산 및 실시간 잔량 계산 중..."):
+            with st.spinner("📊 6단계 현황판과 수치 동기화 중..."):
                 sh = get_sheet()
                 ws = sh.worksheet("발주기록")
                 raw_data = ws.get_all_values()
                 
-                if len(raw_data) <= 1:
-                    # 데이터가 없으면 리오더는 모두 0
-                    r_map = {}
-                else:
+                r_map = {}
+                if len(raw_data) > 1:
                     header = [h.strip() for h in raw_data[0]]
                     df_master = pd.DataFrame(raw_data[1:], columns=header)
                     
-                    # 🚨 [매칭 강화] 모든 텍스트의 공백을 제거하고 대문자로 통일 (오차 제로)
-                    def clean_k(t): return "".join(str(t).split()).upper()
-                    
-                    # 장부의 수량 컬럼들 숫자 변환
-                    q_col, in_col = '추가발주', '입고수량'
-                    for col in [q_col, in_col]:
+                    # 1. 수량 컬럼 숫자 강제 변환 (쉼표 제거 및 에러 무시)
+                    for col in ['추가발주', '입고수량']:
                         if col in df_master.columns:
                             df_master[col] = pd.to_numeric(df_master[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                     
-                    # 장부 매칭 키 생성 (상품명+옵션)
+                    # 2. 매칭 키 생성 (상품명 + 옵션) - 공백 싹 제거하고 대문자로 통일
                     it_c, op_c = '상품명', '옵션'
-                    df_master['m_key'] = df_master[it_c].apply(clean_k) + df_master[op_c].apply(clean_k)
+                    df_master['tmp_key'] = df_master[it_c].astype(str).str.replace(r'\s+', '', regex=True).str.upper() + \
+                                          df_master[op_c].astype(str).str.replace(r'\s+', '', regex=True).str.upper()
                     
-                    # 🚨 [핵심 계산] (추가발주 총합) - (입고수량 총합) = 현재 미입고 잔량
-                    group_res = df_master.groupby('m_key').apply(lambda x: x[q_col].sum() - x[in_col].sum())
-                    r_map = group_res.clip(lower=0).to_dict()
+                    # 3. 🚨 6단계와 동일한 계산: (전체 추가발주 합계) - (전체 입고수량 합계)
+                    # 이 결과가 120장이어야 함.
+                    summary = df_master.groupby('tmp_key').apply(lambda x: x['추가발주'].sum() - x['입고수량'].sum())
+                    r_map = summary.to_dict()
 
-                # [4단계 데이터와 매칭]
+                # 4. 분석 대상 데이터(4단계) 매칭
                 df = st.session_state.df_raw.copy()
                 c_it, c_op = p_map['it'], p_map['op']
                 
-                # 엑셀 데이터 키 생성
-                df['m_key'] = df[c_it].apply(clean_k) + df[c_op].apply(clean_k)
+                # 4단계용 매칭 키 생성
+                df['tmp_key'] = df[c_it].astype(str).str.replace(r'\s+', '', regex=True).str.upper() + \
+                               df[c_op].astype(str).str.replace(r'\s+', '', regex=True).str.upper()
                 
-                # 리오더 값 주입 (없으면 0)
-                df['기존리오더'] = df['m_key'].map(r_map).fillna(0).astype(int)
+                # 값 주입 (찾을 수 없으면 0)
+                df['기존리오더'] = df['tmp_key'].map(r_map).fillna(0).astype(int)
 
-                # 일판매량 및 최종 권장수량 계산
+                # 5. 판매량 및 권장발주 계산
                 c_av, c_t7, c_rd, c_so = p_map['av'], p_map['t7'], p_map['rd'], p_map['so']
                 today = datetime.now(KST).date()
                 
                 df[c_av] = pd.to_numeric(df[c_av], errors='coerce').fillna(0).astype(int)
+                
                 def calc_daily(row):
                     try:
-                        days = max(1, min((today - pd.to_datetime(row[c_rd]).date()).days, 7))
+                        # 등록일로부터 7일 이내면 경과일수로 나누고, 아니면 7로 나눔
+                        days = (today - pd.to_datetime(row[c_rd]).date()).days
+                        days = max(1, min(days, 7))
                         return int(round(pd.to_numeric(row[c_t7], errors='coerce') / days, 0))
-                    except: return int(round(pd.to_numeric(row[c_t7], errors='coerce') / 7, 0))
+                    except: 
+                        return int(round(pd.to_numeric(row[c_t7], errors='coerce') / 7, 0))
 
                 df['일판매량'] = df.apply(calc_daily, axis=1).fillna(0).astype(int)
                 
-                # 🚨 최종 공식: (일판매량 * 확보일수) - (현재고 + 기존리오더)
+                # 🚨 최종 공식: (목표재고) - (현재고 + 기존리오더)
                 df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[c_av] + df['기존리오더'])).clip(lower=0).astype(int)
                 
-                # 상태 판별
+                # 상태 및 UI용 컬럼
                 df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[c_so]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
-                
-                # UI용 컬럼 초기화
                 df['입고차감'] = 0 ; df['추가발주'] = 0 ; df['비고(처리내역)'] = "" 
                 
-                if 'm_key' in df.columns: df = df.drop(columns=['m_key'])
+                # 임시 키 삭제 후 저장
+                df = df.drop(columns=['tmp_key'])
                 st.session_state.df_final = df
                 st.session_state.analyzed = True
-                st.success("✅ 분석 완료! 6단계와 동일한 실시간 합산 방식으로 계산되었습니다.")
+                st.success("✅ 분석 완료! 6단계와 동일한 계산 방식으로 리오더 수치를 맞췄습니다.")
                 st.rerun()
                 
         except Exception as e:
-            st.error(f"⚠️ 시스템 오류: {e}")
+            st.error(f"⚠️ 분석 오류: {e}")
             
                 
 # ------------------------------------------------------------------
