@@ -366,7 +366,7 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (UI 라인 정렬 미세 조정)
+# 6️⃣단계: 실시간 리오더 현황판 (업체별 요약 + 주요 상품 TOP 3 표시)
 # ------------------------------------------------------------------
 def render_step6():
     if not (st.session_state.get('analyzed') or st.session_state.get('show_step6')):
@@ -381,29 +381,26 @@ def render_step6():
         df_log = pd.DataFrame(ws_qty.get_all_records())
         if df_log.empty: return
         
-        # 숫자 및 날짜 데이터 전처리
         for col in ['기존리오더', '추가발주', '입고수량']:
             df_log[col] = pd.to_numeric(df_log[col], errors='coerce').fillna(0)
         df_log['날짜_dt'] = pd.to_datetime(df_log['날짜'], errors='coerce', format='mixed')
     except Exception as e:
         st.error(f"데이터 로드 중 오류: {e}"); return
 
-    # [UI 레이아웃] 높이 균형을 위한 미세 조정
+    # [UI 레이아웃] 버튼 및 필터
     c1, c2, c3 = st.columns([1, 2, 1.5])
     with c1:
-        # 🚨 HTML 태그를 사용해 옆 칸의 '통합 상품명 검색' 라벨 높이와 맞춥니다.
-        # 아래 <p style='margin-bottom: 8px;'> 수치를 조절하여 라인을 맞췄습니다.
-        st.markdown("<p style='margin-bottom: 8px; font-size: 14px; font-weight: normal;'>🔄 데이터 갱신</p>", unsafe_allow_html=True)
-        if st.button("최신 자료 업데이트", use_container_width=True, key="btn_update_final_aligned"):
+        st.markdown("<p style='margin-bottom: 8px; font-size: 14px;'>🔄 데이터 갱신</p>", unsafe_allow_html=True)
+        if st.button("최신 자료 업데이트", use_container_width=True, key="btn_update_vFinal_Final"):
             st.cache_data.clear()
             st.rerun()
     with c2:
-        sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_aligned")
+        sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_vFinal_Final")
     with c3:
         v_list = ["전체 공급처"] + sorted(df_log['공급처'].unique().tolist())
-        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_aligned")
+        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_vFinal_Final")
 
-    # --- 데이터 처리 로직 ---
+    # [데이터 처리] 상품별 통합
     df_proc = df_log.copy()
     df_proc['기록_temp'] = df_proc.apply(
         lambda x: f"{x['날짜_dt'].strftime('%m/%d')} {int(x['추가발주'])}장" if x['추가발주'] > 0 else "", axis=1
@@ -424,23 +421,39 @@ def render_step6():
     if sel_s: grouped = grouped[grouped['상품명'].str.contains(sel_s, case=False)]
     if sel_v != "전체 공급처": grouped = grouped[grouped['공급처'] == sel_v]
 
-    # [업체별 미입고 요약]
-    st.markdown("#### 🏢 업체별 미입고 요약")
-    vendor_sum = grouped.groupby('공급처')['최종잔량'].sum().reset_index()
-    vendor_sum = vendor_sum[vendor_sum['최종잔량'] > 0]
-    if not vendor_sum.empty:
-        v_cols = st.columns(min(len(vendor_sum), 4))
-        for i, (idx, row) in enumerate(vendor_sum.iterrows()):
-            if i < 4: v_cols[i].metric(row['공급처'], f"{int(row['최종잔량'])}개 잔량")
+    # [1] 🔥 업체별 미입고 요약 + TOP 3 상품 표시
+    st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
+    vendor_list = grouped.groupby('공급처')['최종잔량'].sum().reset_index()
+    vendor_list = vendor_list[vendor_list['최종잔량'] > 0].sort_values(by='최종잔량', ascending=False)
+    
+    if not vendor_list.empty:
+        # 업체 개수에 따라 컬럼 나누기 (최대 4개)
+        v_cols = st.columns(min(len(vendor_list), 4))
+        for i, (idx, row) in enumerate(vendor_list.iterrows()):
+            if i < 4:
+                v_name = row['공급처']
+                v_total = int(row['최종잔량'])
+                
+                with v_cols[i]:
+                    st.metric(v_name, f"{v_total}개 잔량")
+                    
+                    # 🚨 업체별 잔량 상위 3개 상품 추출
+                    v_top3 = grouped[grouped['공급처'] == v_name].sort_values(by='최종잔량', ascending=False).head(3)
+                    top_text = ""
+                    for rank, (_, t_row) in enumerate(v_top3.iterrows()):
+                        top_text += f"**{rank+1}.** {t_row['상품명']}({int(t_row['최종잔량'])})  \n"
+                    
+                    st.caption(f"**실시간 TOP 3**")
+                    st.markdown(top_text)
     
     st.divider()
 
-    # [데이터 표 출력]
+    # [2] 데이터 표 출력
     grouped = grouped.sort_values(by=['날짜', '최종잔량'], ascending=[False, False])
     target_cols = ['날짜', '공급처', '상품명', '옵션', '최종잔량', '추가발주', '입고수량', '메모']
     st.dataframe(grouped[target_cols], use_container_width=True, hide_index=True)
 
-    # [엑셀 다운로드]
+    # [3] 엑셀 다운로드
     import io
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -453,6 +466,8 @@ def render_step6():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
+
+
 
 # ------------------------------------------------------------------
 # 5️⃣단계: 전체 히스토리 기록 (실행문)
