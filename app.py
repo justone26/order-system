@@ -366,15 +366,16 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (6단계 사라짐 방지 보강)
+# 5️⃣단계: 전체 히스토리 기록 (6단계 강제 호출 포함)
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
-    # 🚨 [핵심] 5단계가 실행될 때 6단계 표시 상태를 다시 한번 확실히 고정합니다.
+    # [중요] 5단계 진입 시 6단계 표시 권한을 강제로 활성화
     st.session_state.show_step6 = True 
 
     st.divider()
     st.header("📜 5단계: 전체 히스토리 기록")
 
+    # 데이터 로드 로직 (기존 유지)
     if 'db_history' not in st.session_state:
         try:
             sh = get_sheet()
@@ -399,21 +400,20 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
         c1, c2, c3 = st.columns([1.5, 1.5, 1.2]) 
         with c1: 
             today_val = datetime.now(KST).date()
-            # 🚨 key값을 변경하여 위젯 충돌을 방지합니다.
-            sel_dates_5 = st.date_input("📅 조회 날짜 범위", [today_val, today_val], key="h_date_v18_fix")
+            # 고유한 키값 부여 (충돌 방지)
+            sel_dates_5 = st.date_input("📅 조회 날짜 범위", [today_val, today_val], key="h_date_final_v100")
 
         if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
-            mask_date = (m_df_5['날짜_only'] >= sel_dates_5[0]) & (m_df_5['날짜_only'] <= sel_dates_5[1])
-            period_df = m_df_5[mask_date]
+            period_df = m_df_5[(m_df_5['날짜_only'] >= sel_dates_5[0]) & (m_df_5['날짜_only'] <= sel_dates_5[1])]
         else:
             period_df = m_df_5[m_df_5['날짜_only'] == sel_dates_5]
 
         with c2: 
-            h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_v18_fix")
+            h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_final_v100")
             
         with c3:
             t_opts = ["전체 회차"] + sorted(period_df['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
-            h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_v18_fix")
+            h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_final_v100")
 
         df_dis = period_df.copy()
         if h_name_5:
@@ -421,11 +421,13 @@ if st.session_state.get('analyzed') or st.session_state.get('show_step6'):
         if h_time_5 != "전체 회차":
             df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
-        df_dis = df_dis.sort_values(by='날짜_dt', ascending=False)
-        st.dataframe(df_dis.drop(columns=['날짜_dt', '날짜_only'], errors='ignore'), use_container_width=True, hide_index=True)
+        st.dataframe(df_dis.sort_values(by='날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore'), use_container_width=True, hide_index=True)
     else:
         st.info("💡 히스토리 내역이 없습니다.")
-        
+
+    # 🚨 [여기가 핵심!] 5단계 코드 바로 밑에서 6단계를 강제로 호출합니다.
+    # 만약 render_step6() 함수가 코드 어딘가에 정의되어 있다면 아래 한 줄로 해결됩니다.
+    render_step6()
 
 # ------------------------------------------------------------------
 # 6️⃣단계: 실시간 리오더 현황판 (최신순 정렬 강화)
