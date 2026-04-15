@@ -100,7 +100,7 @@ def load_reorder_data():
 # ------------------------------------------------------------------
 # 1️⃣단계: 파일 업로드 및 데이터 로드 (계산 로직: 통장 잔액 방식 적용)
 # ------------------------------------------------------------------
-st.header("1️⃣ 파일 업로드 및 데이터 로드")
+st.header("1️⃣ 파일 업로드")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -128,7 +128,7 @@ if up_file is not None:
             st.session_state.analyzed = False
             
             # 🚨 [수정 핵심] 장부를 날짜순으로 정렬한 뒤 '진짜 마지막' 행을 가져옵니다.
-            with st.spinner("🔄 구글 시트에서 최신 기존리오더(장부 잔액) 동기화 중..."):
+            with st.spinner("🔄 구글 시트에서 최신 기존리오더 동기화 중..."):
                 sh = get_sheet()
                 ws = sh.worksheet("발주기록")
                 raw_records = ws.get_all_values()
@@ -167,7 +167,7 @@ if 'df_raw' in st.session_state:
     df_work = st.session_state.df_raw
     cols = df_work.columns.tolist()
     
-    st.subheader("⚙️ 2️⃣단계: 매핑 설정")
+    st.subheader("2️⃣단계: 매핑 실행")
     c1, c2 = st.columns(2)
     with c1:
         # 🚨 key를 지정하여 세션에 자동 저장되도록 보강
@@ -189,7 +189,7 @@ if 'df_raw' in st.session_state:
 # ------------------------------------------------------------------
 if 'df_raw' in st.session_state:
     st.divider()
-    st.subheader("⚙️ 3️⃣단계: 분석 설정 및 실행")
+    st.subheader("3️⃣단계: 분석 설정 및 실행")
 
     clt, css = st.columns(2)
     with clt: lt = st.number_input("리드타임 (일)", value=7, key="input_lt")
@@ -273,7 +273,7 @@ if 'df_raw' in st.session_state:
 # ------------------------------------------------------------------
 if st.session_state.get('analyzed'):
     st.divider()
-    st.header("📊 4단계: 입고 관리 및 최종 발주 확정")
+    st.header("📊 4단계: 데이터 분석 및 발주 체크 ")
     
     p = st.session_state.p
     
@@ -390,7 +390,7 @@ def render_step6():
         return
 
     st.markdown("---")
-    st.markdown("### 📈 6단계: 실시간 리오더 현황판 (최신 잔액 기준)")
+    st.markdown("### 📈 6단계: 실시간 리오더 현황판 ")
     
     try:
         sh = get_sheet()
