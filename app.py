@@ -366,7 +366,7 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 저장할 변경 내역이 없습니다.")
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 실시간 리오더 현황판 (현황판 복구 + 버튼 왼쪽 + 항목 유지)
+# 6️⃣단계: 실시간 리오더 현황판 (버튼 위 라벨 추가로 줄 맞춤)
 # ------------------------------------------------------------------
 def render_step6():
     if not (st.session_state.get('analyzed') or st.session_state.get('show_step6')):
@@ -388,26 +388,26 @@ def render_step6():
     except Exception as e:
         st.error(f"데이터 로드 중 오류: {e}"); return
 
-    # [1] UI 레이아웃 - 버튼 맨 왼쪽
+    # [UI 레이아웃] 버튼 위에 라벨을 추가하여 높이를 맞춥니다.
     c1, c2, c3 = st.columns([1, 2, 1.5])
     with c1:
-        st.write(" ") 
-        if st.button("🔄 최신 자료 업데이트", use_container_width=True):
+        # 🚨 버튼 위에도 제목을 넣어 다른 입력창들과 높이를 일치시킵니다.
+        st.write("🔄 데이터 갱신") 
+        if st.button("최신 자료 업데이트", use_container_width=True, key="btn_update_vFinal"):
             st.cache_data.clear()
             st.rerun()
     with c2:
-        sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_final_search")
+        sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_vFinal_UI")
     with c3:
         v_list = ["전체 공급처"] + sorted(df_log['공급처'].unique().tolist())
-        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_final_vendor")
+        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_vFinal_UI")
 
-    # [2] 데이터 처리 (상품별 통합 로직)
+    # --- 데이터 처리 로직 (기존과 동일) ---
     df_proc = df_log.copy()
     df_proc['기록_temp'] = df_proc.apply(
         lambda x: f"{x['날짜_dt'].strftime('%m/%d')} {int(x['추가발주'])}장" if x['추가발주'] > 0 else "", axis=1
     )
 
-    # 공급처, 상품명, 옵션 기준 통합
     grouped = df_proc.groupby(['공급처', '상품명', '옵션']).agg({
         '날짜': 'max',            
         '기존리오더': 'sum',
@@ -420,32 +420,26 @@ def render_step6():
     grouped['메모'] = grouped.apply(lambda x: f"[{x['기록_temp']}] {x['메모']}".strip(), axis=1)
     grouped['최종잔량'] = grouped['기존리오더'] + grouped['추가발주'] - grouped['입고수량']
 
-    # 필터 적용
-    if sel_s: 
-        grouped = grouped[grouped['상품명'].str.contains(sel_s, case=False)]
-    if sel_v != "전체 공급처": 
-        grouped = grouped[grouped['공급처'] == sel_v]
+    if sel_s: grouped = grouped[grouped['상품명'].str.contains(sel_s, case=False)]
+    if sel_v != "전체 공급처": grouped = grouped[grouped['공급처'] == sel_v]
 
-    # [3] 🔥 업체별 미입고 현황판 (현황판 복구)
+    # [업체별 미입고 요약]
     st.markdown("#### 🏢 업체별 미입고 요약")
     vendor_sum = grouped.groupby('공급처')['최종잔량'].sum().reset_index()
-    vendor_sum = vendor_sum[vendor_sum['최종잔량'] > 0] # 잔량 있는 곳만 표시
-    
+    vendor_sum = vendor_sum[vendor_sum['최종잔량'] > 0]
     if not vendor_sum.empty:
-        # 최대 4개 업체까지 가로로 배치
         v_cols = st.columns(min(len(vendor_sum), 4))
         for i, (idx, row) in enumerate(vendor_sum.iterrows()):
-            if i < 4:
-                v_cols[i].metric(row['공급처'], f"{int(row['최종잔량'])}개 잔량")
+            if i < 4: v_cols[i].metric(row['공급처'], f"{int(row['최종잔량'])}개 잔량")
     
     st.divider()
 
-    # [4] 데이터 표 출력
+    # [데이터 표 출력]
     grouped = grouped.sort_values(by=['날짜', '최종잔량'], ascending=[False, False])
     target_cols = ['날짜', '공급처', '상품명', '옵션', '최종잔량', '추가발주', '입고수량', '메모']
     st.dataframe(grouped[target_cols], use_container_width=True, hide_index=True)
 
-    # [5] 엑셀 다운로드
+    # [엑셀 다운로드]
     import io
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
