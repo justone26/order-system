@@ -386,9 +386,8 @@ if st.session_state.get('analyzed'):
             st.warning("⚠️ 변경 내역이 없습니다.")
 
 
-
 # ------------------------------------------------------------------
-# 6️⃣단계: 리오더 현황판 (통장 잔액 방식 + 공간 최적화 최종)
+# 6️⃣단계: 리오더 현황판 (TOP 3 상품명 통합 및 중복 제거 버전)
 # ------------------------------------------------------------------
 def render_step6():
     if not (st.session_state.get('analyzed') or st.session_state.get('show_step6')):
@@ -400,13 +399,11 @@ def render_step6():
     try:
         sh = get_sheet()
         ws_qty = sh.worksheet("발주기록")
-        # get_all_records() 대신 안전한 로딩 방식 사용
         data = ws_qty.get_all_values()
         if len(data) <= 1: return
         
         df_log = pd.DataFrame(data[1:], columns=[h.strip() for h in data[0]])
         
-        # 숫자 및 날짜 데이터 전처리
         for col in ['기존리오더', '추가발주', '입고수량']:
             if col in df_log.columns:
                 df_log[col] = pd.to_numeric(df_log[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
@@ -415,7 +412,7 @@ def render_step6():
     except Exception as e:
         st.error(f"데이터 로드 중 오류: {e}"); return
 
-    # [1] UI 레이아웃 - 상단 정렬 (원본 유지)
+    # [1] UI 레이아웃
     c1, c2, c3 = st.columns([1, 2, 1.5])
     with c1:
         st.markdown("<p style='margin-bottom: 8px; font-size: 14px; font-weight: normal;'>🔄 데이터 갱신</p>", unsafe_allow_html=True)
@@ -428,15 +425,13 @@ def render_step6():
         v_list = ["전체 공급처"] + sorted(df_log['공급처'].unique().tolist())
         sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_compact")
 
-    # [2] 데이터 그룹화 (🚨 통장 잔액 방식 적용)
+    # [2] 데이터 그룹화 (통장 잔액 방식)
     def c_func(t): return "".join(str(t).split()).upper()
     df_log['key'] = df_log['상품명'].apply(c_func) + df_log['옵션'].apply(c_func)
     
-    # 🚨 [수정 핵심] 중복 제거 시 'keep=last'를 사용하여 가장 최신 잔액행만 남김
-    # 통장 방식에서는 마지막 행의 '기존리오더'가 현재의 최종 미입고 수량입니다.
+    # 최신 잔액행만 추출
     grouped = df_log.sort_values('날짜_dt').drop_duplicates('key', keep='last').copy()
     
-    # 미입고 히스토리 대신 최근 메모들을 결합하여 노출 (최근 5개)
     memo_map = df_log.groupby('key')['메모'].apply(
         lambda x: " / ".join([str(i).strip() for i in x.tail(5) if str(i).strip() not in ["", "None", "nan"]])
     ).to_dict()
@@ -445,11 +440,11 @@ def render_step6():
     grouped['최종메모'] = grouped['key'].map(memo_map)
 
     # 필터링
-    filtered_grouped = grouped[grouped['최종잔량'] > 0].copy() # 잔량 있는 것만
+    filtered_grouped = grouped[grouped['최종잔량'] > 0].copy()
     if sel_s: filtered_grouped = filtered_grouped[filtered_grouped['상품명'].str.contains(sel_s, case=False)]
     if sel_v != "전체 공급처": filtered_grouped = filtered_grouped[filtered_grouped['공급처'] == sel_v]
 
-    # [3] 🏢 업체별 요약 (수량 옆으로 배치 - 원본 디자인 유지)
+    # [3] 🏢 업체별 요약 (🚨 TOP 3 상품명 통합 로직 적용)
     st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
     v_sum = filtered_grouped.groupby('공급처')['최종잔량'].sum().reset_index()
     v_sum = v_sum.sort_values('최종잔량', ascending=False)
@@ -462,18 +457,22 @@ def render_step6():
                 with v_cols[i]:
                     st.metric(v_name, f"{int(row['최종잔량'])}개 잔량")
                     
+                    # 🚨 [핵심 수정] 옵션 무시하고 '상품명'으로만 합산해서 TOP 3 추출
                     v_items = filtered_grouped[filtered_grouped['공급처'] == v_name]
-                    v_top = v_items.sort_values('최종잔량', ascending=False).head(3)
+                    v_top_merged = v_items.groupby('상품명')['최종잔량'].sum().sort_values(ascending=False).head(3)
                     
-                    st.caption("🔥 TOP 3 상품")
-                    for rank, (_, r) in enumerate(v_top.iterrows()):
-                        # 상품명 바로 옆에 수량을 붙여서 공간 절약
-                        st.markdown(f"{rank+1}. {r['상품명']} **({int(r['최종잔량'])}장)**")
+                    st.caption("🔥 TOP 3 상품 (통합)")
+                    if not v_top_merged.empty:
+                        for rank, (s_name, s_qty) in enumerate(v_top_merged.items()):
+                            # 중복 없는 상품명과 통합 수량 표시
+                            st.markdown(f"{rank+1}. {s_name} **({int(s_qty)}장)**")
+                    else:
+                        st.write("데이터 없음")
                     st.write("") 
 
     st.divider()
 
-    # [4] 상세 표 및 엑셀 다운로드
+    # [4] 상세 표 (기존 유지)
     display_df = filtered_grouped.sort_values(by=['날짜_dt', '최종잔량'], ascending=[False, False])
     target_cols = ['날짜', '공급처', '상품명', '옵션', '최종잔량', '추가발주', '입고수량', '최종메모']
     
@@ -483,7 +482,6 @@ def render_step6():
         hide_index=True
     )
 
-    # 엑셀 다운로드 (기능 유지)
     import io
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -494,6 +492,8 @@ def render_step6():
         file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
         use_container_width=True
     )
+
+render_step6()
 
 
 # ------------------------------------------------------------------
