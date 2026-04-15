@@ -140,7 +140,7 @@ if up_file is not None:
             st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
 
 # ------------------------------------------------------------------
-# 2️⃣단계 & 3️⃣단계: 데이터가 로드된 상태(df_raw가 세션에 있을 때)에서만 노출
+# 2️⃣단계: 매핑 설정 (변수 유실 방지 처리)
 # ------------------------------------------------------------------
 if 'df_raw' in st.session_state:
     st.divider()
@@ -150,20 +150,21 @@ if 'df_raw' in st.session_state:
     st.subheader("⚙️ 2️⃣단계: 매핑 설정")
     c1, c2 = st.columns(2)
     with c1:
-        sold_out = st.selectbox("1. 품절 여부", cols, index=find_idx(cols, ['품절']))
-        vendor = st.selectbox("2. 공급처(업체명)", cols, index=find_idx(cols, ['공급처', '업체']))
-        item = st.selectbox("3. 상품명", cols, index=find_idx(cols, ['상품명', '품명']))
-        option = st.selectbox("4. 옵션", cols, index=find_idx(cols, ['옵션', '규격']))
-        v_item_col = st.selectbox("5. 공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']))
+        # 🚨 key를 지정하여 세션에 자동 저장되도록 보강
+        sold_out = st.selectbox("1. 품절 여부", cols, index=find_idx(cols, ['품절']), key="sel_so")
+        vendor = st.selectbox("2. 공급처(업체명)", cols, index=find_idx(cols, ['공급처', '업체']), key="sel_vn")
+        item = st.selectbox("3. 상품명", cols, index=find_idx(cols, ['상품명', '품명']), key="sel_it")
+        option = st.selectbox("4. 옵션", cols, index=find_idx(cols, ['옵션', '규격']), key="sel_op")
+        v_item_col = st.selectbox("5. 공급처 상품명", cols, index=find_idx(cols, ['공급처상품명']), key="sel_vi")
     with c2:
-        reg_date = st.selectbox("6. 등록일", cols, index=find_idx(cols, ['등록일']))
-        stock = st.selectbox("7. 정상재고", cols, index=find_idx(cols, ['정상재고']))
-        avail = st.selectbox("8. 가용재고", cols, index=find_idx(cols, ['가용재고', '현재고']))
-        t3d = st.selectbox("9. 3일 발주합계", cols, index=find_idx(cols, ['3일']))
-        t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']))
+        reg_date = st.selectbox("6. 등록일", cols, index=find_idx(cols, ['등록일']), key="sel_rd")
+        stock = st.selectbox("7. 정상재고", cols, index=find_idx(cols, ['정상재고']), key="sel_st")
+        avail = st.selectbox("8. 가용재고", cols, index=find_idx(cols, ['가용재고', '현재고']), key="sel_av")
+        t3d = st.selectbox("9. 3일 발주합계", cols, index=find_idx(cols, ['3일']), key="sel_t3")
+        t1w = st.selectbox("10. 7일 발주합계", cols, index=find_idx(cols, ['7일', '1주']), key="sel_t7")
 
 # ------------------------------------------------------------------
-# 3️⃣단계: 분석 설정 및 실행 (4/6단계 수량 동기화 및 에러 방지 통합본)
+# 3️⃣단계: 분석 설정 및 실행 (변수 참조 에러 완벽 해결 버전)
 # ------------------------------------------------------------------
 st.divider()
 st.subheader("⚙️ 3️⃣단계: 분석 설정 및 실행")
@@ -174,16 +175,26 @@ with clt: lt = st.number_input("리드타임 (일)", value=10)
 with css: ss = st.number_input("안전재고 (일 수)", value=7)
 
 if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary", use_container_width=True):
-    # 🚨 [중요] 사장님의 Selectbox 변수명과 일치시키기 위해 세션에서 직접 가져옵니다.
-    # 만약 변수명이 다르면 여기서 에러가 날 수 있으니, 상단 selectbox의 key값들을 확인해야 합니다.
     try:
-        st.session_state.p = {
-            'so': sold_out, 'it': item, 'op': option, 'vn': vendor, 'vi': v_item_col,
-            'av': avail, 't3': t3d, 't7': t1w, 'lt': lt, 'ss': ss, 'rd': reg_date
+        # 🚨 [해결] 변수가 직접 참조 안될 경우를 대비해 세션(st.session_state)에서 직접 꺼내옵니다.
+        p_map = {
+            'so': st.session_state.get('sel_so'),
+            'it': st.session_state.get('sel_it'),
+            'op': st.session_state.get('sel_op'),
+            'vn': st.session_state.get('sel_vn'),
+            'vi': st.session_state.get('sel_vi'),
+            'av': st.session_state.get('sel_av'),
+            't3': st.session_state.get('sel_t3'),
+            't7': st.session_state.get('sel_t7'),
+            'rd': st.session_state.get('sel_rd'),
+            'lt': lt,
+            'ss': ss
         }
+        
+        # 세션에 파라미터 저장
+        st.session_state.p = p_map
 
         with st.spinner("📊 발주기록 시트 분석 및 잔량 계산 중..."):
-            # 이전 분석 기록 삭제 (새로고침용)
             if 'db_history' in st.session_state: del st.session_state.db_history
             if 'master_log' in st.session_state: del st.session_state.master_log
 
@@ -191,7 +202,6 @@ if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary
             today = datetime.now(KST).date()
             sh = get_sheet()
             
-            # 시트 데이터 정리 함수
             def get_clean_df(name):
                 ws = sh.worksheet(name)
                 data = ws.get_all_values()
@@ -200,73 +210,57 @@ if st.button("🚀 분석 실행 / 실시간 장부 업데이트", type="primary
                     return res.loc[:, ~res.columns.duplicated()]
                 return pd.DataFrame()
 
-            # [A] 발주기록 시트 로드 및 "누적 미입고 잔량" 계산
+            # [A] 발주기록 시트 분석 (공급처/상품명/옵션별 누적 계산)
             df_master = get_clean_df("발주기록")
             st.session_state.master_log = df_master 
 
             r_map = {}
             if not df_master.empty:
-                # 🚨 시트의 컬럼명 (사장님 시트 제목과 일치해야 함)
+                # 시트 기준 컬럼명 (변동 불가 고정값)
                 vn_c, it_c, op_c, q_c, in_c = '공급처', '상품명', '옵션', '추가발주', '입고수량'
                 
-                # 숫자 변환
                 for col in [q_c, in_c]:
                     if col in df_master.columns:
                         df_master[col] = pd.to_numeric(df_master[col], errors='coerce').fillna(0)
                 
-                # 🚨 핵심: 공급처+상품명+옵션별로 (총 발주합계 - 총 입고합계) 계산
                 if all(c in df_master.columns for c in [vn_c, it_c, op_c]):
                     qty_sum = df_master.groupby([vn_c, it_c, op_c])[q_c].sum()
                     in_sum = df_master.groupby([vn_c, it_c, op_c])[in_c].sum()
-                    
-                    # 최종 잔량 계산 (0보다 작아지지 않게 clip)
-                    final_res = qty_sum.sub(in_sum, fill_value=0).clip(lower=0)
-                    r_map = final_res.to_dict()
+                    r_map = qty_sum.sub(in_sum, fill_value=0).clip(lower=0).to_dict()
 
-            # [B] 분석 계산 시작
-            df[avail] = pd.to_numeric(df[avail], errors='coerce').fillna(0).astype(int)
-            df[t1w] = pd.to_numeric(df[t1w], errors='coerce').fillna(0).astype(int)
-            
-            # 🚨 6단계와 동일한 수치를 가져오는 매칭 함수
-            def get_reorder_val(row):
-                k = (str(row[vendor]).strip(), str(row[item]).strip(), str(row[option]).strip())
-                return int(r_map.get(k, 0))
-            
-            # 4단계 표에 뿌려질 '기존리오더' 수치 (누적값)
-            df['기존리오더'] = df.apply(get_reorder_val, axis=1)
+            # [B] 실시간 분석 계산
+            # 매핑된 컬럼명들을 짧은 변수로 할당 (코드 가독성)
+            c_av, c_t7, c_vn, c_it, c_op, c_rd, c_so = p_map['av'], p_map['t7'], p_map['vn'], p_map['it'], p_map['op'], p_map['rd'], p_map['so']
 
-            # 일판매량 계산
-            def get_daily_avg(row):
+            df[c_av] = pd.to_numeric(df[c_av], errors='coerce').fillna(0).astype(int)
+            df[c_t7] = pd.to_numeric(df[c_t7], errors='coerce').fillna(0).astype(int)
+            
+            # 기존 리오더(미입고 총량) 매칭
+            df['기존리오더'] = df.apply(lambda row: int(r_map.get((str(row[c_vn]).strip(), str(row[c_it]).strip(), str(row[c_op]).strip()), 0)), axis=1)
+
+            # 일판매량 및 권장수량 계산
+            def calc_daily(row):
                 try:
-                    r_dt = pd.to_datetime(row[reg_date]).date()
-                    days = max(1, min((today - r_dt).days, 7))
-                    return int(round(pd.to_numeric(row[t1w]) / days, 0))
-                except: return int(round(pd.to_numeric(row[t1w]) / 7, 0))
+                    days = max(1, min((today - pd.to_datetime(row[c_rd]).date()).days, 7))
+                    return int(round(pd.to_numeric(row[c_t7]) / days, 0))
+                except: return int(round(pd.to_numeric(row[c_t7]) / 7, 0))
 
-            df['일판매량'] = df.apply(get_daily_avg, axis=1)
+            df['일판매량'] = df.apply(calc_daily, axis=1)
+            df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[c_av] + df['기존리오더'])).clip(lower=0).astype(int)
+            df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[c_so]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
             
-            # 🚨 정확한 권장수량 공식: (목표재고) - (현재고 + 이미 오고있는 미입고량)
-            df['권장발주수량'] = ((df['일판매량'] * (lt + ss)) - (df[avail] + df['기존리오더'])).clip(lower=0).astype(int)
-            
-            # 상태 분류
-            df['상태'] = df.apply(lambda r: "🚫 품절" if "품절" in str(r[sold_out]) else ("🚨 발주필요" if r['권장발주수량'] > 0 else "✅ 정상"), axis=1)
-            
-            # UI용 빈 컬럼 생성
+            # 기타 빈 컬럼
             df['입고차감'] = 0  
             df['추가발주'] = 0
             df['비고(처리내역)'] = "" 
             
-            # 결과 저장 및 리런
             st.session_state.df_final = df
             st.session_state.analyzed = True
-            st.success("✅ 분석 완료! 실시간 장부 합계가 반영되었습니다.")
+            st.success("✅ 분석 완료! 4단계와 6단계 수량이 동기화되었습니다.")
             st.rerun()
             
-    except NameError as e:
-        # 🚨 여기서 에러가 난다면 상단 Selectbox에서 정의한 변수명과 아래 이름들이 달라서 그렇습니다.
-        st.error(f"⚠️ 변수명 매칭 오류: {e}. 상단 컬럼 선택 상자의 변수명을 확인하세요.")
     except Exception as e:
-        st.error(f"⚠️ 기타 분석 오류: {e}")
+        st.error(f"⚠️ 분석 오류: {e}")
                 
                 
 # ------------------------------------------------------------------
