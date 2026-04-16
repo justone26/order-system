@@ -293,9 +293,8 @@ else:
 # 4️⃣단계: 입고 관리 및 최종 저장 (B 시스템: 분석 후에만 노출)
 # ------------------------------------------------------------------
 st.divider()
-st.header("📊 4단계: 데이터 분석 및 발주 체크") # 제목 상시 노출
+st.header("📊 4단계: 데이터 분석 및 발주 체크") 
 
-# [B 시스템 로직] 3단계에서 분석 버튼을 눌렀을 때만 아래 내용이 나타납니다.
 if st.session_state.get('analyzed'):
     p = st.session_state.p
     
@@ -304,7 +303,7 @@ if st.session_state.get('analyzed'):
     else:
         df_all = st.session_state.df_final.copy()
 
-        # 컬럼 보정 (기존 로직 유지)
+        # 컬럼 보정
         for col in ['기존리오더', '입고차감', '추가발주', '일판매량', '권장발주수량', '비고(처리내역)', '상태']:
             if col not in df_all.columns:
                 df_all[col] = 0 if any(x in col for x in ['수량', '리오더', '차감', '발주']) else ""
@@ -316,7 +315,7 @@ if st.session_state.get('analyzed'):
         with f2: 
             s_query = st.text_input("🔍 검색 (상품명/옵션)", key="s_query_4")
 
-        # 필터링 적용
+        # 필터링 적용 로직
         df_temp = df_all.copy()
         if f_mode == "🚨 발주필요(세트)":
             need_items = df_temp[(df_temp['상태'] != "🚫 품절") & (df_temp['권장발주수량'] > 0)][p['it']].unique()
@@ -333,7 +332,7 @@ if st.session_state.get('analyzed'):
                      '일판매량', '권장발주수량', '비고(처리내역)']
         disp_cols = [c for c in full_cols if c in df_temp.columns]
         
-        # 에디터 폼 (기존 UI 유지)
+        # 에디터 폼
         with st.form("final_form"):
             edited_df = st.data_editor(
                 df_temp[disp_cols], 
@@ -353,12 +352,12 @@ if st.session_state.get('analyzed'):
             )
             btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
-        # 저장 로직 (사장님의 오버 입고 방지 로직 100% 유지)
+        # --- 저장 로직 시작 ---
         if btn_save:
             changed_rows = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0) | (edited_df['비고(처리내역)'].str.strip() != "")].copy()
             
             if not changed_rows.empty:
-                with st.spinner("🚀 장부 업데이트 및 동기화 중..."):
+                with st.spinner("🚀 장부 업데이트 및 하위 단계 동기화 중..."):
                     try:
                         sh = get_sheet()
                         ws_qty = sh.worksheet("발주기록")
@@ -372,7 +371,7 @@ if st.session_state.get('analyzed'):
                             i_val = int(r['입고차감'])
                             user_memo = str(r['비고(처리내역)']).strip() if r['비고(처리내역)'] and str(r['비고(처리내역)']) != "None" else ""
                             
-                            # 🚨 오버 입고 보정 (사장님 원본 로직)
+                            # 오버 입고 보정
                             bal_after_in = max(0, int(r['기존리오더']) - i_val)
                             final_balance = bal_after_in + q_val
                             
@@ -386,25 +385,32 @@ if st.session_state.get('analyzed'):
                             rows_qty.append([now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], final_balance, q_val, i_val, final_memo])
                             rows_hist.append([now_s, r[p['vn']], r[p['it']], r[p['op']], r[p['vi']], r[p['av']], r['기존리오더'], i_val, q_val, r['권장발주수량'], final_memo])
 
-                            # 세션 동기화 (화면 즉시 반영)
+                            # 4단계 화면 즉시 반영을 위한 세션 동기화
                             mask = (st.session_state.df_final[p['it']] == r[p['it']]) & (st.session_state.df_final[p['op']] == r[p['op']])
                             st.session_state.df_final.loc[mask, '기존리오더'] = final_balance
                             st.session_state.df_final.loc[mask, '입고차감'] = 0
                             st.session_state.df_final.loc[mask, '추가발주'] = 0
 
+                        # 실제 구글 시트 전송
                         if rows_qty: ws_qty.append_rows(rows_qty, value_input_option='USER_ENTERED')
                         if rows_hist: ws_hist.append_rows(rows_hist, value_input_option='USER_ENTERED')
                         
+                        # 🚨 [추가된 핵심 코드] 액션 발생 시 5, 6단계 강제 업데이트 준비
+                        if "db_history" in st.session_state:
+                            del st.session_state.db_history # 5단계 캐시 삭제
+                        if "df_log_6" in st.session_state:
+                            del st.session_state.df_log_6   # 6단계 캐시 삭제
+                        
                         st.cache_data.clear()
-                        st.success(f"✅ 저장 완료!")
+                        st.success(f"✅ 저장 완료! 현황판(6단계) 및 히스토리(5단계)가 최신 상태로 준비되었습니다.")
                         time.sleep(1)
-                        st.rerun()
+                        st.rerun() # 페이지 리런으로 변경사항 전역 반영
+                        
                     except Exception as e:
                         st.error(f"저장 중 오류: {e}")
             else:
                 st.warning("⚠️ 변경 내역이 없습니다.")
 else:
-    # 분석 전 안내
     st.info("3단계에서 [분석 실행] 버튼을 누르면 분석 결과가 이곳에 표시됩니다.")
 
 
