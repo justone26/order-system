@@ -434,7 +434,7 @@ else:
 
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 리오더 현황판 (중복 컬럼 에러 방지 수정본)
+# 6️⃣단계: 리오더 현황판 (공급처 복구 및 공급처상품명 위치 수정본)
 # ------------------------------------------------------------------
 def render_step6():
     st.markdown("---")
@@ -451,21 +451,15 @@ def render_step6():
                         data = ws_qty.get_all_values()
                         
                         if len(data) > 1:
-                            raw_headers = [h.strip() for h in data[0]]
-                            df_log = pd.DataFrame(data[1:], columns=raw_headers)
+                            headers = [h.strip() for h in data[0]]
+                            df_log = pd.DataFrame(data[1:], columns=headers)
+                            df_log = df_log.loc[:, ~df_log.columns.duplicated()] # 중복방어
                             
-                            # 중복 컬럼 물리적 제거 (데이터프레임 생성 직후 실행)
-                            df_log = df_log.loc[:, ~df_log.columns.duplicated()]
-                            
-                            # 이름 불일치 교정
-                            rename_map = {}
-                            for col in df_log.columns:
-                                if col in ['공급처명', '제조사', '업체명']: rename_map[col] = '공급처상품명'
-                                if col in ['상품명(표기)', '아이템명']: rename_map[col] = '상품명'
-                                if col in ['입고차감', '입고수량']: rename_map[col] = '입고수량'
-                            
-                            if rename_map:
-                                df_log.rename(columns=rename_map, inplace=True)
+                            # 🚨 [중요] 컬럼명 매핑 - '공급처'는 그대로 두고 '공급처명'만 '공급처상품명'으로 변경
+                            if '공급처명' in df_log.columns:
+                                df_log.rename(columns={'공급처명': '공급처상품명'}, inplace=True)
+                            if '상품명(표기)' in df_log.columns:
+                                df_log.rename(columns={'상품명(표기)': '상품명'}, inplace=True)
                             
                             for col in ['기존리오더', '추가발주', '입고수량']:
                                 if col in df_log.columns:
@@ -493,12 +487,12 @@ def render_step6():
     with c2:
         sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_compact")
     with c3:
-        # 컬럼 존재 여부 체크
-        v_col_name = '공급처상품명' if '공급처상품명' in df_log.columns else df_log.columns[1]
-        v_list = ["전체 공급처"] + sorted(df_log[v_col_name].unique().tolist())
+        # 필터 기준은 '공급처' (0.퍼스트플로어 등)
+        v_col = '공급처' if '공급처' in df_log.columns else df_log.columns[1]
+        v_list = ["전체 공급처"] + sorted(df_log[v_col].unique().tolist())
         sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_compact")
 
-    # [2] 데이터 그룹화
+    # [2] 데이터 그룹화 로직
     def c_func(t): return "".join(str(t).split()).upper()
     col_it = '상품명' if '상품명' in df_log.columns else df_log.columns[2]
     col_op = '옵션' if '옵션' in df_log.columns else df_log.columns[3]
@@ -514,56 +508,37 @@ def render_step6():
     grouped['최종잔량'] = grouped['기존리오더']
     grouped['최종메모'] = grouped['key'].map(memo_map)
 
+    # 필터 적용
     filtered = grouped[grouped['최종잔량'] > 0].copy()
     if sel_s: filtered = filtered[filtered[col_it].str.contains(sel_s, case=False, na=False)]
-    if sel_v != "전체 공급처": filtered = filtered[filtered[v_col_name] == sel_v]
+    if sel_v != "전체 공급처": filtered = filtered[filtered[v_col] == sel_v]
 
-    # [3] 업체별 요약 메트릭
-    st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
-    v_sum = filtered.groupby(v_col_name)['최종잔량'].sum().reset_index().sort_values('최종잔량', ascending=False)
-    
-    if not v_sum.empty:
-        v_cols = st.columns(min(len(v_sum), 4))
-        for i, (idx, row) in enumerate(v_sum.iterrows()):
-            if i < 4:
-                v_name = row[v_col_name]
-                with v_cols[i]:
-                    st.metric(v_name, f"{int(row['최종잔량'])}개 잔량")
-                    v_items = filtered[filtered[v_col_name] == v_name]
-                    v_top_merged = v_items.groupby(col_it)['최종잔량'].sum().sort_values(ascending=False).head(3)
-                    if not v_top_merged.empty:
-                        for rank, (s_name, s_qty) in enumerate(v_top_merged.items()):
-                            st.markdown(f"{rank+1}. {s_name} **({int(s_qty)}장)**")
-
+    st.markdown(f"#### 🏢 현재 미입고 품목 (총 {len(filtered)}개)")
     st.divider()
 
-    # [4] 상세 표 출력 (중복 컬럼 방어 로직 핵심)
+    # [3] 상세 표 출력 (순서 고정 로직)
     display_df = filtered.sort_values(by=['날짜_dt', '최종잔량'], ascending=[False, False])
     
-    # 순서를 정하되, 실제 존재하는 컬럼이 중복되어 들어가지 않게 처리
-    target_display = ['날짜', v_col_name, col_it, '옵션', '최종잔량', '추가발주', '입고수량', '최종메모']
+    # 🚨 사장님 요청 순서: 날짜 | 공급처 | 상품명 | 옵션 | 공급처상품명 | 최종잔량
+    target_display = ['날짜', '공급처', '상품명', '옵션', '공급처상품명', '최종잔량', '추가발주', '입고수량', '최종메모']
     
-    # 🚨 중복 제거하여 컬럼 리스트 생성
+    # 실제 데이터에 있는 컬럼만 순서대로 추출 (중복 없이)
     final_cols = []
     for c in target_display:
         if c in display_df.columns and c not in final_cols:
             final_cols.append(c)
-    
-    # 렌더링 전 최종적으로 데이터프레임 컬럼 중복 확인 및 제거
-    display_df = display_df[final_cols]
-    display_df = display_df.loc[:, ~display_df.columns.duplicated()]
-
+            
     st.dataframe(
-        display_df.rename(columns={'최종메모': '최근 처리내역(메모)'}), 
+        display_df[final_cols].rename(columns={'최종메모': '최근 처리내역(메모)'}), 
         use_container_width=True, 
         hide_index=True
     )
 
-    # [5] 엑셀 다운로드
+    # [4] 엑셀 다운로드
     import io
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        display_df.to_excel(writer, index=False, sheet_name='리오더현황')
+        display_df[final_cols].to_excel(writer, index=False, sheet_name='리오더현황')
     st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), 
                        file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
                        use_container_width=True, key="btn_6_dl_final")
