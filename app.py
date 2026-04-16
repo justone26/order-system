@@ -549,23 +549,23 @@ def render_step6():
 
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (B 시스템: 수동 조회 방식)
+# 5️⃣단계: 전체 히스토리 기록 (B 시스템: 실시간 회차 반영 버전)
 # ------------------------------------------------------------------
 st.divider()
 st.header("📜 5단계: 전체 히스토리 기록")
 
-# [B 시스템 로직] 조회 조건 UI는 항상 노출
+# 1. 상단 필터 레이아웃
 c1, c2, c3 = st.columns([1.5, 1.5, 1.2]) 
 with c1: 
     today_val = datetime.now(KST).date()
     sel_dates_5 = st.date_input("📅 조회 날짜 범위", [today_val, today_val], key="h_date_vSplit_final")
 with c2: 
     h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_vSplit_final")
-with c3:
-    # 데이터 로드 전에는 회차 선택을 잠시 비워둠
-    h_time_5 = st.selectbox("⏰ 저장 회차 선택", ["전체 회차"], key="h_time_vSplit_final")
 
-# [🚨 핵심] 수동 조회 버튼
+# 🚨 핵심: 회차 선택 셀렉트박스가 들어갈 자리를 미리 예약해둠
+time_select_place = c3.empty() 
+
+# 2. 수동 조회 버튼
 if st.button("🔍 히스토리 데이터 불러오기", use_container_width=True, type="secondary"):
     try:
         with st.spinner("⏳ 구글 시트에서 히스토리 기록을 가져오는 중..."):
@@ -578,13 +578,9 @@ if st.button("🔍 히스토리 데이터 불러오기", use_container_width=Tru
                 h_df = pd.DataFrame(raw_data[1:], columns=cols_5)
                 h_df = h_df.loc[:, ~h_df.columns.duplicated()]
                 
-                # 컬럼명 통일 (기존 로직 유지)
-                if '메모' in h_df.columns:
-                    h_df.rename(columns={'메모': '비고(처리내역)'}, inplace=True)
-                elif '비고' in h_df.columns:
-                    h_df.rename(columns={'비고': '비고(처리내역)'}, inplace=True)
+                if '메모' in h_df.columns: h_df.rename(columns={'메모': '비고(처리내역)'}, inplace=True)
+                elif '비고' in h_df.columns: h_df.rename(columns={'비고': '비고(처리내역)'}, inplace=True)
                 
-                # 세션에 저장 (이 데이터가 있어야 아래 표가 나타남)
                 st.session_state.db_history = h_df
                 st.rerun()
             else:
@@ -592,11 +588,11 @@ if st.button("🔍 히스토리 데이터 불러오기", use_container_width=Tru
     except Exception as e:
         st.error(f"히스토리 로드 실패: {e}")
 
-# [데이터 노출 로직] 세션에 데이터가 있을 때만 필터링 및 표 출력
+# 3. 데이터 노출 및 필터링 로직
 if "db_history" in st.session_state and not st.session_state.db_history.empty:
     m_df_5 = st.session_state.db_history.copy()
     
-    # 날짜 처리 (기존 로직 유지)
+    # 날짜 처리
     d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
     m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
     m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
@@ -608,22 +604,22 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
         s_date = sel_dates_5[0] if isinstance(sel_dates_5, (list, tuple)) else sel_dates_5
         period_df = m_df_5[m_df_5['날짜_only'] == s_date]
 
-    # 회차 선택 업데이트 (데이터 로드 후 실제 회차 반영)
+    # 🚨 [수정 포인트] 불러온 데이터에서 실시간 회차 목록 추출하여 예약된 자리에 배치
     t_opts = ["전체 회차"] + sorted(period_df['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
-    # st.selectbox를 다시 그리거나 세션을 활용해 값 유지 가능 (여기선 기존 UI 유지)
+    h_time_5 = time_select_place.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_vSplit_final")
 
+    # 검색 및 회차 필터 적용
     df_dis = period_df.copy()
     if h_name_5: 
         df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
     if h_time_5 != "전체 회차": 
         df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
-    # 최종 노출 데이터 정렬
+    # 최종 노출 데이터 정렬 및 출력
     final_dis_df = df_dis.sort_values(by='날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore')
-    
     st.dataframe(final_dis_df, use_container_width=True, hide_index=True)
 
-    # 엑셀 다운로드 (기존 로직 유지)
+    # 엑셀 다운로드
     import io
     output_h = io.BytesIO()
     with pd.ExcelWriter(output_h, engine='xlsxwriter') as writer:
@@ -637,13 +633,12 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
         key="btn_download_h5"
     )
 else:
-    st.info("💡 [히스토리 데이터 불러오기] 버튼을 누르면 과거 기록이 표시됩니다.")
+    # 데이터 로드 전에는 비활성화된 셀렉트박스 표시
+    time_select_place.selectbox("⏰ 저장 회차 선택", ["전체 회차"], key="h_time_vSplit_final", disabled=True)
+    st.info("💡 [히스토리 데이터 불러오기] 버튼을 누르면 오늘 저장한 회차 정보를 포함한 기록이 표시됩니다.")
 
 # 6단계 호출
 render_step6()
-
-
-
 
 
 
