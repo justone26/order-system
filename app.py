@@ -628,24 +628,6 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
 
     final_dis_df = df_dis.sort_values(by='날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore')
     st.dataframe(final_dis_df, use_container_width=True, hide_index=True)
-
-    # 🚨 5단계 히스토리용 컬럼 너비 설정 (핵심: 비고 대폭 확장)
-    st.dataframe(
-        final_dis_df, 
-        use_container_width=True, 
-        hide_index=True,
-        column_config={
-            "발주시간": st.column_config.TextColumn("발주시간", width=120),
-            "날짜": st.column_config.TextColumn("날짜", width=100),
-            "공급처": st.column_config.TextColumn("공급처", width=100),
-            "상품명": st.column_config.TextColumn("상품명", width=200),
-            "옵션": st.column_config.TextColumn("옵션", width=80),
-            "공급처상품명": st.column_config.TextColumn("공급처상품명", width=200),
-            "최종잔량": st.column_config.NumberColumn("최종잔량", width=70),
-            "비고(처리내역)": st.column_config.TextColumn("비고(처리내역)", width=600), # 👈 이 부분을 가장 넓게!
-            "권장수량": st.column_config.NumberColumn("권장수량", width=70),
-        }
-    )
     
     import io
     output_h = io.BytesIO()
