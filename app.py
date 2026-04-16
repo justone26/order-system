@@ -536,8 +536,10 @@ def render_step6():
 
     st.divider()
 
-    # [4] 상세 데이터 표 (순서 및 너비 고정)
+   # [4] 상세 데이터 표 (사장님 요청 셀 간격 정밀 조정)
     display_df = filtered.sort_values(by=['날짜_dt', '최종잔량'], ascending=[False, False])
+    
+    # 컬럼 순서 고정
     target_display = ['날짜', '공급처', '상품명', '옵션', '공급처상품명', '최종잔량', '추가발주', '입고수량', '최종메모']
     final_cols = [c for c in target_display if c in display_df.columns]
 
@@ -546,15 +548,17 @@ def render_step6():
         use_container_width=True, 
         hide_index=True,
         column_config={
-            "날짜": st.column_config.TextColumn("날짜", width=100),
-            "공급처": st.column_config.TextColumn("공급처", width=100),
-            "상품명": st.column_config.TextColumn("상품명", width=250),
-            "옵션": st.column_config.TextColumn("옵션", width=100),
-            "공급처상품명": st.column_config.TextColumn("공급처상품명", width=250),
-            "최종잔량": st.column_config.NumberColumn("최종잔량", width=80, format="%d"),
-            "추가발주": st.column_config.NumberColumn("추가발주", width=80),
-            "입고수량": st.column_config.NumberColumn("입고수량", width=80),
-            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=550), # 가장 넓게
+            # 캡처본 비율에 맞춰 핵심 외에는 타이트하게, 메모는 시원하게!
+            "날짜": st.column_config.TextColumn("날짜", width=80),
+            "공급처": st.column_config.TextColumn("공급처", width=80),
+            "상품명": st.column_config.TextColumn("상품명", width=200),
+            "옵션": st.column_config.TextColumn("옵션", width=80),
+            "공급처상품명": st.column_config.TextColumn("공급처상품명", width=200),
+            "최종잔량": st.column_config.NumberColumn("최종잔량", width=60, format="%d"),
+            "추가발주": st.column_config.NumberColumn("추가발주", width=60),
+            "입고수량": st.column_config.NumberColumn("입고수량", width=60),
+            # 사장님이 강조하신 메모 영역!
+            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=600), 
         }
     )
 
