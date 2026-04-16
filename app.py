@@ -382,88 +382,6 @@ if st.session_state.get('analyzed'):
         else:
             st.warning("⚠️ 변경 내역이 없습니다.")
 
-# ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (엑셀 다운로드 추가 버전)
-# ------------------------------------------------------------------
-st.divider()
-st.header("📜 5단계: 전체 히스토리 기록")
-
-# 데이터 로드 (분석 여부와 상관없이 항상 수행)
-try:
-    with st.spinner("⏳ 히스토리 기록 불러오는 중..."):
-        sh = get_sheet()
-        ws_hist = sh.worksheet("히스토리")
-        raw_data = ws_hist.get_all_values()
-        
-        if len(raw_data) > 1:
-            cols_5 = [c.strip() for c in raw_data[0]]
-            h_df = pd.DataFrame(raw_data[1:], columns=cols_5)
-            h_df = h_df.loc[:, ~h_df.columns.duplicated()]
-            if '메모' in h_df.columns:
-                h_df.rename(columns={'메모': '비고(처리내역)'}, inplace=True)
-            elif '비고' in h_df.columns:
-                h_df.rename(columns={'비고': '비고(처리내역)'}, inplace=True)
-            st.session_state.db_history = h_df
-        else:
-            st.session_state.db_history = pd.DataFrame()
-except Exception as e:
-    st.error(f"히스토리 로드 실패: {e}")
-    st.session_state.db_history = pd.DataFrame()
-
-m_df_5 = st.session_state.get('db_history', pd.DataFrame()).copy()
-
-if not m_df_5.empty:
-    d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
-    m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
-    m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
-    
-    c1, c2, c3 = st.columns([1.5, 1.5, 1.2]) 
-    with c1: 
-        today_val = datetime.now(KST).date()
-        sel_dates_5 = st.date_input("📅 조회 날짜 범위", [today_val, today_val], key="h_date_vSplit_final")
-    
-    if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
-        period_df = m_df_5[(m_df_5['날짜_only'] >= sel_dates_5[0]) & (m_df_5['날짜_only'] <= sel_dates_5[1])]
-    else:
-        s_date = sel_dates_5[0] if isinstance(sel_dates_5, (list, tuple)) else sel_dates_5
-        period_df = m_df_5[m_df_5['날짜_only'] == s_date]
-
-    with c2: h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_vSplit_final")
-    with c3:
-        t_opts = ["전체 회차"] + sorted(period_df['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
-        h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_vSplit_final")
-
-    df_dis = period_df.copy()
-    if h_name_5: 
-        df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
-    if h_time_5 != "전체 회차": 
-        df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
-
-    # 최종 노출 데이터 (날짜순 정렬)
-    final_dis_df = df_dis.sort_values(by='날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore')
-    
-    st.dataframe(final_dis_df, use_container_width=True, hide_index=True)
-
-    # 🚨 [추가] 5단계 엑셀 다운로드 버튼
-    import io
-    output_h = io.BytesIO()
-    with pd.ExcelWriter(output_h, engine='xlsxwriter') as writer:
-        final_dis_df.to_excel(writer, index=False, sheet_name='히스토리기록')
-    
-    st.download_button(
-        label="📥 조회된 히스토리 엑셀 다운로드", 
-        data=output_h.getvalue(), 
-        file_name=f"히스토리_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
-        use_container_width=True,
-        key="btn_download_h5" # 중복 방지 키
-    )
-
-else:
-    st.info("현재 조회된 히스토리 기록이 없습니다.")
-
-# 6단계 호출
-render_step6()
-
 
 # ------------------------------------------------------------------
 # 6️⃣단계: 리오더 현황판 (상시 노출 버전)
@@ -570,3 +488,89 @@ def render_step6():
         file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
         use_container_width=True
     )
+
+
+
+# ------------------------------------------------------------------
+# 5️⃣단계: 전체 히스토리 기록 (엑셀 다운로드 추가 버전)
+# ------------------------------------------------------------------
+st.divider()
+st.header("📜 5단계: 전체 히스토리 기록")
+
+# 데이터 로드 (분석 여부와 상관없이 항상 수행)
+try:
+    with st.spinner("⏳ 히스토리 기록 불러오는 중..."):
+        sh = get_sheet()
+        ws_hist = sh.worksheet("히스토리")
+        raw_data = ws_hist.get_all_values()
+        
+        if len(raw_data) > 1:
+            cols_5 = [c.strip() for c in raw_data[0]]
+            h_df = pd.DataFrame(raw_data[1:], columns=cols_5)
+            h_df = h_df.loc[:, ~h_df.columns.duplicated()]
+            if '메모' in h_df.columns:
+                h_df.rename(columns={'메모': '비고(처리내역)'}, inplace=True)
+            elif '비고' in h_df.columns:
+                h_df.rename(columns={'비고': '비고(처리내역)'}, inplace=True)
+            st.session_state.db_history = h_df
+        else:
+            st.session_state.db_history = pd.DataFrame()
+except Exception as e:
+    st.error(f"히스토리 로드 실패: {e}")
+    st.session_state.db_history = pd.DataFrame()
+
+m_df_5 = st.session_state.get('db_history', pd.DataFrame()).copy()
+
+if not m_df_5.empty:
+    d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
+    m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
+    m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
+    
+    c1, c2, c3 = st.columns([1.5, 1.5, 1.2]) 
+    with c1: 
+        today_val = datetime.now(KST).date()
+        sel_dates_5 = st.date_input("📅 조회 날짜 범위", [today_val, today_val], key="h_date_vSplit_final")
+    
+    if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
+        period_df = m_df_5[(m_df_5['날짜_only'] >= sel_dates_5[0]) & (m_df_5['날짜_only'] <= sel_dates_5[1])]
+    else:
+        s_date = sel_dates_5[0] if isinstance(sel_dates_5, (list, tuple)) else sel_dates_5
+        period_df = m_df_5[m_df_5['날짜_only'] == s_date]
+
+    with c2: h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_vSplit_final")
+    with c3:
+        t_opts = ["전체 회차"] + sorted(period_df['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
+        h_time_5 = st.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_vSplit_final")
+
+    df_dis = period_df.copy()
+    if h_name_5: 
+        df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
+    if h_time_5 != "전체 회차": 
+        df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
+
+    # 최종 노출 데이터 (날짜순 정렬)
+    final_dis_df = df_dis.sort_values(by='날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore')
+    
+    st.dataframe(final_dis_df, use_container_width=True, hide_index=True)
+
+    # 🚨 [추가] 5단계 엑셀 다운로드 버튼
+    import io
+    output_h = io.BytesIO()
+    with pd.ExcelWriter(output_h, engine='xlsxwriter') as writer:
+        final_dis_df.to_excel(writer, index=False, sheet_name='히스토리기록')
+    
+    st.download_button(
+        label="📥 조회된 히스토리 엑셀 다운로드", 
+        data=output_h.getvalue(), 
+        file_name=f"히스토리_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
+        use_container_width=True,
+        key="btn_download_h5" # 중복 방지 키
+    )
+
+else:
+    st.info("현재 조회된 히스토리 기록이 없습니다.")
+
+# 6단계 호출
+render_step6()
+
+
