@@ -434,64 +434,68 @@ else:
 
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 리오더 현황판 (UI 레이아웃 + 현황판 + 간격 최적화)
+# 6️⃣단계: 리오더 현황판 (사장님 원본 레이아웃 + 현황판 + 간격 최적화)
 # ------------------------------------------------------------------
 def render_step6():
-    st.markdown("---")
-    st.markdown("### 📈 6단계: 실시간 리오더 현황판 ")
+    # 상단 제목 (사장님 캡처본 기준)
+    st.markdown("### 📈 6단계: 실시간 리오더 현황판 (상품별 통합)")
     
-    # [1] 상단 레이아웃 (캡처본 디자인 복구: 검색/필터는 왼쪽, 업데이트는 오른쪽)
-    c_search, c_filter, c_btn = st.columns([2, 1.5, 1])
+    # [1] 상단 컨트롤바 (캡처본 위치 그대로: 업데이트 | 검색 | 필터)
+    c_btn, c_search, c_filter = st.columns([1, 2, 1])
     
-    with c_search:
-        sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_final")
-    
-    # 데이터 로드 전이라도 필터와 버튼 자리는 유지
-    if "df_log_6" not in st.session_state or st.session_state.df_log_6 is None:
-        with c_filter:
-            st.selectbox("🏭 공급처 필터", ["전체 공급처"], key="s6_vendor_empty", disabled=True)
-        with c_btn:
-            st.markdown("<p style='margin-bottom: 25px;'></p>", unsafe_allow_html=True) # 높이 맞춤용
-            if st.button("🔄 데이터 로드", use_container_width=True, key="btn_load_step6"):
-                try:
-                    with st.spinner("⏳..."):
-                        sh = get_sheet()
-                        ws_qty = sh.worksheet("발주기록")
-                        data = ws_qty.get_all_values()
-                        if len(data) > 1:
-                            headers = [h.strip() for h in data[0]]
-                            df_log = pd.DataFrame(data[1:], columns=headers)
-                            df_log = df_log.loc[:, ~df_log.columns.duplicated()]
-                            
-                            if '공급처명' in df_log.columns:
-                                df_log.rename(columns={'공급처명': '공급처상품명'}, inplace=True)
-                            
-                            for col in ['기존리오더', '추가발주', '입고수량']:
-                                if col in df_log.columns:
-                                    df_log[col] = pd.to_numeric(df_log[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-                            
-                            d_col = next((c for c in df_log.columns if '날짜' in c or '시간' in c), df_log.columns[0])
-                            df_log['날짜_dt'] = pd.to_datetime(df_log[d_col], errors='coerce', format='mixed')
-                            st.session_state.df_log_6 = df_log
-                            st.rerun()
-                except Exception as e:
-                    st.error(f"오류: {e}")
-        return
-
-    # 데이터 로드 후 필터 및 업데이트 버튼 활성화
-    df_log = st.session_state.df_log_6.copy()
-    with c_filter:
-        v_col = '공급처' if '공급처' in df_log.columns else df_log.columns[1]
-        v_list = ["전체 공급처"] + sorted(df_log[v_col].unique().tolist())
-        sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_final")
     with c_btn:
-        st.markdown("<p style='margin-bottom: 25px;'></p>", unsafe_allow_html=True)
-        if st.button("🔄 업데이트", use_container_width=True, key="btn_update_final"):
+        st.write("🔄 데이터 갱신")
+        btn_update = st.button("최신 자료 업데이트", use_container_width=True, key="btn_update_final")
+        if btn_update:
             st.session_state.df_log_6 = None 
             st.cache_data.clear()
             st.rerun()
 
-    # [2] 데이터 가공 (중복 제거 및 메모 병합)
+    with c_search:
+        st.write("🔍 통합 상품명 검색")
+        sel_s = st.text_input("상품명을 입력하세요", label_visibility="collapsed", key="s6_search_final")
+
+    # 데이터 로드 로직
+    if "df_log_6" not in st.session_state or st.session_state.df_log_6 is None:
+        with c_filter:
+            st.write("🏭 공급처 필터")
+            st.selectbox("전체 공급처", ["전체 공급처"], label_visibility="collapsed", disabled=True)
+        
+        # 초기 로드 버튼 (업데이트 버튼과 동일 기능)
+        try:
+            with st.spinner("⏳ 데이터를 가져오는 중..."):
+                sh = get_sheet()
+                ws_qty = sh.worksheet("발주기록")
+                data = ws_qty.get_all_values()
+                if len(data) > 1:
+                    headers = [h.strip() for h in data[0]]
+                    df_log = pd.DataFrame(data[1:], columns=headers)
+                    df_log = df_log.loc[:, ~df_log.columns.duplicated()]
+                    
+                    if '공급처명' in df_log.columns:
+                        df_log.rename(columns={'공급처명': '공급처상품명'}, inplace=True)
+                    
+                    for col in ['기존리오더', '추가발주', '입고수량']:
+                        if col in df_log.columns:
+                            df_log[col] = pd.to_numeric(df_log[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                    
+                    d_col = next((c for c in df_log.columns if '날짜' in c or '시간' in c), df_log.columns[0])
+                    df_log['날짜_dt'] = pd.to_datetime(df_log[d_col], errors='coerce', format='mixed')
+                    st.session_state.df_log_6 = df_log
+                    st.rerun()
+        except Exception as e:
+            st.error(f"오류: {e}")
+        return
+
+    df_log = st.session_state.df_log_6.copy()
+    
+    with c_filter:
+        st.write("🏭 공급처 필터")
+        v_col = '공급처' if '공급처' in df_log.columns else df_log.columns[1]
+        v_list = ["전체 공급처"] + sorted(df_log[v_col].unique().tolist())
+        sel_v = st.selectbox("전체 공급처", v_list, label_visibility="collapsed", key="s6_vendor_final")
+
+    # [2] 데이터 가공
     def c_func(t): return "".join(str(t).split()).upper()
     col_it = '상품명' if '상품명' in df_log.columns else df_log.columns[2]
     col_op = '옵션' if '옵션' in df_log.columns else df_log.columns[3]
@@ -511,30 +515,30 @@ def render_step6():
     if sel_s: filtered = filtered[filtered[col_it].str.contains(sel_s, case=False, na=False)]
     if sel_v != "전체 공급처": filtered = filtered[filtered[v_col] == sel_v]
 
-    # [3] 현황판 복구 (Metric + TOP 3)
+    # [3] 업체별 미입고 및 주요 상품 현황판 (캡처본 디자인 복구)
     st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
     v_sum = filtered.groupby(v_col)['최종잔량'].sum().reset_index().sort_values('최종잔량', ascending=False)
     
     if not v_sum.empty:
-        v_cols = st.columns(min(len(v_sum), 4))
-        for i, (idx, row) in enumerate(v_sum.iterrows()):
-            if i < 4:
-                v_name = row[v_col]
-                with v_cols[i]:
-                    st.metric(v_name, f"{int(row['최종잔량'])}개 잔량")
-                    v_items = filtered[filtered[v_col] == v_name]
-                    v_top_merged = v_items.groupby(col_it)['최종잔량'].sum().sort_values(ascending=False).head(3)
-                    st.caption("🔥 TOP 3 상품")
-                    if not v_top_merged.empty:
-                        for rank, (s_name, s_qty) in enumerate(v_top_merged.items()):
-                            st.markdown(f"{rank+1}. {s_name} **({int(s_qty)}장)**")
+        # 3개씩 끊어서 한 줄에 표시 (캡처본처럼 널찍하게)
+        v_rows = v_sum.iloc[:3] # 상위 3개 업체
+        v_cols = st.columns(3)
+        for i, (idx, row) in enumerate(v_rows.iterrows()):
+            v_name = row[v_col]
+            with v_cols[i]:
+                st.markdown(f"**{v_name}**")
+                st.markdown(f"### {int(row['최종잔량'])}개 잔량")
+                st.caption("🔥 TOP 3 상품 (통합)")
+                v_items = filtered[filtered[v_col] == v_name]
+                v_top = v_items.groupby(col_it)['최종잔량'].sum().sort_values(ascending=False).head(3)
+                for rank, (s_name, s_qty) in enumerate(v_top.items()):
+                    st.write(f"{rank+1}. {s_name} **({int(s_qty)})**")
 
     st.divider()
 
-    # [4] 상세 표 출력 (순서 고정 + 사장님 요청 간격 고정)
+    # [4] 상세 데이터 표 (순서 및 너비 고정)
     display_df = filtered.sort_values(by=['날짜_dt', '최종잔량'], ascending=[False, False])
     target_display = ['날짜', '공급처', '상품명', '옵션', '공급처상품명', '최종잔량', '추가발주', '입고수량', '최종메모']
-    
     final_cols = [c for c in target_display if c in display_df.columns]
 
     st.dataframe(
@@ -550,18 +554,18 @@ def render_step6():
             "최종잔량": st.column_config.NumberColumn("최종잔량", width=80, format="%d"),
             "추가발주": st.column_config.NumberColumn("추가발주", width=80),
             "입고수량": st.column_config.NumberColumn("입고수량", width=80),
-            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=500), # 비고 내역 대폭 확장
+            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=550), # 가장 넓게
         }
     )
 
-    # [5] 엑셀 다운로드
+    # [5] 하단 엑셀 버튼
     import io
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         display_df[final_cols].to_excel(writer, index=False, sheet_name='리오더현황')
     st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), 
                        file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
-                       use_container_width=True, key="btn_6_dl_final")
+                       use_container_width=True)
     
 
 
