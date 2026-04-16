@@ -549,16 +549,16 @@ def render_step6():
         hide_index=True,
         column_config={
             # 캡처본 비율에 맞춰 핵심 외에는 타이트하게, 메모는 시원하게!
-            "날짜": st.column_config.TextColumn("날짜", width=80),
+            "날짜": st.column_config.TextColumn("날짜", width=100),
             "공급처": st.column_config.TextColumn("공급처", width=80),
-            "상품명": st.column_config.TextColumn("상품명", width=200),
+            "상품명": st.column_config.TextColumn("상품명", width=250),
             "옵션": st.column_config.TextColumn("옵션", width=80),
-            "공급처상품명": st.column_config.TextColumn("공급처상품명", width=200),
+            "공급처상품명": st.column_config.TextColumn("공급처상품명", width=250),
             "최종잔량": st.column_config.NumberColumn("최종잔량", width=60, format="%d"),
             "추가발주": st.column_config.NumberColumn("추가발주", width=60),
             "입고수량": st.column_config.NumberColumn("입고수량", width=60),
             # 사장님이 강조하신 메모 영역!
-            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=600), 
+            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=500), 
         }
     )
 
