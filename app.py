@@ -570,12 +570,11 @@ def render_step6():
 
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (B 시스템: 실시간 회차 반영 버전)
+# 5️⃣단계: 전체 히스토리 기록 (명칭 통일 버전)
 # ------------------------------------------------------------------
 st.divider()
 st.header("📜 5단계: 전체 히스토리 기록")
 
-# 1. 상단 필터 레이아웃
 c1, c2, c3 = st.columns([1.5, 1.5, 1.2]) 
 with c1: 
     today_val = datetime.now(KST).date()
@@ -583,10 +582,8 @@ with c1:
 with c2: 
     h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_vSplit_final")
 
-# 회차 선택 셀렉트박스 자리 예약
 time_select_place = c3.empty() 
 
-# 2. 수동 조회 버튼
 if st.button("🔍 히스토리 데이터 불러오기", use_container_width=True, type="secondary"):
     try:
         with st.spinner("⏳ 구글 시트에서 히스토리 기록을 가져오는 중..."):
@@ -599,7 +596,7 @@ if st.button("🔍 히스토리 데이터 불러오기", use_container_width=Tru
                 h_df = pd.DataFrame(raw_data[1:], columns=cols_5)
                 h_df = h_df.loc[:, ~h_df.columns.duplicated()]
                 
-                # 🚨 [수정] 명칭 통일: 공급처명 -> 공급처상품명
+                # 🚨 [수정] 공급처명 -> 공급처상품명 (이름만 변경)
                 if '공급처명' in h_df.columns:
                     h_df.rename(columns={'공급처명': '공급처상품명'}, inplace=True)
                 
@@ -608,33 +605,22 @@ if st.button("🔍 히스토리 데이터 불러오기", use_container_width=Tru
                 
                 st.session_state.db_history = h_df
                 st.rerun()
-            else:
-                st.info("장부에 히스토리 기록이 없습니다.")
     except Exception as e:
         st.error(f"히스토리 로드 실패: {e}")
 
-# 3. 데이터 노출 및 필터링 로직
 if "db_history" in st.session_state and not st.session_state.db_history.empty:
     m_df_5 = st.session_state.db_history.copy()
-    
     d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
     m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
     m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
     
-    if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
-        period_df = m_df_5[(m_df_5['날짜_only'] >= sel_dates_5[0]) & (m_df_5['날짜_only'] <= sel_dates_5[1])]
-    else:
-        s_date = sel_dates_5[0] if isinstance(sel_dates_5, (list, tuple)) else sel_dates_5
-        period_df = m_df_5[m_df_5['날짜_only'] == s_date]
-
+    period_df = m_df_5[(m_df_5['날짜_only'] >= sel_dates_5[0]) & (m_df_5['날짜_only'] <= sel_dates_5[1])]
     t_opts = ["전체 회차"] + sorted(period_df['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
     h_time_5 = time_select_place.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_vSplit_final")
 
     df_dis = period_df.copy()
-    if h_name_5: 
-        df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
-    if h_time_5 != "전체 회차": 
-        df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
+    if h_name_5: df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
+    if h_time_5 != "전체 회차": df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
     final_dis_df = df_dis.sort_values(by='날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore')
     st.dataframe(final_dis_df, use_container_width=True, hide_index=True)
@@ -643,17 +629,11 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
     output_h = io.BytesIO()
     with pd.ExcelWriter(output_h, engine='xlsxwriter') as writer:
         final_dis_df.to_excel(writer, index=False, sheet_name='히스토리기록')
-    
     st.download_button(label="📥 히스토리 엑셀 다운로드", data=output_h.getvalue(), 
                        file_name=f"히스토리_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
                        use_container_width=True, key="btn_download_h5")
 else:
     time_select_place.selectbox("⏰ 저장 회차 선택", ["전체 회차"], key="h_time_vSplit_final", disabled=True)
-    st.info("💡 [히스토리 데이터 불러오기] 버튼을 누르면 기록이 표시됩니다.")
 
-# ------------------------------------------------------------------
-# 6단계 호출 (사장님 원본 구조: 5단계 코드 가장 하단에 배치)
-# ------------------------------------------------------------------
+# 6단계 실행
 render_step6()
-
-
