@@ -434,7 +434,7 @@ else:
 
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 리오더 현황판 (이름 불일치 자동 해결 버전)
+# 6️⃣단계: 리오더 현황판 (중복 컬럼 에러 방지 수정본)
 # ------------------------------------------------------------------
 def render_step6():
     st.markdown("---")
@@ -451,11 +451,13 @@ def render_step6():
                         data = ws_qty.get_all_values()
                         
                         if len(data) > 1:
-                            # 1. 헤더 정리 (공백 제거)
                             raw_headers = [h.strip() for h in data[0]]
                             df_log = pd.DataFrame(data[1:], columns=raw_headers)
                             
-                            # 🚨 [수정] 이름 불일치 강제 교정 (공급처명 -> 공급처상품명)
+                            # 중복 컬럼 물리적 제거 (데이터프레임 생성 직후 실행)
+                            df_log = df_log.loc[:, ~df_log.columns.duplicated()]
+                            
+                            # 이름 불일치 교정
                             rename_map = {}
                             for col in df_log.columns:
                                 if col in ['공급처명', '제조사', '업체명']: rename_map[col] = '공급처상품명'
@@ -465,26 +467,19 @@ def render_step6():
                             if rename_map:
                                 df_log.rename(columns=rename_map, inplace=True)
                             
-                            # 2. 숫자 변환
                             for col in ['기존리오더', '추가발주', '입고수량']:
                                 if col in df_log.columns:
                                     df_log[col] = pd.to_numeric(df_log[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                             
-                            # 3. 날짜 변환
                             d_col = next((c for c in df_log.columns if '날짜' in c or '시간' in c), df_log.columns[0])
                             df_log['날짜_dt'] = pd.to_datetime(df_log[d_col], errors='coerce', format='mixed')
                             
                             st.session_state.df_log_6 = df_log
                             st.rerun()
-                        else:
-                            st.info("장부에 표시할 데이터가 없습니다.")
                 except Exception as e:
                     st.error(f"데이터 로드 중 오류: {e}")
-        
-        st.info("💡 [실시간 데이터 불러오기] 버튼을 누르면 장부의 미입고 현황이 표시됩니다.")
         return 
 
-    # --- 데이터 로드 후 실행 영역 ---
     df_log = st.session_state.df_log_6.copy()
 
     # [1] UI 필터
@@ -498,24 +493,20 @@ def render_step6():
     with c2:
         sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_compact")
     with c3:
-        # 🚨 [수정] 명칭 통일 반영
+        # 컬럼 존재 여부 체크
         v_col_name = '공급처상품명' if '공급처상품명' in df_log.columns else df_log.columns[1]
         v_list = ["전체 공급처"] + sorted(df_log[v_col_name].unique().tolist())
         sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_compact")
 
-    # [2] 데이터 그룹화 (키 생성)
+    # [2] 데이터 그룹화
     def c_func(t): return "".join(str(t).split()).upper()
     col_it = '상품명' if '상품명' in df_log.columns else df_log.columns[2]
     col_op = '옵션' if '옵션' in df_log.columns else df_log.columns[3]
-    col_vn = v_col_name
     col_memo = '메모' if '메모' in df_log.columns else df_log.columns[-1]
 
     df_log['key'] = df_log[col_it].apply(c_func) + df_log[col_op].apply(c_func)
-    
-    # 최신 기록만 남기기
     grouped = df_log.sort_values('날짜_dt').drop_duplicates('key', keep='last').copy()
     
-    # 메모 합치기
     memo_map = df_log.groupby('key')[col_memo].apply(
         lambda x: " / ".join([str(i).strip() for i in x.tail(5) if str(i).strip() not in ["", "None", "nan"]])
     ).to_dict()
@@ -523,40 +514,47 @@ def render_step6():
     grouped['최종잔량'] = grouped['기존리오더']
     grouped['최종메모'] = grouped['key'].map(memo_map)
 
-    # 필터 적용
     filtered = grouped[grouped['최종잔량'] > 0].copy()
     if sel_s: filtered = filtered[filtered[col_it].str.contains(sel_s, case=False, na=False)]
-    if sel_v != "전체 공급처": filtered = filtered[filtered[col_vn] == sel_v]
+    if sel_v != "전체 공급처": filtered = filtered[filtered[v_col_name] == sel_v]
 
     # [3] 업체별 요약 메트릭
     st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
-    v_sum = filtered.groupby(col_vn)['최종잔량'].sum().reset_index().sort_values('최종잔량', ascending=False)
+    v_sum = filtered.groupby(v_col_name)['최종잔량'].sum().reset_index().sort_values('최종잔량', ascending=False)
     
     if not v_sum.empty:
         v_cols = st.columns(min(len(v_sum), 4))
         for i, (idx, row) in enumerate(v_sum.iterrows()):
             if i < 4:
-                v_name = row[col_vn]
+                v_name = row[v_col_name]
                 with v_cols[i]:
                     st.metric(v_name, f"{int(row['최종잔량'])}개 잔량")
-                    v_items = filtered[filtered[col_vn] == v_name]
+                    v_items = filtered[filtered[v_col_name] == v_name]
                     v_top_merged = v_items.groupby(col_it)['최종잔량'].sum().sort_values(ascending=False).head(3)
-                    st.caption("🔥 TOP 3 상품 (통합)")
                     if not v_top_merged.empty:
                         for rank, (s_name, s_qty) in enumerate(v_top_merged.items()):
                             st.markdown(f"{rank+1}. {s_name} **({int(s_qty)}장)**")
 
     st.divider()
 
-    # [4] 상세 표 출력
+    # [4] 상세 표 출력 (중복 컬럼 방어 로직 핵심)
     display_df = filtered.sort_values(by=['날짜_dt', '최종잔량'], ascending=[False, False])
     
-    # 🚨 [수정 포인트] 사장님 요청 순서: 옵션 -> 공급처상품명 -> 최종잔량
-    target_display = ['날짜', col_vn, col_it, '옵션', '공급처상품명', '최종잔량', '추가발주', '입고수량', '최종메모']
-    final_cols = [c for c in target_display if c in display_df.columns]
+    # 순서를 정하되, 실제 존재하는 컬럼이 중복되어 들어가지 않게 처리
+    target_display = ['날짜', v_col_name, col_it, '옵션', '최종잔량', '추가발주', '입고수량', '최종메모']
     
+    # 🚨 중복 제거하여 컬럼 리스트 생성
+    final_cols = []
+    for c in target_display:
+        if c in display_df.columns and c not in final_cols:
+            final_cols.append(c)
+    
+    # 렌더링 전 최종적으로 데이터프레임 컬럼 중복 확인 및 제거
+    display_df = display_df[final_cols]
+    display_df = display_df.loc[:, ~display_df.columns.duplicated()]
+
     st.dataframe(
-        display_df[final_cols].rename(columns={'최종메모': '최근 처리내역(메모)'}), 
+        display_df.rename(columns={'최종메모': '최근 처리내역(메모)'}), 
         use_container_width=True, 
         hide_index=True
     )
@@ -565,7 +563,7 @@ def render_step6():
     import io
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        display_df[final_cols].to_excel(writer, index=False, sheet_name='리오더현황')
+        display_df.to_excel(writer, index=False, sheet_name='리오더현황')
     st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), 
                        file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
                        use_container_width=True, key="btn_6_dl_final")
