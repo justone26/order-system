@@ -434,13 +434,12 @@ else:
 
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 리오더 현황판 (B 시스템: 수동 로드형 - 컬럼 누락 수정본)
+# 6️⃣단계: 리오더 현황판 (이름 불일치 자동 해결 버전)
 # ------------------------------------------------------------------
 def render_step6():
     st.markdown("---")
     st.markdown("### 📈 6단계: 실시간 리오더 현황판 ")
     
-    # [🚨 B 시스템 핵심] 세션에 데이터가 없으면 '불러오기' 버튼 노출
     if "df_log_6" not in st.session_state or st.session_state.df_log_6 is None:
         c1, c2, c3 = st.columns([1, 2, 1.5])
         with c1:
@@ -452,21 +451,29 @@ def render_step6():
                         data = ws_qty.get_all_values()
                         
                         if len(data) > 1:
-                            # 헤더의 공백 제거 및 데이터프레임 생성
-                            headers = [h.strip() for h in data[0]]
-                            df_log = pd.DataFrame(data[1:], columns=headers)
+                            # 1. 헤더 정리 (공백 제거)
+                            raw_headers = [h.strip() for h in data[0]]
+                            df_log = pd.DataFrame(data[1:], columns=raw_headers)
                             
-                            # 숫자 변환
+                            # 🚨 [수정] 이름 불일치 강제 교정 (공급처명 -> 공급처상품명)
+                            rename_map = {}
+                            for col in df_log.columns:
+                                if col in ['공급처명', '제조사', '업체명']: rename_map[col] = '공급처상품명'
+                                if col in ['상품명(표기)', '아이템명']: rename_map[col] = '상품명'
+                                if col in ['입고차감', '입고수량']: rename_map[col] = '입고수량'
+                            
+                            if rename_map:
+                                df_log.rename(columns=rename_map, inplace=True)
+                            
+                            # 2. 숫자 변환
                             for col in ['기존리오더', '추가발주', '입고수량']:
                                 if col in df_log.columns:
                                     df_log[col] = pd.to_numeric(df_log[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                             
-                            # 날짜 변환
-                            d_col = next((c for c in df_log.columns if '날짜' in c or '시간' in c), '날짜')
-                            if d_col in df_log.columns:
-                                df_log['날짜_dt'] = pd.to_datetime(df_log[d_col], errors='coerce', format='mixed')
+                            # 3. 날짜 변환
+                            d_col = next((c for c in df_log.columns if '날짜' in c or '시간' in c), df_log.columns[0])
+                            df_log['날짜_dt'] = pd.to_datetime(df_log[d_col], errors='coerce', format='mixed')
                             
-                            # 세션에 데이터 저장
                             st.session_state.df_log_6 = df_log
                             st.rerun()
                         else:
@@ -477,10 +484,10 @@ def render_step6():
         st.info("💡 [실시간 데이터 불러오기] 버튼을 누르면 장부의 미입고 현황이 표시됩니다.")
         return 
 
-    # --- 데이터가 로드된 경우 실행 ---
+    # --- 데이터 로드 후 실행 영역 ---
     df_log = st.session_state.df_log_6.copy()
 
-    # [1] UI 레이아웃 (새로고침/검색/필터)
+    # [1] UI 필터
     c1, c2, c3 = st.columns([1, 2, 1.5])
     with c1:
         st.markdown("<p style='margin-bottom: 8px; font-size: 14px; font-weight: normal;'>🔄 데이터 갱신</p>", unsafe_allow_html=True)
@@ -491,23 +498,21 @@ def render_step6():
     with c2:
         sel_s = st.text_input("🔍 통합 상품명 검색", placeholder="상품명을 입력하세요", key="s6_search_compact")
     with c3:
-        # '공급처' 컬럼이 있는지 확인 후 필터 생성
-        v_col_name = '공급처' if '공급처' in df_log.columns else (st.session_state.p['vn'] if 'p' in st.session_state else df_log.columns[1])
+        # 🚨 [수정] 명칭 통일 반영
+        v_col_name = '공급처상품명' if '공급처상품명' in df_log.columns else df_log.columns[1]
         v_list = ["전체 공급처"] + sorted(df_log[v_col_name].unique().tolist())
         sel_v = st.selectbox("🏭 공급처 필터", v_list, key="s6_vendor_compact")
 
-    # [2] 데이터 그룹화 및 필터링 (키 생성 로직 보강)
+    # [2] 데이터 그룹화 (키 생성)
     def c_func(t): return "".join(str(t).split()).upper()
-    
-    # 사장님 장부 컬럼명에 맞게 매핑 (에러 방지)
-    col_it = '상품명' if '상품명' in df_log.columns else st.session_state.p['it']
-    col_op = '옵션' if '옵션' in df_log.columns else st.session_state.p['op']
-    col_vn = '공급처' if '공급처' in df_log.columns else st.session_state.p['vn']
-    col_memo = '메모' if '메모' in df_log.columns else '최근 처리내역(메모)'
+    col_it = '상품명' if '상품명' in df_log.columns else df_log.columns[2]
+    col_op = '옵션' if '옵션' in df_log.columns else df_log.columns[3]
+    col_vn = v_col_name
+    col_memo = '메모' if '메모' in df_log.columns else df_log.columns[-1]
 
     df_log['key'] = df_log[col_it].apply(c_func) + df_log[col_op].apply(c_func)
     
-    # 최신 데이터만 남기기
+    # 최신 기록만 남기기
     grouped = df_log.sort_values('날짜_dt').drop_duplicates('key', keep='last').copy()
     
     # 메모 합치기
@@ -518,16 +523,14 @@ def render_step6():
     grouped['최종잔량'] = grouped['기존리오더']
     grouped['최종메모'] = grouped['key'].map(memo_map)
 
-    # 잔량이 있는 데이터만 필터링
-    filtered_grouped = grouped[grouped['최종잔량'] > 0].copy()
-    if sel_s: 
-        filtered_grouped = filtered_grouped[filtered_grouped[col_it].str.contains(sel_s, case=False, na=False)]
-    if sel_v != "전체 공급처": 
-        filtered_grouped = filtered_grouped[filtered_grouped[col_vn] == sel_v]
+    # 필터 적용
+    filtered = grouped[grouped['최종잔량'] > 0].copy()
+    if sel_s: filtered = filtered[filtered[col_it].str.contains(sel_s, case=False, na=False)]
+    if sel_v != "전체 공급처": filtered = filtered[filtered[col_vn] == sel_v]
 
     # [3] 업체별 요약 메트릭
     st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
-    v_sum = filtered_grouped.groupby(col_vn)['최종잔량'].sum().reset_index().sort_values('최종잔량', ascending=False)
+    v_sum = filtered.groupby(col_vn)['최종잔량'].sum().reset_index().sort_values('최종잔량', ascending=False)
     
     if not v_sum.empty:
         v_cols = st.columns(min(len(v_sum), 4))
@@ -536,7 +539,7 @@ def render_step6():
                 v_name = row[col_vn]
                 with v_cols[i]:
                     st.metric(v_name, f"{int(row['최종잔량'])}개 잔량")
-                    v_items = filtered_grouped[filtered_grouped[col_vn] == v_name]
+                    v_items = filtered[filtered[col_vn] == v_name]
                     v_top_merged = v_items.groupby(col_it)['최종잔량'].sum().sort_values(ascending=False).head(3)
                     st.caption("🔥 TOP 3 상품 (통합)")
                     if not v_top_merged.empty:
@@ -545,37 +548,27 @@ def render_step6():
 
     st.divider()
 
-    # [4] 상세 표 및 엑셀 다운로드 (컬럼 순서 고정)
-    display_df = filtered_grouped.sort_values(by=['날짜_dt', '최종잔량'], ascending=[False, False])
+    # [4] 상세 표 출력
+    display_df = filtered.sort_values(by=['날짜_dt', '최종잔량'], ascending=[False, False])
     
-    # 🚨 사장님이 요청하신 컬럼 순서 (공급처, 상품명 확실히 포함)
-    target_cols = ['날짜', col_vn, col_it, col_op, '최종잔량', '추가발주', '입고수량', '최종메모']
-    
-    # 실제 존재하는 컬럼만 필터링 (오류 방지)
-    final_target = [c for c in target_cols if c in display_df.columns]
+    # 🚨 [수정 포인트] 사장님 요청 순서: 옵션 -> 공급처상품명 -> 최종잔량
+    target_display = ['날짜', col_vn, col_it, '옵션', '공급처상품명', '최종잔량', '추가발주', '입고수량', '최종메모']
+    final_cols = [c for c in target_display if c in display_df.columns]
     
     st.dataframe(
-        display_df[final_target].rename(columns={'최종메모': '최근 처리내역(메모)'}), 
+        display_df[final_cols].rename(columns={'최종메모': '최근 처리내역(메모)'}), 
         use_container_width=True, 
         hide_index=True
     )
 
-    # 엑셀 다운로드 기능
+    # [5] 엑셀 다운로드
     import io
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        display_df[final_target].to_excel(writer, index=False, sheet_name='리오더현황')
-    st.download_button(
-        label="📥 실시간 현황 엑셀 다운로드", 
-        data=output.getvalue(), 
-        file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
-        use_container_width=True,
-        key="btn_download_step6_final" 
-    )
-
-# 함수 실행 (메인 코드에서 호출)
-# render_step6()
-
+        display_df[final_cols].to_excel(writer, index=False, sheet_name='리오더현황')
+    st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), 
+                       file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
+                       use_container_width=True, key="btn_6_dl_final")
 
 
 # ------------------------------------------------------------------
@@ -592,7 +585,7 @@ with c1:
 with c2: 
     h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_vSplit_final")
 
-# 🚨 핵심: 회차 선택 셀렉트박스가 들어갈 자리를 미리 예약해둠
+# 회차 선택 셀렉트박스 자리 예약
 time_select_place = c3.empty() 
 
 # 2. 수동 조회 버튼
@@ -608,6 +601,10 @@ if st.button("🔍 히스토리 데이터 불러오기", use_container_width=Tru
                 h_df = pd.DataFrame(raw_data[1:], columns=cols_5)
                 h_df = h_df.loc[:, ~h_df.columns.duplicated()]
                 
+                # 🚨 [수정] 명칭 통일: 공급처명 -> 공급처상품명
+                if '공급처명' in h_df.columns:
+                    h_df.rename(columns={'공급처명': '공급처상품명'}, inplace=True)
+                
                 if '메모' in h_df.columns: h_df.rename(columns={'메모': '비고(처리내역)'}, inplace=True)
                 elif '비고' in h_df.columns: h_df.rename(columns={'비고': '비고(처리내역)'}, inplace=True)
                 
@@ -622,53 +619,43 @@ if st.button("🔍 히스토리 데이터 불러오기", use_container_width=Tru
 if "db_history" in st.session_state and not st.session_state.db_history.empty:
     m_df_5 = st.session_state.db_history.copy()
     
-    # 날짜 처리
     d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
     m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
     m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
     
-    # 날짜 범위 필터링
     if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
         period_df = m_df_5[(m_df_5['날짜_only'] >= sel_dates_5[0]) & (m_df_5['날짜_only'] <= sel_dates_5[1])]
     else:
         s_date = sel_dates_5[0] if isinstance(sel_dates_5, (list, tuple)) else sel_dates_5
         period_df = m_df_5[m_df_5['날짜_only'] == s_date]
 
-    # 🚨 [수정 포인트] 불러온 데이터에서 실시간 회차 목록 추출하여 예약된 자리에 배치
     t_opts = ["전체 회차"] + sorted(period_df['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
     h_time_5 = time_select_place.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_vSplit_final")
 
-    # 검색 및 회차 필터 적용
     df_dis = period_df.copy()
     if h_name_5: 
         df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
     if h_time_5 != "전체 회차": 
         df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
-    # 최종 노출 데이터 정렬 및 출력
     final_dis_df = df_dis.sort_values(by='날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore')
     st.dataframe(final_dis_df, use_container_width=True, hide_index=True)
 
-    # 엑셀 다운로드
     import io
     output_h = io.BytesIO()
     with pd.ExcelWriter(output_h, engine='xlsxwriter') as writer:
         final_dis_df.to_excel(writer, index=False, sheet_name='히스토리기록')
     
-    st.download_button(
-        label="📥 조회된 히스토리 엑셀 다운로드", 
-        data=output_h.getvalue(), 
-        file_name=f"히스토리_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
-        use_container_width=True,
-        key="btn_download_h5"
-    )
+    st.download_button(label="📥 히스토리 엑셀 다운로드", data=output_h.getvalue(), 
+                       file_name=f"히스토리_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
+                       use_container_width=True, key="btn_download_h5")
 else:
-    # 데이터 로드 전에는 비활성화된 셀렉트박스 표시
     time_select_place.selectbox("⏰ 저장 회차 선택", ["전체 회차"], key="h_time_vSplit_final", disabled=True)
-    st.info("💡 [히스토리 데이터 불러오기] 버튼을 누르면 오늘 저장한 회차 정보를 포함한 기록이 표시됩니다.")
+    st.info("💡 [히스토리 데이터 불러오기] 버튼을 누르면 기록이 표시됩니다.")
 
-# 6단계 호출
+# ------------------------------------------------------------------
+# 6단계 호출 (사장님 원본 구조: 5단계 코드 가장 하단에 배치)
+# ------------------------------------------------------------------
 render_step6()
-
 
 
