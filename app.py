@@ -650,7 +650,7 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
             "옵션": st.column_config.TextColumn("옵션", width=80),
             "공급처상품명": st.column_config.TextColumn("공급처상품명", width=200),
             "최종잔량": st.column_config.NumberColumn("최종잔량", width=70),
-            "비고(처리내역)": st.column_config.TextColumn("비고(처리내역)", width=600), # 비고 영역 시원하게 확장
+            "비고(처리내역)": st.column_config.TextColumn("비고(처리내역)", width=400), # 비고 영역 시원하게 확장
             "권장수량": st.column_config.NumberColumn("권장수량", width=70),
         }
     )
