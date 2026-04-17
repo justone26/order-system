@@ -574,23 +574,40 @@ def render_step6():
 
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (시간 포맷 정리 및 에러 방지)
+# 5️⃣단계: 전체 히스토리 기록 (한글 가이드 및 날짜 인지 개선)
 # ------------------------------------------------------------------
 st.divider()
 st.header("📜 5단계: 전체 히스토리 기록")
 
 c1, c2, c3 = st.columns([1.5, 1.5, 1.2]) 
 with c1: 
-    today_val = datetime.now(KST).date()
-    sel_dates_5 = st.date_input("📅 조회 날짜 범위", [today_val, today_val], key="h_date_vSplit_final")
+    # [개선] 오늘이 며칠인지 명확히 변수 지정
+    now_dt = datetime.now(KST)
+    today_val = now_dt.date()
+    
+    # [수정] 달력 라벨에 오늘 날짜를 직접 보여주어 인지를 돕습니다.
+    # 하나만 선택 시 해당 날짜만 조회되도록 로직을 유지합니다.
+    sel_dates_5 = st.date_input(
+        f"📅 조회 날짜 선택 (오늘: {today_val})", 
+        [today_val, today_val], 
+        key="h_date_vSplit_final",
+        help="시작일과 종료일을 클릭하세요. 하나만 클릭하면 그 날짜 하루만 조회됩니다."
+    )
 
-# 날짜 인덱스 에러 방지 로직
-if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
-    start_date, end_date = sel_dates_5
-elif isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 1:
-    start_date = end_date = sel_dates_5[0]
+# 🚨 날짜 선택 로직 (사장님 요청: 오늘로 자동 지정 안 함, 선택한 대로만)
+if isinstance(sel_dates_5, (list, tuple)):
+    if len(sel_dates_5) == 2:
+        start_date, end_date = sel_dates_5
+    elif len(sel_dates_5) == 1:
+        # 하나만 선택 시 그날 하루만 조회
+        start_date = end_date = sel_dates_5[0]
+    else:
+        start_date = end_date = today_val
 else:
     start_date = end_date = today_val
+
+# 현재 조회 중인 범위를 캡션으로 안내 (한글화)
+st.caption(f"✅ 조회 범위: **{start_date}** ~ **{end_date}**")
 
 with c2: 
     h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_vSplit_final")
@@ -625,13 +642,12 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
     m_df_5 = st.session_state.db_history.copy()
     d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
     
-    # 🚨 [수정] 초 단위 제거 로직 적용
+    # 🚨 [초 단위 제거 로직]
     m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
-    # 표에 표시될 시간을 '시:분'까지만 나오도록 변경
     m_df_5[d_col] = m_df_5['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M')
-    
     m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
     
+    # 필터링 적용
     period_df = m_df_5[(m_df_5['날짜_only'] >= start_date) & (m_df_5['날짜_only'] <= end_date)]
     
     # 회차 선택 리스트도 초 단위 없이 표시
@@ -641,12 +657,11 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
     df_dis = period_df.copy()
     if h_name_5: df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
     if h_time_5 != "전체 회차": 
-        # 비교를 위해 포맷 맞춤
         df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M') == h_time_5]
 
     final_dis_df = df_dis.sort_values(by='날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore')
 
-    # 컬럼 너비 설정
+    # 컬럼 너비 설정 (사장님 캡처본 비율 반영)
     st.dataframe(
         final_dis_df, 
         use_container_width=True, 
@@ -658,7 +673,7 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
             "옵션": st.column_config.TextColumn("옵션", width=80),
             "공급처상품명": st.column_config.TextColumn("공급처상품명", width=200),
             "최종잔량": st.column_config.NumberColumn("최종잔량", width=70),
-            "비고(처리내역)": st.column_config.TextColumn("비고(처리내역)", width=600), # 비고 확장
+            "비고(처리내역)": st.column_config.TextColumn("비고(처리내역)", width=600), 
             "권장수량": st.column_config.NumberColumn("권장수량", width=70),
         }
     )
@@ -673,5 +688,5 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
 else:
     time_select_place.selectbox("⏰ 저장 회차 선택", ["전체 회차"], key="h_time_vSplit_final", disabled=True)
 
-# 6단계 실행 (이 안에도 초 단위 제거 로직이 들어간 최신 버전을 사용하세요)
+# 6단계 실행
 render_step6()
