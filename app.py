@@ -590,27 +590,31 @@ with c1:
     now_dt = datetime.now(KST)
     today_val = now_dt.date()
     
+    # 요일 한글 변환용 리스트 (코드 내부에 직접 선언)
+    weekday_ko = ['월', '화', '수', '목', '금', '토', '일']
+    
+    # 오늘이 무슨 요일인지 안내
+    today_w = weekday_ko[today_val.weekday()]
+    
     sel_dates_5 = st.date_input(
-        f"📅 조회 날짜 (오늘: {today_val})", 
+        f"📅 조회 날짜 (오늘: {today_val} {today_w}요일)", 
         [today_val, today_val], 
         key="h_date_vSplit_final",
         format="YYYY-MM-DD"
     )
 
-# 🚨 [추가] 요일 한글 변환용 딕셔너리
-weekday_ko = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
-
-# 날짜 선택 로직 및 한글 요일 추출
+# 🚨 [날짜 처리 및 한글 요일 안내 로직]
 if isinstance(sel_dates_5, (list, tuple)):
     if len(sel_dates_5) == 2:
         start_date, end_date = sel_dates_5
         s_w = weekday_ko[start_date.weekday()]
         e_w = weekday_ko[end_date.weekday()]
-        # ✅ 달력 아래에 요일까지 한글로 친절하게 표시
-        st.info(f"🔎 조회: **{start_date}({s_w})** ~ **{end_date}({e_w})**")
+        # ✅ 달력 아래에 요일까지 한글로 친절하게 표시 (파란색 박스)
+        st.info(f"🔎 조회 범위: **{start_date}({s_w})** ~ **{end_date}({e_w})**")
     elif len(sel_dates_5) == 1:
         start_date = end_date = sel_dates_5[0]
         s_w = weekday_ko[start_date.weekday()]
+        # ✅ 하나만 찍었을 때 안내 (노란색 박스)
         st.warning(f"📅 **{start_date}({s_w})** 선택됨 (종료일도 클릭하세요)")
     else:
         start_date = end_date = today_val
@@ -622,8 +626,7 @@ with c2:
 
 time_select_place = c3.empty() 
 
-# --- [이하 데이터 로드 및 출력 로직은 동일] ---
-
+# --- [데이터 로드 및 출력 로직] ---
 if st.button("🔍 히스토리 데이터 불러오기", use_container_width=True, type="secondary"):
     try:
         with st.spinner("⏳ 구글 시트에서 히스토리 기록을 가져오는 중..."):
