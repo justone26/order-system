@@ -443,10 +443,10 @@ else:
 # 6️⃣단계: 리오더 현황판 (사장님 원본 레이아웃 + 현황판 + 간격 최적화)
 # ------------------------------------------------------------------
 def render_step6():
-    # 상단 제목 (사장님 캡처본 기준)
+    # 상단 제목
     st.markdown("### 📈 6단계: 실시간 리오더 현황판 (상품별 통합)")
     
-    # [1] 상단 컨트롤바 (캡처본 위치 그대로: 업데이트 | 검색 | 필터)
+    # [1] 상단 컨트롤바
     c_btn, c_search, c_filter = st.columns([1, 2, 1])
     
     with c_btn:
@@ -467,7 +467,6 @@ def render_step6():
             st.write("🏭 공급처 필터")
             st.selectbox("전체 공급처", ["전체 공급처"], label_visibility="collapsed", disabled=True)
         
-        # 초기 로드 버튼 (업데이트 버튼과 동일 기능)
         try:
             with st.spinner("⏳ 데이터를 가져오는 중..."):
                 sh = get_sheet()
@@ -485,8 +484,13 @@ def render_step6():
                         if col in df_log.columns:
                             df_log[col] = pd.to_numeric(df_log[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                     
+                    # 🚨 [수정] 날짜에서 초 단위 삭제 처리
                     d_col = next((c for c in df_log.columns if '날짜' in c or '시간' in c), df_log.columns[0])
                     df_log['날짜_dt'] = pd.to_datetime(df_log[d_col], errors='coerce', format='mixed')
+                    
+                    # 화면 표시용 날짜 포맷팅 (초 단위 제거)
+                    df_log[d_col] = df_log['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M')
+                    
                     st.session_state.df_log_6 = df_log
                     st.rerun()
         except Exception as e:
@@ -521,20 +525,18 @@ def render_step6():
     if sel_s: filtered = filtered[filtered[col_it].str.contains(sel_s, case=False, na=False)]
     if sel_v != "전체 공급처": filtered = filtered[filtered[v_col] == sel_v]
 
-    # [3] 업체별 미입고 및 주요 상품 현황판 (캡처본 디자인 복구)
+    # [3] 업체별 현황판
     st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
     v_sum = filtered.groupby(v_col)['최종잔량'].sum().reset_index().sort_values('최종잔량', ascending=False)
     
     if not v_sum.empty:
-        # 3개씩 끊어서 한 줄에 표시 (캡처본처럼 널찍하게)
-        v_rows = v_sum.iloc[:3] # 상위 3개 업체
+        v_rows = v_sum.iloc[:3]
         v_cols = st.columns(3)
         for i, (idx, row) in enumerate(v_rows.iterrows()):
             v_name = row[v_col]
             with v_cols[i]:
                 st.markdown(f"**{v_name}**")
                 st.markdown(f"### {int(row['최종잔량'])}개 잔량")
-                st.caption("🔥 TOP 3 상품 (통합)")
                 v_items = filtered[filtered[v_col] == v_name]
                 v_top = v_items.groupby(col_it)['최종잔량'].sum().sort_values(ascending=False).head(3)
                 for rank, (s_name, s_qty) in enumerate(v_top.items()):
@@ -542,11 +544,11 @@ def render_step6():
 
     st.divider()
 
-   # [4] 상세 데이터 표 (사장님 요청 셀 간격 정밀 조정)
+    # [4] 상세 데이터 표 (초 단위 없이 출력)
     display_df = filtered.sort_values(by=['날짜_dt', '최종잔량'], ascending=[False, False])
     
-    # 컬럼 순서 고정
-    target_display = ['날짜', '공급처', '상품명', '옵션', '공급처상품명', '최종잔량', '추가발주', '입고수량', '최종메모']
+    d_col_name = next((c for c in display_df.columns if '날짜' in c or '시간' in c), '날짜')
+    target_display = [d_col_name, '공급처', '상품명', '옵션', '공급처상품명', '최종잔량', '추가발주', '입고수량', '최종메모']
     final_cols = [c for c in target_display if c in display_df.columns]
 
     st.dataframe(
@@ -554,16 +556,12 @@ def render_step6():
         use_container_width=True, 
         hide_index=True,
         column_config={
-            # 캡처본 비율에 맞춰 핵심 외에는 타이트하게, 메모는 시원하게!
-            "날짜": st.column_config.TextColumn("날짜", width=110),
+            d_col_name: st.column_config.TextColumn("발주시간", width=140),
             "공급처": st.column_config.TextColumn("공급처", width=90),
             "상품명": st.column_config.TextColumn("상품명", width=350),
             "옵션": st.column_config.TextColumn("옵션", width=80),
-            "공급처상품명": st.column_config.TextColumn("공급처상품명", width=300),
-            "최종잔량": st.column_config.NumberColumn("최종잔량", width=50, format="%d"),
-            "추가발주": st.column_config.NumberColumn("추가발주", width=50),
-            "입고수량": st.column_config.NumberColumn("입고수량", width=50),
-            # 사장님이 강조하신 메모 영역!
+            "공급처상품명": st.column_config.TextColumn("공급처상품명", width=250),
+            "최종잔량": st.column_config.NumberColumn("최종잔량", width=60, format="%d"),
             "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=400), 
         }
     )
@@ -580,7 +578,7 @@ def render_step6():
 
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (한글 요일 보강 및 번역 오류 방지)
+# 5️⃣단계: 전체 히스토리 기록 (초 단위 완전 삭제 및 한글 요일 보강)
 # ------------------------------------------------------------------
 st.divider()
 st.header("📜 5단계: 전체 히스토리 기록")
@@ -590,10 +588,8 @@ with c1:
     now_dt = datetime.now(KST)
     today_val = now_dt.date()
     
-    # 요일 한글 변환용 리스트 (코드 내부에 직접 선언)
+    # 요일 한글 변환용 리스트
     weekday_ko = ['월', '화', '수', '목', '금', '토', '일']
-    
-    # 오늘이 무슨 요일인지 안내
     today_w = weekday_ko[today_val.weekday()]
     
     sel_dates_5 = st.date_input(
@@ -609,12 +605,10 @@ if isinstance(sel_dates_5, (list, tuple)):
         start_date, end_date = sel_dates_5
         s_w = weekday_ko[start_date.weekday()]
         e_w = weekday_ko[end_date.weekday()]
-        # ✅ 달력 아래에 요일까지 한글로 친절하게 표시 (파란색 박스)
         st.info(f"🔎 조회 범위: **{start_date}({s_w})** ~ **{end_date}({e_w})**")
     elif len(sel_dates_5) == 1:
         start_date = end_date = sel_dates_5[0]
         s_w = weekday_ko[start_date.weekday()]
-        # ✅ 하나만 찍었을 때 안내 (노란색 박스)
         st.warning(f"📅 **{start_date}({s_w})** 선택됨 (종료일도 클릭하세요)")
     else:
         start_date = end_date = today_val
@@ -639,11 +633,17 @@ if st.button("🔍 히스토리 데이터 불러오기", use_container_width=Tru
                 h_df = pd.DataFrame(raw_data[1:], columns=cols_5)
                 h_df = h_df.loc[:, ~h_df.columns.duplicated()]
                 
+                # 명칭 통일
                 if '공급처명' in h_df.columns:
                     h_df.rename(columns={'공급처명': '공급처상품명'}, inplace=True)
-                
                 if '메모' in h_df.columns: h_df.rename(columns={'메모': '비고(처리내역)'}, inplace=True)
                 elif '비고' in h_df.columns: h_df.rename(columns={'비고': '비고(처리내역)'}, inplace=True)
+                
+                # 🚨 [핵심 수정] 데이터 로드 시점에 초 단위 즉시 삭제
+                d_col = next((c for c in h_df.columns if '날짜' in c or '시간' in c), h_df.columns[0])
+                h_df['날짜_dt'] = pd.to_datetime(h_df[d_col], errors='coerce', format='mixed')
+                # 표시용 컬럼 자체를 초 없는 포맷으로 덮어씌움
+                h_df[d_col] = h_df['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M')
                 
                 st.session_state.db_history = h_df
                 st.rerun()
@@ -654,20 +654,27 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
     m_df_5 = st.session_state.db_history.copy()
     d_col = next((c for c in m_df_5.columns if '날짜' in c or '시간' in c), m_df_5.columns[0])
     
-    m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
-    m_df_5[d_col] = m_df_5['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M')
-    m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
+    # 필터링용 날짜 객체 생성
+    m_df_5['날짜_only'] = pd.to_datetime(m_df_5['날짜_dt']).dt.date
     
+    # 1. 날짜 범위 필터링
     period_df = m_df_5[(m_df_5['날짜_only'] >= start_date) & (m_df_5['날짜_only'] <= end_date)]
     
-    t_opts = ["전체 회차"] + sorted(period_df['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M').unique(), reverse=True)
+    # 2. 회차 선택 (이미 초가 제거된 d_col 사용)
+    t_opts = ["전체 회차"] + sorted(period_df[d_col].dropna().unique(), reverse=True)
     h_time_5 = time_select_place.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_vSplit_final")
 
     df_dis = period_df.copy()
-    if h_name_5: df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
+    
+    # 3. 검색어 필터링
+    if h_name_5: 
+        df_dis = df_dis[df_dis.apply(lambda r: h_name_5.lower() in str(r).lower(), axis=1)]
+    
+    # 4. 회차 필터링
     if h_time_5 != "전체 회차": 
-        df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M') == h_time_5]
+        df_dis = df_dis[df_dis[d_col] == h_time_5]
 
+    # 불필요한 필터용 컬럼 삭제
     final_dis_df = df_dis.sort_values(by='날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore')
 
     st.dataframe(
@@ -675,7 +682,7 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
         use_container_width=True, 
         hide_index=True,
         column_config={
-            "발주시간": st.column_config.TextColumn("발주시간", width=100),
+            "발주시간": st.column_config.TextColumn("발주시간", width=140),
             "공급처": st.column_config.TextColumn("공급처", width=90),
             "상품명": st.column_config.TextColumn("상품명", width=350),
             "옵션": st.column_config.TextColumn("옵션", width=120),
