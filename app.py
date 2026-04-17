@@ -672,9 +672,9 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
         use_container_width=True, 
         hide_index=True,
         column_config={
-            "발주시간": st.column_config.TextColumn("발주시간", width=120),
+            "발주시간": st.column_config.TextColumn("발주시간", width=100),
             "공급처": st.column_config.TextColumn("공급처", width=90),
-            "상품명": st.column_config.TextColumn("상품명", width=200),
+            "상품명": st.column_config.TextColumn("상품명", width=300),
             "옵션": st.column_config.TextColumn("옵션", width=80),
             "공급처상품명": st.column_config.TextColumn("공급처상품명", width=200),
             "최종잔량": st.column_config.NumberColumn("최종잔량", width=70),
