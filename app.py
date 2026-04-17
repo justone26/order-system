@@ -562,7 +562,7 @@ def render_step6():
             "옵션": st.column_config.TextColumn("옵션", width=110),
             "공급처상품명": st.column_config.TextColumn("공급처상품명", width=250),
             "최종잔량": st.column_config.NumberColumn("최종잔량", width=60, format="%d"),
-            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=400), 
+            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=500), 
         }
     )
 
