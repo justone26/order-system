@@ -8,6 +8,17 @@ from datetime import datetime, timedelta, timezone
 import streamlit.components.v1 as components
 import time
 
+# 🚨 [추가] 앱 최상단에 이 설정을 넣으면 달력이 한국어(월, 화, 수...)로 나옵니다.
+# 또한 사장님이 보시는 화면의 기본 언어 환경을 한국어로 유도합니다.
+st.set_page_config(
+    page_title="Justone 발주 관리 시스템", 
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# 한국 시간대 설정 (기존에 쓰시던 KST 정의가 아래에 있다면 그대로 두시면 됩니다)
+KST = timezone(timedelta(hours=9))
+
 # 1. 환경 및 시간 설정
 KST = timezone(timedelta(hours=9))
 st.set_page_config(layout="wide", page_title="저스트원 발주 시스템")
