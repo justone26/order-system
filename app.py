@@ -574,7 +574,7 @@ def render_step6():
 
 
 # ------------------------------------------------------------------
-# 5️⃣단계: 전체 히스토리 기록 (명칭 통일 버전)
+# 5️⃣단계: 전체 히스토리 기록 (날짜 에러 방지 및 셀 너비 조정)
 # ------------------------------------------------------------------
 st.divider()
 st.header("📜 5단계: 전체 히스토리 기록")
@@ -583,6 +583,15 @@ c1, c2, c3 = st.columns([1.5, 1.5, 1.2])
 with c1: 
     today_val = datetime.now(KST).date()
     sel_dates_5 = st.date_input("📅 조회 날짜 범위", [today_val, today_val], key="h_date_vSplit_final")
+
+# 🚨 [수정] 날짜를 하나만 선택했을 때 발생하는 IndexError 방지 로직
+if isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 2:
+    start_date, end_date = sel_dates_5
+elif isinstance(sel_dates_5, (list, tuple)) and len(sel_dates_5) == 1:
+    start_date = end_date = sel_dates_5[0]
+else:
+    start_date = end_date = today_val
+
 with c2: 
     h_name_5 = st.text_input("🔍 상품명/옵션 검색", key="h_name_vSplit_final")
 
@@ -600,7 +609,7 @@ if st.button("🔍 히스토리 데이터 불러오기", use_container_width=Tru
                 h_df = pd.DataFrame(raw_data[1:], columns=cols_5)
                 h_df = h_df.loc[:, ~h_df.columns.duplicated()]
                 
-                # 🚨 [수정] 공급처명 -> 공급처상품명 (이름만 변경)
+                # 명칭 통일: 공급처명 -> 공급처상품명
                 if '공급처명' in h_df.columns:
                     h_df.rename(columns={'공급처명': '공급처상품명'}, inplace=True)
                 
@@ -618,7 +627,8 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
     m_df_5['날짜_dt'] = pd.to_datetime(m_df_5[d_col], errors='coerce', format='mixed')
     m_df_5['날짜_only'] = m_df_5['날짜_dt'].dt.date
     
-    period_df = m_df_5[(m_df_5['날짜_only'] >= sel_dates_5[0]) & (m_df_5['날짜_only'] <= sel_dates_5[1])]
+    # 안전하게 계산된 start_date, end_date 사용
+    period_df = m_df_5[(m_df_5['날짜_only'] >= start_date) & (m_df_5['날짜_only'] <= end_date)]
     t_opts = ["전체 회차"] + sorted(period_df['날짜_dt'].dropna().dt.strftime('%Y-%m-%d %H:%M:%S').unique(), reverse=True)
     h_time_5 = time_select_place.selectbox("⏰ 저장 회차 선택", t_opts, key="h_time_vSplit_final")
 
@@ -627,8 +637,24 @@ if "db_history" in st.session_state and not st.session_state.db_history.empty:
     if h_time_5 != "전체 회차": df_dis = df_dis[df_dis['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M:%S') == h_time_5]
 
     final_dis_df = df_dis.sort_values(by='날짜_dt', ascending=False).drop(columns=['날짜_dt', '날짜_only'], errors='ignore')
-    st.dataframe(final_dis_df, use_container_width=True, hide_index=True)
-    
+
+    # 🚨 [적용] 사장님이 요청하신 5단계 전용 컬럼 너비 설정
+    st.dataframe(
+        final_dis_df, 
+        use_container_width=True, 
+        hide_index=True,
+        column_config={
+            "발주시간": st.column_config.TextColumn("발주시간", width=120),
+            "공급처": st.column_config.TextColumn("공급처", width=90),
+            "상품명": st.column_config.TextColumn("상품명", width=200),
+            "옵션": st.column_config.TextColumn("옵션", width=80),
+            "공급처상품명": st.column_config.TextColumn("공급처상품명", width=200),
+            "최종잔량": st.column_config.NumberColumn("최종잔량", width=70),
+            "비고(처리내역)": st.column_config.TextColumn("비고(처리내역)", width=600), # 비고 영역 시원하게 확장
+            "권장수량": st.column_config.NumberColumn("권장수량", width=70),
+        }
+    )
+
     import io
     output_h = io.BytesIO()
     with pd.ExcelWriter(output_h, engine='xlsxwriter') as writer:
