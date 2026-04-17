@@ -558,7 +558,7 @@ def render_step6():
             "추가발주": st.column_config.NumberColumn("추가발주", width=50),
             "입고수량": st.column_config.NumberColumn("입고수량", width=50),
             # 사장님이 강조하신 메모 영역!
-            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=500), 
+            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=400), 
         }
     )
 
