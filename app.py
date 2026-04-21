@@ -368,11 +368,11 @@ if st.session_state.get('analyzed'):
                 key="main_editor", 
                 column_config={
                     "상태": st.column_config.TextColumn("상태", width=70, disabled=True),
-                    p['vn']: st.column_config.TextColumn("공급처", width=130, disabled=True),
+                    p['vn']: st.column_config.TextColumn("공급처", width=140, disabled=True),
                     p['it']: st.column_config.TextColumn("상품명", width=330, disabled=True),
                     p['op']: st.column_config.TextColumn("옵션", width=130, disabled=True),
                     p['vi']: st.column_config.TextColumn("공급처상품명", width=250, disabled=True),
-                    "기존리오더": st.column_config.NumberColumn("기존리오더", width=100, disabled=True, format="%d"),
+                    "기존리오더": st.column_config.NumberColumn("기존리오더", width=80, disabled=True, format="%d"),
                     "입고차감": st.column_config.NumberColumn("📥 입고(-)", width=100, min_value=0), 
                     "추가발주": st.column_config.NumberColumn("➕ 발주(+)", width=100, min_value=0),
                     "권장발주수량": st.column_config.NumberColumn("권장수량", width=80, disabled=True, format="%d"),
