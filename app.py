@@ -300,7 +300,7 @@ else:
 
 
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (필터 레이아웃 및 최소 발주 필터 적용)
+# 4️⃣단계: 입고 관리 및 최종 저장 (너비 조정 완료)
 # ------------------------------------------------------------------
 st.divider()
 st.header("📊 4단계: 데이터 분석 및 발주 체크") 
@@ -318,14 +318,13 @@ if st.session_state.get('analyzed'):
             if col not in df_all.columns:
                 df_all[col] = 0 if any(x in col for x in ['수량', '리오더', '차감', '발주']) else ""
 
-        # --- [UI 레이아웃: 공급처 셀렉트 박스 삽입] ---
-        f1, f_vn, f2 = st.columns([1, 1.2, 1.8]) # 기존 2분할에서 3분할로 변경
+        # --- [UI 레이아웃] ---
+        f1, f_vn, f2 = st.columns([1, 1.2, 1.8]) 
         
         with f1: 
             f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1, key="f_mode_4")
         
         with f_vn:
-            # ✅ 공급처 리스트 자동 추출
             vn_list = ["전체 공급처"] + sorted(df_all[p['vn']].unique().tolist())
             sel_vn = st.selectbox("🏭 공급처 필터", vn_list, key="f_vendor_4")
             
@@ -335,27 +334,27 @@ if st.session_state.get('analyzed'):
         # --- [데이터 필터링] ---
         df_temp = df_all.copy()
         
-        # ✅ 추가: 3단계에서 정한 최소 발주 수량 미만 필터링 (화면 표시용)
+        # 3단계에서 정한 최소 발주 수량 미만 필터링
         min_filter = st.session_state.p.get('min_qty', 0)
         df_temp.loc[df_temp['권장발주수량'] < min_filter, '권장발주수량'] = 0
         
-        # 1. 상태 필터 (기존 유지)
+        # 상태 필터
         if f_mode == "🚨 발주필요(세트)":
             need_items = df_temp[(df_temp['상태'] != "🚫 품절") & (df_temp['권장발주수량'] > 0)][p['it']].unique()
             df_temp = df_temp[df_temp[p['it']].isin(need_items)]
         elif f_mode != "전체보기":
             df_temp = df_temp[df_temp['상태'] == f_mode]
         
-        # 2. ✅ 공급처 필터
+        # 공급처 필터
         if sel_vn != "전체 공급처":
             df_temp = df_temp[df_temp[p['vn']] == sel_vn]
             
-        # 3. 검색 필터 (기존 유지)
+        # 검색 필터
         if s_query:
             df_temp = df_temp[df_temp[p['it']].str.contains(s_query, case=False, na=False) | 
                                df_temp[p['op']].str.contains(s_query, case=False, na=False)]
 
-        # --- [이하 모든 로직(에디터, 저장, 시트전송)은 기존과 100% 동일] ---
+        # --- [데이터 편집기: 너비 조정 적용] ---
         full_cols = ['상태', p['vn'], p['it'], p['op'], p['vi'], p['av'], 
                      '기존리오더', '입고차감', '추가발주', p['t3'], 
                      '일판매량', '권장발주수량', '비고(처리내역)']
@@ -368,24 +367,26 @@ if st.session_state.get('analyzed'):
                 hide_index=True,
                 key="main_editor", 
                 column_config={
-                    '상태': st.column_config.TextColumn("상태", disabled=True),
-                    p['vn']: st.column_config.TextColumn("공급처", disabled=True),
-                    p['it']: st.column_config.TextColumn("상품명", disabled=True),
-                    p['op']: st.column_config.TextColumn("옵션", disabled=True),
-                    '기존리오더': st.column_config.NumberColumn("기존리오더", disabled=True, format="%d"),
-                    '입고차감': st.column_config.NumberColumn("📥 입고(-)", min_value=0), 
-                    '추가발주': st.column_config.NumberColumn("➕ 발주(+)", min_value=0),
-                    '권장발주수량': st.column_config.NumberColumn("권장수량", disabled=True, format="%d"),
+                    "상태": st.column_config.TextColumn("상태", width=60, disabled=True),
+                    p['vn']: st.column_config.TextColumn("공급처", width=90, disabled=True),
+                    p['it']: st.column_config.TextColumn("상품명", width=350, disabled=True),
+                    p['op']: st.column_config.TextColumn("옵션", width=110, disabled=True),
+                    p['vi']: st.column_config.TextColumn("공급처상품명", width=250, disabled=True),
+                    "기존리오더": st.column_config.NumberColumn("기존리오더", width=60, disabled=True, format="%d"),
+                    "입고차감": st.column_config.NumberColumn("📥 입고(-)", width=70, min_value=0), 
+                    "추가발주": st.column_config.NumberColumn("➕ 발주(+)", width=70, min_value=0),
+                    "권장발주수량": st.column_config.NumberColumn("권장수량", width=60, disabled=True, format="%d"),
+                    "비고(처리내역)": st.column_config.TextColumn("비고(처리내역)", width=400),
                 }
             )
             btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
 
+        # --- [저장 및 전송 로직] ---
         if btn_save:
-            # (여기서부터는 사장님이 주신 기존 저장 로직과 완전히 동일합니다.)
             changed_rows = edited_df[(edited_df['입고차감'] > 0) | (edited_df['추가발주'] > 0) | (edited_df['비고(처리내역)'].str.strip() != "")].copy()
             
             if not changed_rows.empty:
-                with st.spinner("🚀 장부 업데이트 및 하위 단계 자동 갱신 중..."):
+                with st.spinner("🚀 장부 업데이트 중..."):
                     try:
                         sh = get_sheet()
                         ws_qty = sh.worksheet("발주기록")
@@ -424,7 +425,6 @@ if st.session_state.get('analyzed'):
                         st.success(f"✅ 저장 및 모든 현황판 자동 동기화 완료!")
                         time.sleep(1)
                         st.rerun() 
-                        
                     except Exception as e:
                         st.error(f"저장 중 오류 발생: {e}")
             else:
