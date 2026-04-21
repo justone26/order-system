@@ -209,12 +209,15 @@ else:
 st.divider()
 st.subheader("3️⃣ 분석 설정 및 실행") # 제목 상시 노출
 
-# [B 시스템 로직] 파일 업로드 여부와 상관없이 설정 칸은 미리 보여줌
-clt, css = st.columns(2)
+# [수정] 기존 clt, css 2칸에서 cmq를 추가한 3칸으로 변경
+clt, css, cmq = st.columns(3)
 with clt: 
     lt = st.number_input("리드타임 (일)", value=7, key="input_lt")
 with css: 
     ss = st.number_input("안전재고 (일 수)", value=3, key="input_ss")
+with cmq:
+    # ✅ 추가된 기능: 최소 발주 기준 수량 설정
+    min_qty = st.number_input("최소 발주 기준", value=10, step=1, key="input_min_qty")
 
 # 분석 실행은 파일이 있을 때만 버튼 활성화 또는 작동
 if 'df_raw' in st.session_state:
@@ -240,13 +243,14 @@ if 'df_raw' in st.session_state:
                 else:
                     st.session_state.reorder_ans = {}
 
-            # 2. 분석용 파라미터 맵 구성
+            # 2. 분석용 파라미터 맵 구성 (min_qty 추가 저장)
             p_map = {
                 'so': st.session_state.get('sel_so'), 'it': st.session_state.get('sel_it'),
                 'op': st.session_state.get('sel_op'), 'vn': st.session_state.get('sel_vn'),
                 'vi': st.session_state.get('sel_vi'), 'av': st.session_state.get('sel_av'),
                 't3': st.session_state.get('sel_t3'), 't7': st.session_state.get('sel_t7'),
-                'rd': st.session_state.get('sel_rd'), 'lt': lt, 'ss': ss
+                'rd': st.session_state.get('sel_rd'), 'lt': lt, 'ss': ss,
+                'min_qty': min_qty # ✅ 4단계에서 필터로 쓸 값
             }
             st.session_state.p = p_map
 
@@ -284,7 +288,7 @@ if 'df_raw' in st.session_state:
             st.session_state.analyzed = True
             
             st.cache_data.clear()
-            st.success(f"✅ 분석 완료 (최신 장고 반영 완료 / LT:{lt}일/SS:{ss}일)")
+            st.success(f"✅ 분석 완료 (최신 장고 반영 완료 / 기준: {min_qty}개 미만 제외)")
             st.rerun()
 
         except Exception as e:
@@ -296,7 +300,7 @@ else:
 
 
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (필터 레이아웃만 정밀 수정)
+# 4️⃣단계: 입고 관리 및 최종 저장 (필터 레이아웃 및 최소 발주 필터 적용)
 # ------------------------------------------------------------------
 st.divider()
 st.header("📊 4단계: 데이터 분석 및 발주 체크") 
@@ -321,15 +325,19 @@ if st.session_state.get('analyzed'):
             f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1, key="f_mode_4")
         
         with f_vn:
-            # ✅ 공급처 리스트 자동 추출 (이 부분만 추가됨)
+            # ✅ 공급처 리스트 자동 추출
             vn_list = ["전체 공급처"] + sorted(df_all[p['vn']].unique().tolist())
             sel_vn = st.selectbox("🏭 공급처 필터", vn_list, key="f_vendor_4")
             
         with f2: 
             s_query = st.text_input("🔍 검색 (상품명/옵션)", key="s_query_4")
 
-        # --- [데이터 필터링: 기존 로직에 공급처 필터만 끼워넣기] ---
+        # --- [데이터 필터링] ---
         df_temp = df_all.copy()
+        
+        # ✅ 추가: 3단계에서 정한 최소 발주 수량 미만 필터링 (화면 표시용)
+        min_filter = st.session_state.p.get('min_qty', 0)
+        df_temp.loc[df_temp['권장발주수량'] < min_filter, '권장발주수량'] = 0
         
         # 1. 상태 필터 (기존 유지)
         if f_mode == "🚨 발주필요(세트)":
@@ -338,7 +346,7 @@ if st.session_state.get('analyzed'):
         elif f_mode != "전체보기":
             df_temp = df_temp[df_temp['상태'] == f_mode]
         
-        # 2. ✅ 공급처 필터 (새로 추가된 필터링 로직)
+        # 2. ✅ 공급처 필터
         if sel_vn != "전체 공급처":
             df_temp = df_temp[df_temp[p['vn']] == sel_vn]
             
@@ -423,7 +431,6 @@ if st.session_state.get('analyzed'):
                 st.warning("⚠️ 입력된 변경 내역(입고/발주/메모)이 없습니다.")
 else:
     st.info("3단계에서 [분석 실행] 버튼을 누르면 분석 결과가 이곳에 표시됩니다.")
-
 
 # ------------------------------------------------------------------
 # 6️⃣단계: 리오더 현황판 (사장님 원본 레이아웃 + 현황판 + 간격 최적화)
