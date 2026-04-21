@@ -447,55 +447,80 @@ else:
 # ------------------------------------------------------------------
 # 6단계: 리오더 현황판 (엑셀 기능 복구 + 날짜 인식 최적화 버전)
 # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# 6단계: 리오더 현황판 (데이터 진단 모드)
+# ------------------------------------------------------------------
 def render_step6():
     import re
     import pandas as pd
-    import io
     from datetime import datetime
 
-    # [날짜 형식에 상관없이 무조건 잡아내는 파싱 함수]
-    def get_lead_time(memo_str):
+    def get_lead_time_debug(memo_str):
         if pd.isna(memo_str) or str(memo_str).lower() == 'nan':
-            return None
+            return None, None, None
         
-        # '/' 또는 줄바꿈 기준으로 메모 조각내기
-        parts = re.split(r'[/,\n]', str(memo_str))
+        text = str(memo_str)
+        # '/' 또는 줄바꿈 기준 조각내기
+        parts = re.split(r'[/,\n]', text)
         
         orders = []
         receives = []
         
         for part in parts:
-            # 1자리 또는 2자리 숫자 날짜 대응 (예: 4/21 또는 04/21)
             date_match = re.search(r'(\d{1,2}/\d{1,2})', part)
-            if not date_match:
-                continue
-                
-            date_str = date_match.group(1)
-            try:
-                m, d = map(int, date_str.split('/'))
-                dt = datetime(2026, m, d)
-                
-                if '발주' in part:
-                    orders.append(dt)
-                elif '입고' in part:
-                    receives.append(dt)
-            except:
-                continue
-        
-        if not orders or not receives:
-            return None
+            if not date_match: continue
             
-        orders.sort()
-        receives.sort()
+            try:
+                m, d = map(int, date_match.group(1).split('/'))
+                dt = datetime(2026, m, d)
+                if '발주' in part: orders.append(dt)
+                if '입고' in part: receives.append(dt)
+            except: continue
         
-        # 최근 발주 기준 이후의 가장 빠른 입고일 계산
-        for o_dt in sorted(orders, reverse=True): 
-            for r_dt in receives:
-                if r_dt > o_dt:
-                    diff = (r_dt - o_dt).days
-                    if 0 <= diff <= 30: # 30일 이내 인정
-                        return float(diff)
-        return None
+        # 가장 최근 발주와 그 이후 입고 매칭
+        best_lt = None
+        if orders and receives:
+            orders.sort()
+            receives.sort()
+            for o_dt in sorted(orders, reverse=True): 
+                for r_dt in receives:
+                    if r_dt > o_dt:
+                        diff = (r_dt - o_dt).days
+                        if 0 <= diff <= 30: 
+                            best_lt = float(diff)
+                            break
+                if best_lt: break
+        
+        return str(orders), str(receives), best_lt
+
+    st.markdown("### 🔍 데이터 파싱 진단 (이 테이블을 보고 원인을 찾습니다)")
+    
+    # [데이터 로드]
+    if "df_log_6" not in st.session_state or st.session_state.df_log_6 is None:
+        if st.button("데이터 불러오기"):
+            sh = get_sheet()
+            ws_qty = sh.worksheet("발주기록")
+            data = ws_qty.get_all_values()
+            df = pd.DataFrame(data[1:], columns=data[0])
+            st.session_state.df_log_6 = df
+            st.rerun()
+        return
+
+    df_log = st.session_state.df_log_6.copy()
+    col_memo = '메모' if '메모' in df_log.columns else df_log.columns[-1]
+    
+    # [진단 실행]
+    st.write("메모 데이터 분석 결과:")
+    debug_data = []
+    for m in df_log[col_memo].unique():
+        o, r, lt = get_lead_time_debug(m)
+        if o != '[]' or r != '[]': # 데이터가 있는 것만
+            debug_data.append({'메모원문': str(m), '인식된발주': o, '인식된입고': r, '결과리드타임': lt})
+    
+    st.dataframe(pd.DataFrame(debug_data), use_container_width=True)
+    
+    st.divider()
+    st.markdown("위 테이블에서 **'인식된발주'**나 **'인식된입고'**가 **[] (빈 대괄호)**로 나온다면, 그 메모 데이터는 코드가 날짜를 아예 못 찾고 있는 것입니다.")
 
     # 상단 제목
     st.markdown("### 📈 6단계: 실시간 리오더 현황판 (상품별 통합)")
