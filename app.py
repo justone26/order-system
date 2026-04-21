@@ -444,8 +444,8 @@ else:
     st.info("3단계에서 [분석 실행] 버튼을 누르면 분석 결과가 이곳에 표시됩니다.")
 
 
-    # ------------------------------------------------------------------
-# 6️⃣단계: 리오더 현황판 (사장님 원본 레이아웃 유지 + 오류 수정)
+# ------------------------------------------------------------------
+# 6️⃣단계: 리오더 현황판 (초 단위 완전 제거 버전)
 # ------------------------------------------------------------------
 def render_step6():
     # 상단 제목
@@ -561,13 +561,13 @@ def render_step6():
         use_container_width=True, 
         hide_index=True,
         column_config={
-            d_col_name: st.column_config.TextColumn("발주시간", width=100),
+            d_col_name: st.column_config.TextColumn("발주시간", width=140),
             "공급처": st.column_config.TextColumn("공급처", width=90),
             "상품명": st.column_config.TextColumn("상품명", width=350),
-            "옵션": st.column_config.TextColumn("옵션", width=110),
+            "옵션": st.column_config.TextColumn("옵션", width=80),
             "공급처상품명": st.column_config.TextColumn("공급처상품명", width=250),
             "최종잔량": st.column_config.NumberColumn("최종잔량", width=60, format="%d"),
-            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=500), 
+            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=400), 
         }
     )
 
@@ -576,12 +576,9 @@ def render_step6():
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         display_df[final_cols].to_excel(writer, index=False, sheet_name='리오더현황')
-    
-    # KST 에러 해결: datetime.now(KST)를 datetime.now()로 변경했습니다.
     st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), 
-                        file_name=f"리오더현황_{datetime.now().strftime('%m%d_%H%M')}.xlsx", 
-                        use_container_width=True)
-    
+                       file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
+                       use_container_width=True)
 
 # ------------------------------------------------------------------
 # 5️⃣단계: 전체 히스토리 기록 (초 단위 완전 삭제 및 한글 요일 보강)
