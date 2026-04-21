@@ -445,7 +445,7 @@ else:
     
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 리오더 현황판 (사장님 원본 레이아웃 + 현황판 + 간격 최적화)
+# 6️⃣단계: 리오더 현황판 (기존 로직 유지 + 리드타임 분석 추가)
 # ------------------------------------------------------------------
 def render_step6():
     # 상단 제목
@@ -489,11 +489,8 @@ def render_step6():
                         if col in df_log.columns:
                             df_log[col] = pd.to_numeric(df_log[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                     
-                    # 🚨 [수정] 날짜에서 초 단위 삭제 처리
                     d_col = next((c for c in df_log.columns if '날짜' in c or '시간' in c), df_log.columns[0])
                     df_log['날짜_dt'] = pd.to_datetime(df_log[d_col], errors='coerce', format='mixed')
-                    
-                    # 화면 표시용 날짜 포맷팅 (초 단위 제거)
                     df_log[d_col] = df_log['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M')
                     
                     st.session_state.df_log_6 = df_log
@@ -510,7 +507,7 @@ def render_step6():
         v_list = ["전체 공급처"] + sorted(df_log[v_col].unique().tolist())
         sel_v = st.selectbox("전체 공급처", v_list, label_visibility="collapsed", key="s6_vendor_final")
 
-    # [2] 데이터 가공
+    # [2] 데이터 가공 (기존 로직)
     def c_func(t): return "".join(str(t).split()).upper()
     col_it = '상품명' if '상품명' in df_log.columns else df_log.columns[2]
     col_op = '옵션' if '옵션' in df_log.columns else df_log.columns[3]
@@ -530,7 +527,36 @@ def render_step6():
     if sel_s: filtered = filtered[filtered[col_it].str.contains(sel_s, case=False, na=False)]
     if sel_v != "전체 공급처": filtered = filtered[filtered[v_col] == sel_v]
 
-    # [3] 업체별 현황판
+    # [신규] 리드타임 분석 로직
+    import re
+    def get_lead_time(memo_str):
+        # [MM/DD 발주] ... [MM/DD 입고] 패턴 찾기
+        matches = re.findall(r'(\d{2}/\d{2}).*?발주.*?(\d{2}/\d{2}).*?입고', str(memo_str))
+        if matches:
+            try:
+                # 마지막 매칭건 기준
+                order_d = pd.to_datetime(f"2026/{matches[-1][0]}")
+                arrive_d = pd.to_datetime(f"2026/{matches[-1][1]}")
+                diff = (arrive_d - order_d).days
+                return diff if 0 <= diff <= 30 else None # 30일 초과 시 데이터 오류로 간주
+            except: return None
+        return None
+
+    # [3] 업체별 현황판 및 리드타임 대시보드
+    st.markdown("#### 📊 공급처별 평균 입고 리드타임")
+    
+    # 리드타임 계산
+    df_log['lead_time'] = df_log[col_memo].apply(get_lead_time)
+    lt_avg = df_log.dropna(subset=['lead_time']).groupby(v_col)['lead_time'].mean().round(1)
+    
+    # 리드타임 UI
+    cols_lt = st.columns(min(len(lt_avg), 4))
+    if not lt_avg.empty:
+        for i, (v, val) in enumerate(lt_avg.head(4).items()):
+            cols_lt[i].metric(label=f"{v}", value=f"{val}일")
+    else:
+        st.caption("데이터가 부족합니다 (메모에 [MM/DD 발주] / [MM/DD 입고] 형식을 기입해주세요)")
+
     st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
     v_sum = filtered.groupby(v_col)['최종잔량'].sum().reset_index().sort_values('최종잔량', ascending=False)
     
@@ -549,9 +575,8 @@ def render_step6():
 
     st.divider()
 
-    # [4] 상세 데이터 표 (초 단위 없이 출력)
+    # [4] 상세 데이터 표
     display_df = filtered.sort_values(by=['날짜_dt', '최종잔량'], ascending=[False, False])
-    
     d_col_name = next((c for c in display_df.columns if '날짜' in c or '시간' in c), '날짜')
     target_display = [d_col_name, '공급처', '상품명', '옵션', '공급처상품명', '최종잔량', '추가발주', '입고수량', '최종메모']
     final_cols = [c for c in target_display if c in display_df.columns]
@@ -577,9 +602,8 @@ def render_step6():
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         display_df[final_cols].to_excel(writer, index=False, sheet_name='리오더현황')
     st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), 
-                       file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
-                       use_container_width=True)
-    
+                        file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
+                        use_container_width=True)    
 
 
 # ------------------------------------------------------------------
