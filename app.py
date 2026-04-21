@@ -445,35 +445,60 @@ else:
     
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 리오더 현황판 (수정 완료 버전)
+# 6단계: 리오더 현황판 (메모 인식 개선 버전)
 # ------------------------------------------------------------------
 def render_step6():
     import re
+    import pandas as pd
     from datetime import datetime
-    
-    # [수정된 파싱 함수: 사장님 메모 형식 대응]
+
+    # [메모 인식 개선된 파싱 함수]
     def get_lead_time(memo_str):
-        # 1. '발주' 날짜들 추출 [MM/DD...]
-        order_dates = re.findall(r'\[(\d{2}/\d{2}).*?발주\]', str(memo_str))
-        # 2. '입고' 날짜들 추출 [MM/DD...]
-        receipt_dates = re.findall(r'\[(\d{2}/\d{2}).*?입고\]', str(memo_str))
-        
-        if not order_dates or not receipt_dates:
+        if pd.isna(memo_str) or str(memo_str).lower() == 'nan':
             return None
         
-        durations = []
-        for o_date in order_dates:
+        # 1. '/' 나 줄바꿈 기준으로 메모를 조각냅니다.
+        #    이렇게 하면 [04/16 300발주] / [04/17 200입고] 를 각각 분석하기 쉽습니다.
+        parts = re.split(r'[/,\n]', str(memo_str))
+        
+        orders = []
+        receives = []
+        
+        for part in parts:
+            # 2. 날짜 찾기 (MM/DD 또는 M/D 형태)
+            date_match = re.search(r'(\d{1,2}/\d{1,2})', part)
+            if not date_match:
+                continue
+                
+            date_str = date_match.group(1)
             try:
-                o_dt = datetime.strptime(f"2026/{o_date}", "%Y/%m/%d")
-                for r_date in receipt_dates:
-                    r_dt = datetime.strptime(f"2026/{r_date}", "%Y/%m/%d")
-                    if r_dt > o_dt:
-                        diff = (r_dt - o_dt).days
-                        if 0 <= diff <= 14: # 2주 이내 정상 데이터만 인정
-                            durations.append(diff)
-                            break
-            except: continue
-        return sum(durations) / len(durations) if durations else None
+                # 2026년으로 설정하여 날짜 변환
+                m, d = map(int, date_str.split('/'))
+                dt = datetime(2026, m, d)
+                
+                # 3. 키워드 확인 (괄호가 있든 없든 '발주'/'입고' 글자만 있으면 됨)
+                if '발주' in part:
+                    orders.append(dt)
+                elif '입고' in part:
+                    receives.append(dt)
+            except:
+                continue
+        
+        # 발주와 입고가 모두 있어야 계산 가능
+        if not orders or not receives:
+            return None
+            
+        # 가장 최근 발주를 기준으로 그 이후에 들어온 가장 빠른 입고일을 찾음
+        orders.sort()
+        receives.sort()
+        
+        for o_dt in sorted(orders, reverse=True): # 최근 발주부터 확인
+            for r_dt in receives:
+                if r_dt > o_dt:
+                    diff = (r_dt - o_dt).days
+                    if 0 <= diff <= 14: # 2주 이내 데이터만 인정
+                        return float(diff)
+        return None
 
     # 상단 제목
     st.markdown("### 📈 6단계: 실시간 리오더 현황판 (상품별 통합)")
@@ -554,7 +579,7 @@ def render_step6():
     if sel_s: filtered = filtered[filtered[col_it].str.contains(sel_s, case=False, na=False)]
     if sel_v != "전체 공급처": filtered = filtered[filtered[v_col] == sel_v]
 
-    # [3] 리드타임 대시보드 및 업체별 현황판
+    # [3] 리드타임 대시보드
     st.markdown("#### 📊 공급처별 평균 입고 리드타임")
     df_log['lead_time'] = df_log[col_memo].apply(get_lead_time)
     lt_avg = df_log.dropna(subset=['lead_time']).groupby(v_col)['lead_time'].mean().round(1)
@@ -564,8 +589,9 @@ def render_step6():
         for i, (v, val) in enumerate(lt_avg.head(4).items()):
             cols_lt[i].metric(label=f"{v}", value=f"{val}일")
     else:
-        st.info("데이터가 부족합니다. 메모에 [MM/DD 발주] / [MM/DD 입고] 형식을 기입해주세요.")
+        st.info("리드타임 데이터가 없습니다. 메모에 '04/21 발주 / 04/23 입고'와 같은 형식으로 기록해 주세요.")
 
+    # [4] 업체별 현황
     st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
     v_sum = filtered.groupby(v_col)['최종잔량'].sum().reset_index().sort_values('최종잔량', ascending=False)
     
@@ -584,7 +610,7 @@ def render_step6():
 
     st.divider()
 
-    # [4] 상세 데이터 표
+    # [5] 상세 데이터 표
     display_df = filtered.sort_values(by=['날짜_dt', '최종잔량'], ascending=[False, False])
     d_col_name = next((c for c in display_df.columns if '날짜' in c or '시간' in c), '날짜')
     target_display = [d_col_name, '공급처', '상품명', '옵션', '공급처상품명', '최종잔량', '추가발주', '입고수량', '최종메모']
@@ -604,15 +630,6 @@ def render_step6():
             "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=500), 
         }
     )
-
-    # [5] 하단 엑셀 버튼
-    import io
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        display_df[final_cols].to_excel(writer, index=False, sheet_name='리오더현황')
-    st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), 
-                        file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
-                        use_container_width=True)
 
 
 # ------------------------------------------------------------------
