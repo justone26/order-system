@@ -482,10 +482,10 @@ def render_step6():
 
     st.markdown("### 📈 6단계: 실시간 리오더 현황판 (상품별 통합)")
     
-    # 2. 데이터 로드
+   # 데이터 로드
     if "df_log_6" not in st.session_state or st.session_state.df_log_6 is None:
         try:
-            sh = get_sheet()
+            sh = get_sheet() 
             ws_qty = sh.worksheet("발주기록")
             data = ws_qty.get_all_values()
             headers = [h.strip() for h in data[0]]
@@ -498,10 +498,9 @@ def render_step6():
             df_log['날짜_dt'] = pd.to_datetime(df_log[d_col], errors='coerce', format='mixed')
             st.session_state.df_log_6 = df_log
             st.rerun()
-        except:
-            st.error("데이터 로드 실패")
+        except Exception as e: # <--- 여기서 에러를 직접 보여줍니다!
+            st.error(f"데이터 로드 실패: {e}")
             return
-
     df_log = st.session_state.df_log_6.copy()
     
     # 3. 데이터 가공 및 변수 정의 (필수 변수들 먼저 세팅)
