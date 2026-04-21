@@ -445,38 +445,36 @@ else:
     
 
 # ------------------------------------------------------------------
-# 6단계: 리오더 현황판 (메모 인식 개선 버전)
+# 6단계: 리오더 현황판 (엑셀 기능 복구 + 날짜 인식 최적화 버전)
 # ------------------------------------------------------------------
 def render_step6():
     import re
     import pandas as pd
+    import io
     from datetime import datetime
 
-    # [메모 인식 개선된 파싱 함수]
+    # [날짜 형식에 상관없이 무조건 잡아내는 파싱 함수]
     def get_lead_time(memo_str):
         if pd.isna(memo_str) or str(memo_str).lower() == 'nan':
             return None
         
-        # 1. '/' 나 줄바꿈 기준으로 메모를 조각냅니다.
-        #    이렇게 하면 [04/16 300발주] / [04/17 200입고] 를 각각 분석하기 쉽습니다.
+        # '/' 또는 줄바꿈 기준으로 메모 조각내기
         parts = re.split(r'[/,\n]', str(memo_str))
         
         orders = []
         receives = []
         
         for part in parts:
-            # 2. 날짜 찾기 (MM/DD 또는 M/D 형태)
+            # 1자리 또는 2자리 숫자 날짜 대응 (예: 4/21 또는 04/21)
             date_match = re.search(r'(\d{1,2}/\d{1,2})', part)
             if not date_match:
                 continue
                 
             date_str = date_match.group(1)
             try:
-                # 2026년으로 설정하여 날짜 변환
                 m, d = map(int, date_str.split('/'))
                 dt = datetime(2026, m, d)
                 
-                # 3. 키워드 확인 (괄호가 있든 없든 '발주'/'입고' 글자만 있으면 됨)
                 if '발주' in part:
                     orders.append(dt)
                 elif '입고' in part:
@@ -484,19 +482,18 @@ def render_step6():
             except:
                 continue
         
-        # 발주와 입고가 모두 있어야 계산 가능
         if not orders or not receives:
             return None
             
-        # 가장 최근 발주를 기준으로 그 이후에 들어온 가장 빠른 입고일을 찾음
         orders.sort()
         receives.sort()
         
-        for o_dt in sorted(orders, reverse=True): # 최근 발주부터 확인
+        # 최근 발주 기준 이후의 가장 빠른 입고일 계산
+        for o_dt in sorted(orders, reverse=True): 
             for r_dt in receives:
                 if r_dt > o_dt:
                     diff = (r_dt - o_dt).days
-                    if 0 <= diff <= 14: # 2주 이내 데이터만 인정
+                    if 0 <= diff <= 30: # 30일 이내 인정
                         return float(diff)
         return None
 
@@ -589,7 +586,7 @@ def render_step6():
         for i, (v, val) in enumerate(lt_avg.head(4).items()):
             cols_lt[i].metric(label=f"{v}", value=f"{val}일")
     else:
-        st.info("리드타임 데이터가 없습니다. 메모에 '04/21 발주 / 04/23 입고'와 같은 형식으로 기록해 주세요.")
+        st.info("데이터가 부족합니다. 메모에 '04/21 발주 / 04/23 입고'와 같은 형식으로 기록해 주세요.")
 
     # [4] 업체별 현황
     st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
@@ -631,6 +628,14 @@ def render_step6():
         }
     )
 
+    # [6] 하단 엑셀 버튼 (복구됨!)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        display_df[final_cols].to_excel(writer, index=False, sheet_name='리오더현황')
+    st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), 
+                        file_name=f"리오더현황_{datetime.now().strftime('%m%d_%H%M')}.xlsx", 
+                        use_container_width=True)
+    
 
 # ------------------------------------------------------------------
 # 5️⃣단계: 전체 히스토리 기록 (초 단위 완전 삭제 및 한글 요일 보강)
