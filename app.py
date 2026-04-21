@@ -376,7 +376,7 @@ if st.session_state.get('analyzed'):
                     "입고차감": st.column_config.NumberColumn("📥 입고(-)", width=100, min_value=0), 
                     "추가발주": st.column_config.NumberColumn("➕ 발주(+)", width=100, min_value=0),
                     "권장발주수량": st.column_config.NumberColumn("권장수량", width=80, disabled=True, format="%d"),
-                    "비고(처리내역)": st.column_config.TextColumn("비고(처리내역)", width=150),
+                    "비고(처리내역)": st.column_config.TextColumn("비고(처리내역)", width=130),
                 }
             )
             btn_save = st.form_submit_button("🚀 최종 데이터 저장 및 시트 전송", use_container_width=True, type="primary")
