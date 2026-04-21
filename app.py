@@ -542,16 +542,17 @@ def render_step6():
             except: return None
         return None
 
-    # [3] 업체별 현황판 및 리드타임 대시보드
+  # [3] 업체별 현황판 및 리드타임 대시보드
     st.markdown("#### 📊 공급처별 평균 입고 리드타임")
     
     # 리드타임 계산
     df_log['lead_time'] = df_log[col_memo].apply(get_lead_time)
     lt_avg = df_log.dropna(subset=['lead_time']).groupby(v_col)['lead_time'].mean().round(1)
     
-    # 리드타임 UI
-    cols_lt = st.columns(min(len(lt_avg), 4))
+    # 리드타임 UI (데이터가 있을 때만 컬럼 생성)
     if not lt_avg.empty:
+        # 데이터가 있는 경우에만 컬럼 생성
+        cols_lt = st.columns(min(len(lt_avg), 4))
         for i, (v, val) in enumerate(lt_avg.head(4).items()):
             cols_lt[i].metric(label=f"{v}", value=f"{val}일")
     else:
