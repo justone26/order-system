@@ -300,7 +300,7 @@ else:
 
 
 # ------------------------------------------------------------------
-# 4️⃣단계: 입고 관리 및 최종 저장 (너비 조정 완료)
+# 4️⃣단계: 입고 관리 및 최종 저장 (필터 레이아웃 및 총 가용재고 표기)
 # ------------------------------------------------------------------
 st.divider()
 st.header("📊 4단계: 데이터 분석 및 발주 체크") 
@@ -319,7 +319,8 @@ if st.session_state.get('analyzed'):
                 df_all[col] = 0 if any(x in col for x in ['수량', '리오더', '차감', '발주']) else ""
 
         # --- [UI 레이아웃] ---
-        f1, f_vn, f2 = st.columns([1, 1.2, 1.8]) 
+        # 기존 3분할에서 가용재고 칸을 추가하여 4분할로 변경
+        f1, f_vn, f_stock, f2 = st.columns([1, 1.2, 0.8, 1.8]) 
         
         with f1: 
             f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1, key="f_mode_4")
@@ -353,6 +354,12 @@ if st.session_state.get('analyzed'):
         if s_query:
             df_temp = df_temp[df_temp[p['it']].str.contains(s_query, case=False, na=False) | 
                                df_temp[p['op']].str.contains(s_query, case=False, na=False)]
+
+        # --- [가용재고 메트릭 표시] ---
+        with f_stock:
+            # 음수는 0으로 치환하여 합계 계산
+            total_stock = int(df_temp[p['av']].clip(lower=0).sum())
+            st.metric("총 가용재고", f"{total_stock:,} 개")
 
         # --- [데이터 편집기: 너비 조정 적용] ---
         full_cols = ['상태', p['vn'], p['it'], p['op'], p['vi'], p['av'], 
@@ -431,6 +438,8 @@ if st.session_state.get('analyzed'):
                 st.warning("⚠️ 입력된 변경 내역(입고/발주/메모)이 없습니다.")
 else:
     st.info("3단계에서 [분석 실행] 버튼을 누르면 분석 결과가 이곳에 표시됩니다.")
+
+
 
 # ------------------------------------------------------------------
 # 6️⃣단계: 리오더 현황판 (사장님 원본 레이아웃 + 현황판 + 간격 최적화)
