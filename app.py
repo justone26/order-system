@@ -445,9 +445,36 @@ else:
     
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 리오더 현황판 (기존 로직 유지 + 리드타임 분석 추가)
+# 6️⃣단계: 리오더 현황판 (수정 완료 버전)
 # ------------------------------------------------------------------
 def render_step6():
+    import re
+    from datetime import datetime
+    
+    # [수정된 파싱 함수: 사장님 메모 형식 대응]
+    def get_lead_time(memo_str):
+        # 1. '발주' 날짜들 추출 [MM/DD...]
+        order_dates = re.findall(r'\[(\d{2}/\d{2}).*?발주\]', str(memo_str))
+        # 2. '입고' 날짜들 추출 [MM/DD...]
+        receipt_dates = re.findall(r'\[(\d{2}/\d{2}).*?입고\]', str(memo_str))
+        
+        if not order_dates or not receipt_dates:
+            return None
+        
+        durations = []
+        for o_date in order_dates:
+            try:
+                o_dt = datetime.strptime(f"2026/{o_date}", "%Y/%m/%d")
+                for r_date in receipt_dates:
+                    r_dt = datetime.strptime(f"2026/{r_date}", "%Y/%m/%d")
+                    if r_dt > o_dt:
+                        diff = (r_dt - o_dt).days
+                        if 0 <= diff <= 14: # 2주 이내 정상 데이터만 인정
+                            durations.append(diff)
+                            break
+            except: continue
+        return sum(durations) / len(durations) if durations else None
+
     # 상단 제목
     st.markdown("### 📈 6단계: 실시간 리오더 현황판 (상품별 통합)")
     
@@ -507,7 +534,7 @@ def render_step6():
         v_list = ["전체 공급처"] + sorted(df_log[v_col].unique().tolist())
         sel_v = st.selectbox("전체 공급처", v_list, label_visibility="collapsed", key="s6_vendor_final")
 
-    # [2] 데이터 가공 (기존 로직)
+    # [2] 데이터 가공
     def c_func(t): return "".join(str(t).split()).upper()
     col_it = '상품명' if '상품명' in df_log.columns else df_log.columns[2]
     col_op = '옵션' if '옵션' in df_log.columns else df_log.columns[3]
@@ -527,36 +554,17 @@ def render_step6():
     if sel_s: filtered = filtered[filtered[col_it].str.contains(sel_s, case=False, na=False)]
     if sel_v != "전체 공급처": filtered = filtered[filtered[v_col] == sel_v]
 
-    # [신규] 리드타임 분석 로직
-    import re
-    def get_lead_time(memo_str):
-        # [MM/DD 발주] ... [MM/DD 입고] 패턴 찾기
-        matches = re.findall(r'(\d{2}/\d{2}).*?발주.*?(\d{2}/\d{2}).*?입고', str(memo_str))
-        if matches:
-            try:
-                # 마지막 매칭건 기준
-                order_d = pd.to_datetime(f"2026/{matches[-1][0]}")
-                arrive_d = pd.to_datetime(f"2026/{matches[-1][1]}")
-                diff = (arrive_d - order_d).days
-                return diff if 0 <= diff <= 30 else None # 30일 초과 시 데이터 오류로 간주
-            except: return None
-        return None
-
-  # [3] 업체별 현황판 및 리드타임 대시보드
+    # [3] 리드타임 대시보드 및 업체별 현황판
     st.markdown("#### 📊 공급처별 평균 입고 리드타임")
-    
-    # 리드타임 계산
     df_log['lead_time'] = df_log[col_memo].apply(get_lead_time)
     lt_avg = df_log.dropna(subset=['lead_time']).groupby(v_col)['lead_time'].mean().round(1)
     
-    # 리드타임 UI (데이터가 있을 때만 컬럼 생성)
     if not lt_avg.empty:
-        # 데이터가 있는 경우에만 컬럼 생성
         cols_lt = st.columns(min(len(lt_avg), 4))
         for i, (v, val) in enumerate(lt_avg.head(4).items()):
             cols_lt[i].metric(label=f"{v}", value=f"{val}일")
     else:
-        st.caption("데이터가 부족합니다 (메모에 [MM/DD 발주] / [MM/DD 입고] 형식을 기입해주세요)")
+        st.info("데이터가 부족합니다. 메모에 [MM/DD 발주] / [MM/DD 입고] 형식을 기입해주세요.")
 
     st.markdown("#### 🏢 업체별 미입고 및 주요 상품")
     v_sum = filtered.groupby(v_col)['최종잔량'].sum().reset_index().sort_values('최종잔량', ascending=False)
@@ -604,7 +612,7 @@ def render_step6():
         display_df[final_cols].to_excel(writer, index=False, sheet_name='리오더현황')
     st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), 
                         file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
-                        use_container_width=True)    
+                        use_container_width=True)
 
 
 # ------------------------------------------------------------------
