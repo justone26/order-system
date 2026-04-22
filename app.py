@@ -445,7 +445,7 @@ else:
 
 
 # ------------------------------------------------------------------
-# 6단계: 리오더 현황판 (업체별 평균 입고 소요시간 분리)
+# 6단계: 리오더 현황판 (업체별 평균 입고 소요시간 직관적 노출)
 # ------------------------------------------------------------------
 def render_step6():
     # 상단 제목
@@ -528,10 +528,17 @@ def render_step6():
         v_list = ["전체 공급처"] + sorted(df_log[v_col].unique().tolist())
         sel_v = st.selectbox("전체 공급처", v_list, label_visibility="collapsed", key="s6_vendor_final")
 
-    # 상단 지표 영역 (업체별 리드타임 추가)
-    if avg_vendor_lead is not None:
-        with st.expander("📊 업체별 평균 입고 소요기간 확인하기"):
-            st.dataframe(avg_vendor_lead, use_container_width=True, hide_index=True)
+    # [1-2] 업체별 리드타임 직관적 배치 (메트릭 카드 형태)
+    if avg_vendor_lead is not None and not avg_vendor_lead.empty:
+        st.markdown("#### ⏳ 업체별 평균 입고 소요기간")
+        # 4개씩 끊어서 보여주기
+        for i in range(0, len(avg_vendor_lead), 4):
+            cols = st.columns(4)
+            batch = avg_vendor_lead.iloc[i : i + 4]
+            for j, (idx, row) in enumerate(batch.iterrows()):
+                with cols[j]:
+                    st.metric(label=f"📦 {row[v_col]}", value=f"{row['평균소요(일)']}일")
+        st.divider()
 
     # [2] 데이터 가공
     def c_func(t): return "".join(str(t).split()).upper()
@@ -603,7 +610,6 @@ def render_step6():
     st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), 
                         file_name=f"리오더현황_{datetime.now().strftime('%m%d_%H%M')}.xlsx", 
                         use_container_width=True)
-
 
 
 # ------------------------------------------------------------------
