@@ -445,10 +445,9 @@ else:
 
 
 # ------------------------------------------------------------------
-# 6단계: 리오더 현황판 (업체별 평균 입고 소요시간 직관적 노출)
+# 6단계: 리오더 현황판 (발주-입고 매칭 사이클 계산 로직)
 # ------------------------------------------------------------------
 def render_step6():
-    # 상단 제목
     st.markdown("### 📈 6단계: 실시간 리오더 현황판 (상품별 통합)")
     
     # [1] 상단 컨트롤바
@@ -468,10 +467,6 @@ def render_step6():
 
     # 데이터 로드 로직
     if "df_log_6" not in st.session_state or st.session_state.df_log_6 is None:
-        with c_filter:
-            st.write("🏭 공급처 필터")
-            st.selectbox("전체 공급처", ["전체 공급처"], label_visibility="collapsed", disabled=True)
-        
         try:
             with st.spinner("⏳ 데이터를 가져오는 중..."):
                 sh = get_sheet()
@@ -482,41 +477,51 @@ def render_step6():
                     df_log = pd.DataFrame(data[1:], columns=headers)
                     df_log = df_log.loc[:, ~df_log.columns.duplicated()]
                     
-                    if '공급처명' in df_log.columns:
-                        df_log.rename(columns={'공급처명': '공급처상품명'}, inplace=True)
-                    
+                    if '공급처명' in df_log.columns: df_log.rename(columns={'공급처명': '공급처상품명'}, inplace=True)
                     for col in ['기존리오더', '추가발주', '입고수량']:
                         if col in df_log.columns:
                             df_log[col] = pd.to_numeric(df_log[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                     
                     d_col = next((c for c in df_log.columns if '날짜' in c or '시간' in c), df_log.columns[0])
                     df_log['날짜_dt'] = pd.to_datetime(df_log[d_col], errors='coerce', format='mixed')
-                    df_log[d_col] = df_log['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M')
-                    
                     st.session_state.df_log_6 = df_log
                     st.rerun()
-        except Exception as e:
-            st.error(f"오류: {e}")
+        except Exception as e: st.error(f"오류: {e}"); return
         return
 
     df_log = st.session_state.df_log_6.copy()
     v_col = '공급처' if '공급처' in df_log.columns else df_log.columns[1]
     
-    # [1-1] 업체별 입고 리드타임 계산 로직
+    # [1-1] FIFO 방식 리드타임 계산 로직
     lead_time_records = []
-    inbound_records = df_log[df_log['입고수량'] > 0]
+    # 상품+옵션별로 대기중인 발주를 관리 (key: 상품명+옵션, value: [발주날짜, 발주수량, 공급처])
+    pending_orders = {} 
     
-    for _, row in inbound_records.iterrows():
-        # 같은 상품+옵션의 이전 발주 찾기
-        prev = df_log[(df_log['상품명'] == row['상품명']) & 
-                      (df_log['옵션'] == row['옵션']) & 
-                      (df_log['날짜_dt'] < row['날짜_dt'])]
-        if not prev.empty:
-            last_order_date = prev.iloc[-1]['날짜_dt']
-            days = (row['날짜_dt'] - last_order_date).days
-            if 0 <= days <= 60: # 60일 이상은 이상치로 간주 제외
-                lead_time_records.append({v_col: row[v_col], 'days': days})
-    
+    df_sorted = df_log.sort_values('날짜_dt')
+    for _, row in df_sorted.iterrows():
+        key = str(row['상품명']) + str(row['옵션'])
+        
+        # 1. 발주가 있으면 대기열 추가
+        if row['추가발주'] > 0:
+            if key not in pending_orders: pending_orders[key] = []
+            pending_orders[key].append({'date': row['날짜_dt'], 'qty': row['추가발주'], 'vendor': row[v_col]})
+        
+        # 2. 입고가 있으면 대기열에서 차감
+        if row['입고수량'] > 0:
+            inbound_qty = row['입고수량']
+            while inbound_qty > 0 and key in pending_orders and len(pending_orders[key]) > 0:
+                order = pending_orders[key][0]
+                take = min(inbound_qty, order['qty'])
+                order['qty'] -= take
+                inbound_qty -= take
+                
+                # 발주 수량이 다 채워지면 리드타임 기록
+                if order['qty'] <= 0:
+                    days = (row['날짜_dt'] - order['date']).days
+                    if 0 <= days <= 90: # 90일 이상 비정상 데이터 제외
+                        lead_time_records.append({v_col: order['vendor'], 'days': days})
+                    pending_orders[key].pop(0) # 완료된 발주 제거
+
     lead_time_df = pd.DataFrame(lead_time_records)
     avg_vendor_lead = None
     if not lead_time_df.empty:
@@ -528,10 +533,9 @@ def render_step6():
         v_list = ["전체 공급처"] + sorted(df_log[v_col].unique().tolist())
         sel_v = st.selectbox("전체 공급처", v_list, label_visibility="collapsed", key="s6_vendor_final")
 
-    # [1-2] 업체별 리드타임 직관적 배치 (메트릭 카드 형태)
+    # [1-2] 직관적 배치
     if avg_vendor_lead is not None and not avg_vendor_lead.empty:
         st.markdown("#### ⏳ 업체별 평균 입고 소요기간")
-        # 4개씩 끊어서 보여주기
         for i in range(0, len(avg_vendor_lead), 4):
             cols = st.columns(4)
             batch = avg_vendor_lead.iloc[i : i + 4]
