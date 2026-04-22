@@ -323,7 +323,8 @@ if st.session_state.get('analyzed'):
         f1, f_vn, f_stock, f_sales, f_reorder, f_rec_sum, f2 = st.columns([1, 1.2, 0.8, 0.8, 0.8, 0.8, 1.4]) 
         
         with f1: 
-            f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절"], index=1, key="f_mode_4")
+            # [수정] 항목에 "제외" 추가
+            f_mode = st.selectbox("🚦 상태 필터", ["전체보기", "🚨 발주필요(세트)", "✅ 정상", "🚫 품절", "제외"], index=1, key="f_mode_4")
         
         with f_vn:
             vn_list = ["전체 공급처"] + sorted(df_all[p['vn']].unique().tolist())
@@ -339,12 +340,22 @@ if st.session_state.get('analyzed'):
         min_filter = st.session_state.p.get('min_qty', 0)
         df_temp.loc[df_temp['권장발주수량'] < min_filter, '권장발주수량'] = 0
         
-        # 상태 필터
-        if f_mode == "🚨 발주필요(세트)":
-            need_items = df_temp[(df_temp['상태'] != "🚫 품절") & (df_temp['권장발주수량'] > 0)][p['it']].unique()
-            df_temp = df_temp[df_temp[p['it']].isin(need_items)]
-        elif f_mode != "전체보기":
-            df_temp = df_temp[df_temp['상태'] == f_mode]
+        # [수정] QT, BE 상품 식별 및 필터 로직 적용
+        is_special = df_temp[p['it']].str.upper().str.startswith(('QT', 'BE'))
+
+        if f_mode == "제외":
+            # [제외]를 선택했을 때는 해당 상품들만 보여줌
+            df_temp = df_temp[is_special]
+        else:
+            # 나머지 옵션일 때는 QT, BE 상품들을 일단 제외하고 처리
+            df_temp = df_temp[~is_special]
+            
+            # 상태 필터 적용
+            if f_mode == "🚨 발주필요(세트)":
+                need_items = df_temp[(df_temp['상태'] != "🚫 품절") & (df_temp['권장발주수량'] > 0)][p['it']].unique()
+                df_temp = df_temp[df_temp[p['it']].isin(need_items)]
+            elif f_mode != "전체보기":
+                df_temp = df_temp[df_temp['상태'] == f_mode]
         
         # 공급처 필터
         if sel_vn != "전체 공급처":
@@ -442,7 +453,7 @@ if st.session_state.get('analyzed'):
                 st.warning("⚠️ 입력된 변경 내역(입고/발주/메모)이 없습니다.")
 else:
     st.info("3단계에서 [분석 실행] 버튼을 누르면 분석 결과가 이곳에 표시됩니다.")
-
+    
 
 # ------------------------------------------------------------------
 # 6단계: 리오더 현황판 (발주-입고 매칭 사이클 계산 로직)
