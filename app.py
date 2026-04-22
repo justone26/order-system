@@ -561,13 +561,13 @@ def render_step6():
         use_container_width=True, 
         hide_index=True,
         column_config={
-            d_col_name: st.column_config.TextColumn("발주시간", width=140),
+            d_col_name: st.column_config.TextColumn("발주시간", width=100),
             "공급처": st.column_config.TextColumn("공급처", width=90),
             "상품명": st.column_config.TextColumn("상품명", width=350),
             "옵션": st.column_config.TextColumn("옵션", width=80),
             "공급처상품명": st.column_config.TextColumn("공급처상품명", width=250),
             "최종잔량": st.column_config.NumberColumn("최종잔량", width=60, format="%d"),
-            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=400), 
+            "최근 처리내역(메모)": st.column_config.TextColumn("최근 처리내역(메모)", width=500), 
         }
     )
 
