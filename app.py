@@ -445,7 +445,7 @@ else:
 
 
 # ------------------------------------------------------------------
-# 6️⃣단계: 리오더 현황판 (초 단위 완전 제거 버전)
+# 6단계: 리오더 현황판 (상단 현황판에 평균 입고 소요시간 추가)
 # ------------------------------------------------------------------
 def render_step6():
     # 상단 제목
@@ -489,11 +489,8 @@ def render_step6():
                         if col in df_log.columns:
                             df_log[col] = pd.to_numeric(df_log[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                     
-                    # 🚨 [수정] 날짜에서 초 단위 삭제 처리
                     d_col = next((c for c in df_log.columns if '날짜' in c or '시간' in c), df_log.columns[0])
                     df_log['날짜_dt'] = pd.to_datetime(df_log[d_col], errors='coerce', format='mixed')
-                    
-                    # 화면 표시용 날짜 포맷팅 (초 단위 제거)
                     df_log[d_col] = df_log['날짜_dt'].dt.strftime('%Y-%m-%d %H:%M')
                     
                     st.session_state.df_log_6 = df_log
@@ -504,11 +501,32 @@ def render_step6():
 
     df_log = st.session_state.df_log_6.copy()
     
+    # [1-1] 리드타임 계산 로직 (데이터 로드 직후 수행)
+    avg_lead_time = 0
+    inbound_records = df_log[df_log['입고수량'] > 0]
+    if not inbound_records.empty:
+        lead_times = []
+        for _, row in inbound_records.iterrows():
+            # 같은 상품+옵션의 이전 발주 찾기
+            prev = df_log[(df_log['상품명'] == row['상품명']) & 
+                          (df_log['옵션'] == row['옵션']) & 
+                          (df_log['날짜_dt'] < row['날짜_dt'])]
+            if not prev.empty:
+                last_order_date = prev.iloc[-1]['날짜_dt']
+                days = (row['날짜_dt'] - last_order_date).days
+                if 0 <= days <= 60: # 비정상 데이터 제외(60일 이상)
+                    lead_times.append(days)
+        if lead_times:
+            avg_lead_time = round(sum(lead_times) / len(lead_times), 1)
+
     with c_filter:
         st.write("🏭 공급처 필터")
         v_col = '공급처' if '공급처' in df_log.columns else df_log.columns[1]
         v_list = ["전체 공급처"] + sorted(df_log[v_col].unique().tolist())
         sel_v = st.selectbox("전체 공급처", v_list, label_visibility="collapsed", key="s6_vendor_final")
+
+    # 상단 지표 추가 (리드타임 표시)
+    st.metric("📦 전체 평균 입고 소요기간", f"{avg_lead_time}일")
 
     # [2] 데이터 가공
     def c_func(t): return "".join(str(t).split()).upper()
@@ -549,7 +567,7 @@ def render_step6():
 
     st.divider()
 
-    # [4] 상세 데이터 표 (초 단위 없이 출력)
+    # [4] 상세 데이터 표
     display_df = filtered.sort_values(by=['날짜_dt', '최종잔량'], ascending=[False, False])
     
     d_col_name = next((c for c in display_df.columns if '날짜' in c or '시간' in c), '날짜')
@@ -576,9 +594,13 @@ def render_step6():
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         display_df[final_cols].to_excel(writer, index=False, sheet_name='리오더현황')
+    
+    # datetime.now() 사용
     st.download_button(label="📥 실시간 현황 엑셀 다운로드", data=output.getvalue(), 
-                       file_name=f"리오더현황_{datetime.now(KST).strftime('%m%d_%H%M')}.xlsx", 
-                       use_container_width=True)
+                        file_name=f"리오더현황_{datetime.now().strftime('%m%d_%H%M')}.xlsx", 
+                        use_container_width=True)
+
+
 
 # ------------------------------------------------------------------
 # 5️⃣단계: 전체 히스토리 기록 (초 단위 완전 삭제 및 한글 요일 보강)
