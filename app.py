@@ -382,6 +382,17 @@ if st.session_state.get('analyzed'):
                      '일판매량', '권장발주수량', '비고(처리내역)']
         disp_cols = [c for c in full_cols if c in df_temp.columns]
         
+        # 엑셀 다운로드 버튼 추가
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df_temp[disp_cols].to_excel(writer, index=False)
+        st.download_button(
+            label="📥 현재 필터링 데이터 엑셀 다운로드",
+            data=buffer.getvalue(),
+            file_name=f"분석데이터_{datetime.now(KST).strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
         with st.form("final_form"):
             edited_df = st.data_editor(
                 df_temp[disp_cols], 
