@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import re
 import unicodedata
+import io
 import gspread
 from datetime import datetime, timedelta, timezone
 import streamlit.components.v1 as components
