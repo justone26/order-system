@@ -341,8 +341,8 @@ if st.session_state.get('analyzed'):
         min_filter = st.session_state.p.get('min_qty', 0)
         df_temp.loc[df_temp['권장발주수량'] < min_filter, '권장발주수량'] = 0
         
-        # [수정] QT, BE 상품 식별 및 필터 로직 적용
-        is_special = df_temp[p['it']].str.upper().str.startswith(('QT', 'BE'))
+        # [수정] QT, BE 상품 식별 및 필터 로직 적용 (.astype(str) 추가)
+        is_special = df_temp[p['it']].astype(str).str.upper().str.startswith(('QT', 'BE'))
 
         if f_mode == "제외":
             # [제외]를 선택했을 때는 해당 상품들만 보여줌
